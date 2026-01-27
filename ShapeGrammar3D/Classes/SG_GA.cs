@@ -1,0 +1,818 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.IO;
+using System.Net.Sockets;
+using System.Threading;
+
+namespace ShapeGrammar3D.Classes
+{
+    /// <summary>
+    /// Individual represents a single candidate solution in the genetic algorithm.
+    /// Contains chromosome (discrete values), chromosome parameters (continuous values),
+    /// fitness metrics, and cluster group assignment.
+    /// </summary>
+    [Serializable]
+    public class GAIndividual
+    {
+        private static int _globalIdCounter = 0;
+        private static readonly object _idLock = new object();
+        internal static readonly Random _rng = new Random();
+
+        public List<int> Chromosome { get; set; }
+        public List<double> ChromosomeParam { get; set; }
+        public double Fitness { get; set; }
+        public double Topo { get; set; }
+        public double Shpe { get; set; }
+        public int ClustGrp { get; set; }
+        public string Id { get; set; }
+
+        public GAIndividual(List<int> chromosome, List<double> chromosomeParam, string id = null)
+        {
+            Chromosome = new List<int>(chromosome);
+            ChromosomeParam = new List<double>(chromosomeParam);
+            Fitness = -999;
+            Topo = -999;
+            Shpe = -999;
+            ClustGrp = -999;
+
+            if (id == null)
+            {
+                lock (_idLock)
+                {
+                    Id = _globalIdCounter.ToString();
+                    _globalIdCounter++;
+                }
+            }
+            else
+            {
+                Id = id;
+            }
+        }
+
+        /// <summary>
+        /// Creates a copy of this individual
+        /// </summary>
+        public GAIndividual Clone()
+        {
+            GAIndividual cloned = new GAIndividual(
+                new List<int>(Chromosome),
+                new List<double>(ChromosomeParam),
+                Id);
+            cloned.Fitness = Fitness;
+            cloned.Topo = Topo;
+            cloned.Shpe = Shpe;
+            cloned.ClustGrp = ClustGrp;
+            return cloned;
+        }
+
+        /// <summary>
+        /// Mutates a random gene in the chromosome parameter
+        /// </summary>
+        public void Mutate()
+        {
+            if (ChromosomeParam.Count > 0)
+            {
+                int idx = _rng.Next(0, ChromosomeParam.Count);
+                ChromosomeParam[idx] = _rng.NextDouble(); // 0-1 range
+            }
+        }
+
+        /// <summary>
+        /// Exports chromosome to text format for transmission
+        /// </summary>
+        public string ExportChromosomeText()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("S,");
+            sb.Append(Id);
+            sb.Append(",");
+
+            // Append chromosome values
+            foreach (int gene in Chromosome)
+            {
+                sb.Append(gene);
+                sb.Append(",");
+            }
+
+            // Append chromosome parameters
+            foreach (double gene in ChromosomeParam)
+            {
+                sb.Append(gene.ToString("F3"));
+                sb.Append(",");
+            }
+
+            sb.Append("E,");
+            sb.Append(ClustGrp);
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Parses chromosome from text format
+        /// </summary>
+        public static GAIndividual ParseFromText(string text)
+        {
+            string[] parts = text.Split(',');
+
+            if (parts.Length < 3 || parts[0] != "S")
+                return null;
+
+            int eIndex = Array.IndexOf(parts, "E");
+            if (eIndex == -1)
+                return null;
+
+            string id = parts[1];
+            List<int> chromo = new List<int>();
+            List<double> param = new List<double>();
+
+            // Parse chromosome and parameters
+            int dataStart = 2;
+            int dataEnd = eIndex;
+            int splitPoint = dataStart + (dataEnd - dataStart) / 2;
+
+            for (int i = dataStart; i < splitPoint; i++)
+            {
+                int val;
+                if (int.TryParse(parts[i], out val))
+                    chromo.Add(val);
+            }
+
+            for (int i = splitPoint; i < dataEnd; i++)
+            {
+                double val;
+                if (double.TryParse(parts[i], out val))
+                    param.Add(val);
+            }
+
+            GAIndividual individual = new GAIndividual(chromo, param, id);
+            return individual;
+        }
+    }
+
+    /// <summary>
+    /// Genetic Algorithm solver for optimization with clustering support
+    /// </summary>
+    [Serializable]
+    public class SG_GA
+    {
+        // Configuration constants
+        public bool Maximize { get; set; } = false;
+        public int PopulationSize { get; set; } = 100;
+        public int NumClusters { get; set; } = 7;
+        public int InitialBoost { get; set; } = 6;
+        public int NumGenerations { get; set; } = 50;
+        public double MutationProbability { get; set; } = 0.10;
+        public double CrossoverProbability { get; set; } = 0.9;
+        public double EliteProbability { get; set; } = 0.1;
+        public double BlxAlpha { get; set; } = 0.3;
+
+        // State variables
+        private List<GAIndividual> _currentPopulation;
+        private List<double> _bestFits;
+        private List<double> _worstFits;
+        private GAIndividual _bestOfAll;
+        private int _currentGeneration;
+        private double _topoDenominator;
+        private double _shapeDenominator;
+
+        // Tracking templates for chromosome generation
+        private List<int> _chromosomeTemplateLengths = new List<int>();
+        private List<int> _ruleMarkersTemplate = new List<int>();
+
+        // Data tracking
+        private List<GAIndividual> _allEvaluatedIndividuals;
+        private string _outputFilePath;
+
+        // Clustering
+        private SimpleKMeans _kmeans;
+
+        public SG_GA()
+        {
+            _currentPopulation = new List<GAIndividual>();
+            _bestFits = new List<double>();
+            _worstFits = new List<double>();
+            _bestOfAll = null;
+            _currentGeneration = 0;
+            _allEvaluatedIndividuals = new List<GAIndividual>();
+            _outputFilePath = Path.Combine(Path.GetTempPath(),
+                string.Format("GA_output_{0:yyyy-MM-dd_HH-mm-ss}.csv", DateTime.Now));
+        }
+
+        /// <summary>
+        /// Creates initial generation with random chromosome values
+        /// </summary>
+        public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths)
+        {
+            List<GAIndividual> generation = new List<GAIndividual>();
+
+            for (int cnt = 0; cnt < populationCount; cnt++)
+            {
+                List<int> chromosome = new List<int>();
+                List<double> chromosomeParam = new List<double>();
+
+                for (int i = 0; i < chromosomeLengths.Count; i++)
+                {
+                    int len = chromosomeLengths[i];
+                    int ruleId = GetRuleId(i); // Map rule indices
+
+                    chromosome.Add(ruleId);
+                    chromosomeParam.Add(ruleId);
+
+                    for (int j = 0; j < len; j++)
+                    {
+                        chromosome.Add(GAIndividual._rng.Next(0, 2));
+                        chromosomeParam.Add(GAIndividual._rng.NextDouble());
+                    }
+
+                    chromosome.Add(-999);
+                    chromosomeParam.Add(-999);
+                }
+
+                generation.Add(new GAIndividual(chromosome, chromosomeParam));
+            }
+
+            return generation;
+        }
+
+        /// <summary>
+        /// Creates initial generation with explicit rule markers.
+        /// </summary>
+        public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths, List<int> ruleMarkers)
+        {
+            if (chromosomeLengths == null) throw new ArgumentNullException(nameof(chromosomeLengths));
+            if (ruleMarkers == null) throw new ArgumentNullException(nameof(ruleMarkers));
+            if (chromosomeLengths.Count != ruleMarkers.Count)
+            {
+                throw new ArgumentException("chromosomeLengths and ruleMarkers must have the same count.");
+            }
+
+            _chromosomeTemplateLengths = new List<int>(chromosomeLengths);
+            _ruleMarkersTemplate = new List<int>(ruleMarkers);
+
+            List<GAIndividual> generation = new List<GAIndividual>();
+
+            for (int cnt = 0; cnt < populationCount; cnt++)
+            {
+                List<int> chromosome = new List<int>();
+                List<double> chromosomeParam = new List<double>();
+
+                for (int i = 0; i < chromosomeLengths.Count; i++) // loop for each rule
+                {
+                    int len = chromosomeLengths[i];
+                    int ruleId = ruleMarkers[i];
+
+                    chromosome.Add(ruleId);
+                    chromosomeParam.Add(ruleId);
+
+                    for (int j = 0; j < len; j++)
+                    {
+                        chromosome.Add(GAIndividual._rng.Next(0, 2));
+                        chromosomeParam.Add(GAIndividual._rng.NextDouble());
+                    }
+
+                    chromosome.Add(UT.RULE_END_MARKER);
+                    chromosomeParam.Add(UT.RULE_END_MARKER);
+                }
+
+                generation.Add(new GAIndividual(chromosome, chromosomeParam));
+            }
+
+            return generation;
+        }
+
+        /// <summary>
+        /// Maps rule index to rule ID (from Python code)
+        /// </summary>
+        private int GetRuleId(int index)
+        {
+            if (index == 0) return -10;
+            if (index == 1) return -11;
+            if (index == 2) return -20;
+            if (index == 3) return -30;
+            if (index == 4) return -31;
+            if (index == 5) return -41;
+            if (index == 6) return -51;
+            if (index == 7) return -60;
+            if (index == 8) return -61;
+            return -(index + 1);
+        }
+
+        /// <summary>
+        /// Performs one generation of genetic algorithm
+        /// </summary>
+        public List<GAIndividual> SolveOneGeneration(List<GAIndividual> individuals)
+        {
+            if (individuals.Count == 0)
+                return new List<GAIndividual>();
+
+            List<GAIndividual> previousGeneration = individuals.Select(i => i.Clone()).ToList();
+            int clustGroup = individuals[0].ClustGrp;
+            int popSize = individuals.Count;
+
+            // Step 1: Evaluate fitness
+            GAIndividual best = FindBest(individuals);
+            GAIndividual worst = FindWorst(individuals);
+
+            _bestFits.Add(best.Fitness);
+            _worstFits.Add(worst.Fitness);
+
+            double mean = individuals.Average(i => i.Fitness);
+
+            if (_bestOfAll == null)
+                _bestOfAll = best.Clone();
+            else if (Maximize && best.Fitness > _bestOfAll.Fitness)
+                _bestOfAll = best.Clone();
+            else if (!Maximize && best.Fitness < _bestOfAll.Fitness)
+                _bestOfAll = best.Clone();
+
+            System.Diagnostics.Debug.WriteLine(
+                string.Format("Generation {0}, Cluster {1}: Best: {2:F3}, Worst: {3:F3}, Mean: {4:F3}",
+                    _currentGeneration, clustGroup, best.Fitness, worst.Fitness, mean));
+
+            // Step 2: Selection - keep top 50%
+            List<GAIndividual> selectedIndividuals = individuals
+                .OrderBy(i => i.Fitness)
+                .Take((int)(0.5 * popSize))
+                .Select(i => i.Clone())
+                .ToList();
+
+            // Step 3: Crossover
+            int numChildren = (int)(popSize * CrossoverProbability);
+            List<GAIndividual> children = Crossover(individuals, numChildren);
+            selectedIndividuals.AddRange(children);
+
+            // Step 4: Elite selection
+            int numElites = (int)(popSize * EliteProbability);
+            List<GAIndividual> elites = SelectElite(selectedIndividuals, numElites);
+            selectedIndividuals.AddRange(elites);
+
+            // Step 5: Mutation
+            EnsureTemplatesFromPopulation(individuals);
+            int numMutated = (int)(popSize * MutationProbability);
+            List<int> mutLengths = _chromosomeTemplateLengths.Count > 0 ? _chromosomeTemplateLengths : new List<int> { 1 };
+            List<int> mutMarkers = (_ruleMarkersTemplate.Count == mutLengths.Count && mutLengths.Count > 0)
+                ? _ruleMarkersTemplate
+                : mutLengths.Select((_, idx) => GetRuleId(idx)).ToList();
+            List<GAIndividual> mutated = CreateInitialGeneration(numMutated, mutLengths, mutMarkers);
+            selectedIndividuals.AddRange(mutated);
+
+            // Step 6: Tournament selection for next generation
+            List<GAIndividual> newGeneration = SelectTournament(selectedIndividuals, popSize);
+            newGeneration.Add(best.Clone());
+
+            // Assign cluster group
+            foreach (GAIndividual individual in newGeneration)
+            {
+                individual.ClustGrp = clustGroup;
+            }
+
+            return newGeneration.Count > 0 ? newGeneration : previousGeneration;
+        }
+
+        /// <summary>
+        /// Performs clustering on population based on topology and shape metrics
+        /// </summary>
+        public void ClusterPopulation(List<GAIndividual> individuals)
+        {
+            if (individuals.Count == 0)
+                return;
+
+            List<double> topoValues = individuals.Select(i => i.Topo).ToList();
+            List<double> shapeValues = individuals.Select(i => i.Shpe).ToList();
+
+            if (_currentGeneration == 0)
+            {
+                _topoDenominator = topoValues.Max();
+                _shapeDenominator = shapeValues.Max();
+                _kmeans = new SimpleKMeans(NumClusters);
+            }
+
+            // Normalize values
+            List<double> normalizedTopo = topoValues.Select(t => t / _topoDenominator).ToList();
+            List<double> normalizedShape = shapeValues.Select(s => s / _shapeDenominator).ToList();
+
+            // Perform clustering
+            List<int> clusters = _kmeans.Cluster(normalizedTopo, normalizedShape, _currentGeneration == 0);
+
+            // Assign cluster groups
+            for (int i = 0; i < clusters.Count && i < individuals.Count; i++)
+            {
+                individuals[i].ClustGrp = clusters[i];
+            }
+        }
+
+        /// <summary>
+        /// Processes evaluated individuals and updates population
+        /// </summary>
+        public List<GAIndividual> ProcessEvaluatedIndividuals(List<GAIndividual> evaluated)
+        {
+            ClusterPopulation(evaluated);
+            _currentPopulation = evaluated;
+            _allEvaluatedIndividuals.AddRange(evaluated);
+
+            List<GAIndividual> newGeneration = new List<GAIndividual>();
+
+            // Process each cluster separately
+            for (int clustIdx = 0; clustIdx < NumClusters; clustIdx++)
+            {
+                List<GAIndividual> clusterIndividuals = evaluated
+                    .Where(i => i.ClustGrp == clustIdx)
+                    .ToList();
+
+                if (clusterIndividuals.Count > 0)
+                {
+                    List<GAIndividual> newClusterGen = SolveOneGeneration(clusterIndividuals);
+                    newGeneration.AddRange(newClusterGen);
+                }
+            }
+
+            return newGeneration;
+        }
+
+        /// <summary>
+        /// Exports best individuals from each cluster
+        /// </summary>
+        public List<GAIndividual> GetBestsFromClusters(int numBests)
+        {
+            List<GAIndividual> result = new List<GAIndividual>();
+
+            for (int i = 0; i < NumClusters; i++)
+            {
+                List<GAIndividual> clusterBests = _currentPopulation
+                    .Where(p => p.ClustGrp == i)
+                    .OrderBy(p => p.Fitness)
+                    .Take(numBests)
+                    .ToList();
+
+                result.AddRange(clusterBests);
+            }
+
+            return result;
+        }
+
+        private GAIndividual FindBest(List<GAIndividual> individuals)
+        {
+            return Maximize
+                ? individuals.OrderByDescending(i => i.Fitness).First()
+                : individuals.OrderBy(i => i.Fitness).First();
+        }
+
+        private GAIndividual FindWorst(List<GAIndividual> individuals)
+        {
+            return Maximize
+                ? individuals.OrderBy(i => i.Fitness).First()
+                : individuals.OrderByDescending(i => i.Fitness).First();
+        }
+
+        private List<GAIndividual> SelectElite(List<GAIndividual> individuals, int count)
+        {
+            return individuals
+                .OrderBy(i => i.Fitness)
+                .Take(count)
+                .Select(i => i.Clone())
+                .ToList();
+        }
+
+        private List<GAIndividual> SelectTournament(List<GAIndividual> individuals, int count)
+        {
+            List<GAIndividual> selected = new List<GAIndividual>();
+            Random random = new Random();
+
+            for (int i = 0; i < count - 1; i++)
+            {
+                int sampleSize = Math.Min(3, individuals.Count);
+                List<GAIndividual> tournament = individuals
+                    .OrderBy(x => random.Next())
+                    .Take(sampleSize)
+                    .ToList();
+
+                GAIndividual winner = FindBest(tournament);
+                selected.Add(winner.Clone());
+            }
+
+            selected.Add(FindBest(individuals).Clone());
+            return selected;
+        }
+
+        private List<GAIndividual> Crossover(List<GAIndividual> individuals, int numChildren)
+        {
+            List<GAIndividual> children = new List<GAIndividual>();
+            Random random = new Random();
+
+            for (int i = 0; i < numChildren; i++)
+            {
+                List<GAIndividual> parents = individuals
+                    .OrderBy(x => random.Next())
+                    .Take(2)
+                    .ToList();
+
+                if (parents.Count == 2)
+                {
+                    GAIndividual child1, child2;
+                    TwoPointCrossover(parents[0], parents[1], out child1, out child2);
+
+                    List<double> paramChild1, paramChild2;
+                    CrossoverBlxAlpha(parents[0], parents[1], out paramChild1, out paramChild2);
+
+                    child1.ChromosomeParam = AlignChromosomeParams(child1, paramChild1);
+                    child2.ChromosomeParam = AlignChromosomeParams(child2, paramChild2);
+
+                    children.Add(child1);
+                    children.Add(child2);
+                }
+            }
+
+            return children;
+        }
+
+        /// <summary>
+        /// Ensures chromosome parameters align with the chromosome length and preserve markers.
+        /// </summary>
+        private List<double> AlignChromosomeParams(GAIndividual owner, List<double> candidateParams)
+        {
+            if (owner == null)
+            {
+                throw new ArgumentNullException(nameof(owner));
+            }
+
+            int length = owner.Chromosome.Count;
+            List<double> result = new List<double>(length);
+
+            for (int i = 0; i < length; i++)
+            {
+                double value = 0.5;
+
+                if (candidateParams != null && i < candidateParams.Count)
+                {
+                    value = candidateParams[i];
+                }
+
+                if (owner.Chromosome[i] < 0)
+                {
+                    value = owner.Chromosome[i];
+                }
+                else
+                {
+                    value = Clamp(value, 0.0, 1.0);
+                }
+
+                result.Add(value);
+            }
+
+            return result;
+        }
+
+        private void TwoPointCrossover(GAIndividual parent1, GAIndividual parent2, out GAIndividual child1, out GAIndividual child2)
+        {
+            int size = parent1.Chromosome.Count;
+            if (size < 2)
+            {
+                child1 = parent1.Clone();
+                child2 = parent2.Clone();
+                return;
+            }
+
+            Random random = new Random();
+            List<int> chromo1 = new List<int>(parent1.Chromosome);
+            List<int> chromo2 = new List<int>(parent2.Chromosome);
+
+            int point1 = random.Next(1, size);
+            int point2 = random.Next(1, size - 1);
+            if (point2 >= point1)
+                point2++;
+            else
+            {
+                int temp = point1;
+                point1 = point2;
+                point2 = temp;
+            }
+
+            for (int i = point1; i < point2; i++)
+            {
+                int tmp = chromo1[i];
+                chromo1[i] = chromo2[i];
+                chromo2[i] = tmp;
+            }
+
+            child1 = new GAIndividual(chromo1, parent1.ChromosomeParam.ToList());
+            child2 = new GAIndividual(chromo2, parent2.ChromosomeParam.ToList());
+        }
+
+        private void CrossoverBlxAlpha(GAIndividual parent1, GAIndividual parent2, out List<double> child1, out List<double> child2)
+        {
+            List<double> p1 = new List<double>(parent1.ChromosomeParam);
+            List<double> p2 = new List<double>(parent2.ChromosomeParam);
+
+            child1 = new List<double>();
+            child2 = new List<double>();
+
+            if (p1.Count == 0)
+            {
+                return;
+            }
+
+            // Remove invalid genes (outside [0, 1])
+            List<int> invalidIndices = new List<int>();
+            List<double> invalidValues = new List<double>();
+
+            for (int i = p1.Count - 1; i >= 0; i--)
+            {
+                if (p1[i] < 0 || p1[i] > 1)
+                {
+                    invalidIndices.Insert(0, i);
+                    invalidValues.Insert(0, p1[i]);
+                    p1.RemoveAt(i);
+                    p2.RemoveAt(i);
+                }
+            }
+
+            for (int i = 0; i < p1.Count; i++)
+            {
+                double minX = Math.Min(p1[i], p2[i]);
+                double maxX = Math.Max(p1[i], p2[i]);
+                double dx = Math.Abs(p1[i] - p2[i]);
+
+                double minCx = minX - BlxAlpha * dx;
+                double maxCx = maxX + BlxAlpha * dx;
+
+                Random random = new Random();
+                double gene1 = (maxCx - minCx) * random.NextDouble() + minCx;
+                double gene2 = (maxCx - minCx) * random.NextDouble() + minCx;
+
+                gene1 = Clamp(gene1, 0.0, 1.0);
+                gene2 = Clamp(gene2, 0.0, 1.0);
+
+                child1.Add(gene1);
+                child2.Add(gene2);
+            }
+
+            // Restore invalid genes
+            for (int i = 0; i < invalidIndices.Count; i++)
+            {
+                child1.Insert(invalidIndices[i], invalidValues[i]);
+                child2.Insert(invalidIndices[i], invalidValues[i]);
+            }
+        }
+
+        /// <summary>
+        /// Clamps a value between min and max (replacement for Math.Clamp in C# 7.3)
+        /// </summary>
+        private double Clamp(double value, double min, double max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
+
+        /// <summary>
+        /// Simple K-Means clustering implementation
+        /// </summary>
+        private class SimpleKMeans
+        {
+            private int _numClusters;
+            private List<CentroidPoint> _centroids;
+            private Random _random;
+
+            private class CentroidPoint
+            {
+                public double Topo { get; set; }
+                public double Shape { get; set; }
+
+                public CentroidPoint(double topo, double shape)
+                {
+                    Topo = topo;
+                    Shape = shape;
+                }
+            }
+
+            public SimpleKMeans(int numClusters)
+            {
+                _numClusters = numClusters;
+                _centroids = new List<CentroidPoint>();
+                _random = new Random();
+            }
+
+            public List<int> Cluster(List<double> topoValues, List<double> shapeValues, bool initialize)
+            {
+                List<CentroidPoint> data = new List<CentroidPoint>();
+                for (int i = 0; i < topoValues.Count; i++)
+                {
+                    data.Add(new CentroidPoint(topoValues[i], shapeValues[i]));
+                }
+
+                if (initialize)
+                {
+                    // Initialize centroids with random points
+                    _centroids.Clear();
+                    for (int i = 0; i < _numClusters; i++)
+                    {
+                        int idx = _random.Next(data.Count);
+                        _centroids.Add(new CentroidPoint(data[idx].Topo, data[idx].Shape));
+                    }
+                }
+
+                // Assign points to nearest centroid
+                List<int> assignments = new List<int>();
+                foreach (CentroidPoint point in data)
+                {
+                    int bestCluster = 0;
+                    double bestDistance = double.MaxValue;
+
+                    for (int i = 0; i < _centroids.Count; i++)
+                    {
+                        double dist = EuclideanDistance(point, _centroids[i]);
+                        if (dist < bestDistance)
+                        {
+                            bestDistance = dist;
+                            bestCluster = i;
+                        }
+                    }
+
+                    assignments.Add(bestCluster);
+                }
+
+                // Update centroids (simplified - single iteration)
+                if (initialize)
+                {
+                    for (int i = 0; i < _numClusters; i++)
+                    {
+                        List<CentroidPoint> clusterPoints = new List<CentroidPoint>();
+                        for (int j = 0; j < assignments.Count; j++)
+                        {
+                            if (assignments[j] == i)
+                                clusterPoints.Add(data[j]);
+                        }
+
+                        if (clusterPoints.Count > 0)
+                        {
+                            double avgTopo = clusterPoints.Average(p => p.Topo);
+                            double avgShape = clusterPoints.Average(p => p.Shape);
+                            _centroids[i] = new CentroidPoint(avgTopo, avgShape);
+                        }
+                    }
+                }
+
+                return assignments;
+            }
+
+            private double EuclideanDistance(CentroidPoint p1, CentroidPoint p2)
+            {
+                double dx = p1.Topo - p2.Topo;
+                double dy = p1.Shape - p2.Shape;
+                return Math.Sqrt(dx * dx + dy * dy);
+            }
+        }
+
+        public void IncrementGeneration()
+        {
+            _currentGeneration++;
+        }
+
+        public int CurrentGeneration { get { return _currentGeneration; } }
+        public GAIndividual BestOfAll { get { return _bestOfAll; } }
+        public List<GAIndividual> AllEvaluatedIndividuals { get { return _allEvaluatedIndividuals; } }
+
+        /// <summary>
+        /// Ensures chromosome template lengths and rule markers are inferred from the population when not preset.
+        /// </summary>
+        private void EnsureTemplatesFromPopulation(List<GAIndividual> individuals)
+        {
+            if (individuals == null || individuals.Count == 0)
+            {
+                return;
+            }
+
+            if (_chromosomeTemplateLengths != null && _chromosomeTemplateLengths.Count > 0)
+            {
+                return;
+            }
+
+            List<int> chromo = individuals[0].Chromosome;
+            List<int> lengths = new List<int>();
+            List<int> markers = new List<int>();
+            int i = 0;
+
+            while (i < chromo.Count)
+            {
+                int ruleId = chromo[i];
+                markers.Add(ruleId);
+                i++;
+
+                int len = 0;
+                while (i < chromo.Count && chromo[i] != UT.RULE_END_MARKER && chromo[i] != -999)
+                {
+                    len++;
+                    i++;
+                }
+
+                lengths.Add(len);
+                i++; // skip end marker
+            }
+
+            _chromosomeTemplateLengths = lengths;
+            _ruleMarkersTemplate = markers;
+        }
+    }
+}
