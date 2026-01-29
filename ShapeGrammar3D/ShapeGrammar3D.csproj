@@ -23,21 +23,6 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <Compile Remove="Components\ToolboxComponents\01_Material.cs" />
-    <Compile Remove="Components\ToolboxComponents\02_Sections.cs" />
-    <Compile Remove="Components\ToolboxComponents\03_Support.cs" />
-    <Compile Remove="Components\ToolboxComponents\04_Loads.cs" />
-    <Compile Remove="Components\ToolboxComponents\05_Element1D.cs" />
-    <Compile Remove="Components\ToolboxComponents\05_ElementHinge.cs" />
-    <Compile Remove="Components\ToolboxComponents\06_Assembly.cs" />
-    <Compile Remove="Components\ToolboxComponents\07_CroSecOpt.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_DeformedShape.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Elem1DForces.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Reaction.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Utilisation.cs" />
-    <Compile Remove="Components\ToolboxComponents\10_GeneticAlgorithm.cs" />
-    <Compile Remove="Components\ToolboxComponents\98_Draw_CrossSection.cs" />
-    <Compile Remove="Components\ToolboxComponents\99_Disassembles.cs" />
     <Compile Remove="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   

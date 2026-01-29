@@ -20,9 +20,10 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
         // --- constructors --- 
         public SolveLS() { }
-        public SolveLS(ref TB_Model _mdl) 
+        public SolveLS(ref TB_Model _mdl)
         {
-            Mdl = Common.DeepCopy(_mdl);
+            // Use the supplied, fully initialized model instead of JSON deep copy
+            Mdl = _mdl;
             N_DOF = 6;
 
             Solve();

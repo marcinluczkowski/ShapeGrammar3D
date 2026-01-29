@@ -53,7 +53,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             // --- variables ---
-            ShapeGrammar.Classes.Toolbox.GH_Material gMat = null;
+            ShapeGrammar3D.Classes.Toolbox.GH_Material gMat = null;
 
             // --- input --- 
             if (!DA.GetData(0, ref gMat)) { return; }
@@ -154,7 +154,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
 
             // --- output ---
 
-            DA.SetData(0, new ShapeGrammar.Classes.Toolbox.GH_Material(gSec.Value.Mat));
+            DA.SetData(0, new ShapeGrammar3D.Classes.Toolbox.GH_Material(gSec.Value.Mat));
             DA.SetData(1, gSec.Value.Tag);
             DA.SetData(2, dims);
             DA.SetData(3, gSec.Value.Theta);

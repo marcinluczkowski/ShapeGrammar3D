@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ShapeGrammar3D.Classes.Toolbox
 {
@@ -35,11 +36,21 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
         public static T DeepCopy<T>(T target)
         {
-            // Use System.Text.Json for deep copy
-            var json = JsonSerializer.Serialize(target);
-            return JsonSerializer.Deserialize<T>(json);
-        }
+            if (target is TB_Model mdl)
+            {
+                return (T)(object)mdl.DeepCopy();
+            }
 
+            // fallback for non-graph objects
+            var opts = new JsonSerializerOptions
+            {
+                ReferenceHandler = ReferenceHandler.Preserve,
+                MaxDepth = 0
+            };
+            var json = JsonSerializer.Serialize(target, opts);
+            return JsonSerializer.Deserialize<T>(json, opts)!;
+        }
+            
 
     }
 }
