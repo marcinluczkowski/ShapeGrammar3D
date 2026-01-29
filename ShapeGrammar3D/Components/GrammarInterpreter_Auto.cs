@@ -120,9 +120,9 @@ namespace ShapeGrammar3D.Components
                     evaluatedShapes = new List<SG_Shape>();
                     evaluatedPop = EvaluatePopulation(_currentPopulation, iniShape, rls, out evaluatedShapes);
 
-                    List<GAIndividual> snapshot = UT.DeepCopy(evaluatedPop);
+                    List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
                     _allGenerations.Add(snapshot);
-                    _allShapes.Add(UT.DeepCopy(evaluatedShapes));
+                    _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
 
                     // Process evaluated individuals and create next generation
                     if (_currentGeneration < NUM_GENERATIONS - 1)

@@ -6,11 +6,12 @@ using System.Threading.Tasks;
 using Rhino.ApplicationSettings;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes.Elements;
+using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar3D.Classes.Elements
 {
     [Serializable]
-    public class SG_Elem1D : ShapeGrammar3D.Classes.Elements.SG_Element
+    public class SG_Elem1D : SG_Element
     {
         // -- properties
 
@@ -55,7 +56,7 @@ namespace ShapeGrammar3D.Classes.Elements
             Name = _el_name;
             Ln = _ln;
             CrossSection = _cs;
-            Init_Crv = UT.DeepCopy<Curve>(_ln.ToNurbsCurve());
+            Init_Crv = _ln.ToNurbsCurve().DuplicateCurve(); //UT.DeepCopy<Curve>(_ln.ToNurbsCurve());
             Crv = _ln.ToNurbsCurve();
 
             SG_Node[] nodes = new SG_Node[2];
@@ -135,7 +136,7 @@ namespace ShapeGrammar3D.Classes.Elements
             ID = _id;
             Name = _el_name;
             Crv = _crv;
-            Init_Crv = UT.DeepCopy<Curve>(_crv);
+            Init_Crv = _crv?.DuplicateCurve();
 
             Ln = new Line(_crv.PointAtStart, _crv.PointAtEnd);
             CrossSection = _cs;
@@ -205,5 +206,23 @@ namespace ShapeGrammar3D.Classes.Elements
         {
             Ln = new Line(Nodes[0].Pt, Nodes[1].Pt);
         }
+
+        public override SG_Element DeepClone()
+        {
+            var clonedNodes = Nodes?.Select(n => n?.DeepClone()).ToArray();
+            return new SG_Elem1D
+            {
+                ID = ID,
+                Name = Name,
+                Autorule = Autorule,
+                Nodes = clonedNodes,
+                Ln = Ln,
+                Crv = Crv?.DuplicateCurve(),
+                Init_Crv = Init_Crv?.DuplicateCurve(),
+                EPln = EPln,
+                CrossSection = CrossSection // if mutable, add its own clone
+            };
+        }
+
     }
 }

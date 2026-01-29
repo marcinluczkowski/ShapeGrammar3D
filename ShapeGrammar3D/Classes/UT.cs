@@ -65,23 +65,6 @@ namespace ShapeGrammar3D.Classes
         public static string GR_MISC = "99. Misc";
 
 
-        public static T DeepCopy<T>(T target)
-        {
-            // Use System.Text.Json for deep copy instead of BinaryFormatter (obsolete).
-            // Note: If types used inside T (for example Rhino.Geometry types) are not
-            // JSON-serializable, consider adding custom converters or implementing
-            // an explicit cloning method on those types.
-            if (target == null) return default(T);
-
-            var options = new JsonSerializerOptions
-            {
-                ReferenceHandler = ReferenceHandler.Preserve,
-                IncludeFields = true
-            };
-
-            string json = JsonSerializer.Serialize(target, options);
-            return JsonSerializer.Deserialize<T>(json, options);
-        }
         /// <summary>
         /// Works as a grammar interpreter by applying the list of rules to the shape
         /// </summary>
@@ -157,6 +140,21 @@ namespace ShapeGrammar3D.Classes
             {
                 return random.NextDouble() * (max - min) + min;
             }
+        }
+
+        public static List<T> DeepCopyList<T>(IEnumerable<T> source)
+            where T : IDeepCloneable<T>
+        {
+            return source?.Select(x => x.DeepClone()).ToList();
+        }
+        /// <summary>
+        /// Deep copy for SG_Shape using its DeepCopy method.
+        /// </summary>
+        /// <param name="ss"></param>
+        /// <returns></returns>
+        public static SG_Shape DeepCopy(SG_Shape ss)
+        {
+            return ss?.DeepCopy();
         }
     }
 }
