@@ -23,12 +23,6 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <Compile Remove="Components\RuleComponents\**" />
-    <EmbeddedResource Remove="Components\RuleComponents\**" />
-    <None Remove="Components\RuleComponents\**" />
-  </ItemGroup>
-  
-  <ItemGroup>
     <Compile Remove="Components\ToolboxComponents\01_Material.cs" />
     <Compile Remove="Components\ToolboxComponents\02_Sections.cs" />
     <Compile Remove="Components\ToolboxComponents\03_Support.cs" />

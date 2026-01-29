@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 
-using ShapeGrammar.Classes;
-using ShapeGrammar.Classes.Rules;
+using ShapeGrammar3D.Classes;
+using ShapeGrammar3D.Classes.Rules;
 
 namespace ShapeGrammar.Components.RuleComponents
 {

@@ -1,6 +1,6 @@
 ﻿using Grasshopper.Kernel;
-using ShapeGrammar.Classes;
-using ShapeGrammar.Classes.Rules;
+using ShapeGrammar3D.Classes;
+using ShapeGrammar3D.Classes.Rules;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -52,7 +52,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return ShapeGrammar3D.Properties.Resources.icons_Generic;
             }
         }
 
