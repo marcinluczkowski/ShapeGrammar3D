@@ -222,7 +222,7 @@ namespace ShapeGrammar3D.Components
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
                     SG_Shape shape = UT.DeepCopy(iniShape);
 
-                    for (int j = 0; j < rules.Count; j++)
+            for (int j = 0; j < rules.Count; j++)
                     {
                         string message = rules[j].RuleOperation(ref shape, ref gt);
                     }

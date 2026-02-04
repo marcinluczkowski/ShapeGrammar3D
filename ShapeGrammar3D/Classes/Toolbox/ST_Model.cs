@@ -109,9 +109,9 @@ namespace ShapeGrammar3D.Classes.Toolbox
             {
                 if (e is SG_Elem1D sg_e1d)
                 {
-                    var sg_e = e as SG_Elem1D; 
-                    var sg_m = sg_e.CrossSection.Material as SH_Material_Isotrop;
+                    var sg_e = e as SG_Elem1D;
                     var sg_cs = sg_e.CrossSection as SH_CrossSection_Rectangle;
+                    SH_Material_Isotrop sg_m = sg_e.CrossSection.Material as SH_Material_Isotrop;
 
                     TB_Material tb_m = new TB_Material(sg_m.Tag, sg_m.E, sg_m.G_ip, sg_m.Density, sg_m.alphaT, sg_m.Fy);
 

@@ -29,7 +29,7 @@ namespace ShapeGrammar3D.Classes.Elements
         // --- constructors ---
         public SG_Elem1D()
         {
-
+            CrossSection = new SH_CrossSection_Beam(); // Replace with an appropriate default instance
         }
         public SG_Elem1D(SG_Node[] _nodes, int _id)
         {
