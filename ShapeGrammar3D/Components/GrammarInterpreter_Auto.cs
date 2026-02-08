@@ -79,11 +79,11 @@ namespace ShapeGrammar3D.Components
             _allGenerations = new List<List<GAIndividual>>();
             _allShapes = new List<List<SG_Shape>>();
 
-            SG_Shape iniShape = new SG_Shape();
+            SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
             bool reset = false;
 
-            if (!DA.GetData(0, ref iniShape)) return;
+            if (!DA.GetData(0, ref ini_Shape)) return;
             if (!DA.GetDataList(1, rls)) return;
             if (!DA.GetData(2, ref reset)) return;
 
@@ -115,14 +115,52 @@ namespace ShapeGrammar3D.Components
                 List<GAIndividual> evaluatedPop = null;
                 List<SG_Shape> evaluatedShapes = null;
 
+                SG_Shape deep_copied_inishape = new SG_Shape
+                {
+                    nodeCount = ini_Shape.nodeCount,
+                    elementCount = ini_Shape.elementCount,
+
+                    // deep copy needs update
+                    Elems = ini_Shape.Elems.Select(e => e.DeepClone()).ToList(),
+                    Nodes = ini_Shape.Nodes.Select(n => n.DeepClone()).ToList(),
+                    Supports = ini_Shape.Supports.Select(s => s.DeepClone()).ToList(),
+                    LineLoads = ini_Shape.LineLoads.Select(ll => (SG_LineLoad) ll.DeepClone()).ToList(),
+                    PointLoads = ini_Shape.PointLoads.Select(pl => (SG_PointLoad) pl.DeepClone()).ToList(),
+                    SimpleShapeState = ini_Shape.SimpleShapeState
+
+                    // 
+                    // 
+
+                };
+
                 while (true)
                 {
+
+                    // deep copy function
+
+                    //deep_copied_inishape = new SG_Shape
+                    //{
+                    //    nodeCount = iniShape.nodeCount,
+                    //    elementCount = iniShape.elementCount,
+
+                    //    Elems = iniShape.Elems,
+                    //    Nodes = iniShape.Nodes,
+                    //    Supports = iniShape.Supports,
+                    //    LineLoads = iniShape.LineLoads,
+                    //    PointLoads = iniShape.PointLoads,
+                    //    SimpleShapeState = iniShape.SimpleShapeState
+                    //};
+
+
+
                     evaluatedShapes = new List<SG_Shape>();
-                    evaluatedPop = EvaluatePopulation(_currentPopulation, iniShape, rls, out evaluatedShapes);
+                    evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes);
 
                     List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
                     _allGenerations.Add(snapshot);
                     _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
+
+
 
                     // Process evaluated individuals and create next generation
                     if (_currentGeneration < NUM_GENERATIONS - 1)
@@ -141,7 +179,7 @@ namespace ShapeGrammar3D.Components
                 }
 
                 // Output results
-                OutputResults(DA, evaluatedPop, iniShape, rls);
+                OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                     string.Format("GA completed {0} generations", NUM_GENERATIONS));
             }
@@ -220,7 +258,26 @@ namespace ShapeGrammar3D.Components
                 try
                 {
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-                    SG_Shape shape = UT.DeepCopy(iniShape);
+                    
+                    
+                    // SG_Shape shape = UT.DeepCopy(iniShape);
+
+                    // added on 04 feb 2026
+                    // deep copy function
+
+                    SG_Shape shape = new SG_Shape
+                    {
+                        nodeCount = iniShape.nodeCount,
+                        elementCount = iniShape.elementCount,
+
+                        Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
+                        Nodes = iniShape.Nodes,
+                        Supports = iniShape.Supports,
+                        LineLoads = iniShape.LineLoads,
+                        PointLoads = iniShape.PointLoads,
+                        SimpleShapeState = iniShape.SimpleShapeState
+                    };
+
 
                     for (int j = 0; j < rules.Count; j++)
                     {
