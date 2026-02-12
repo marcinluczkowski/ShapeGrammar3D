@@ -14,9 +14,9 @@ namespace ShapeGrammar3D.Components
     public class GrammarInterpreter_Auto : GH_Component
     {
         // Genetic Algorithm configuration constants
-        private const int POPULATION_SIZE = 5;
+        private const int POPULATION_SIZE = 20;
         private const int NUM_GENERATIONS = 2;
-        private const int NUM_CLUSTERS = 3;
+        private const int NUM_CLUSTERS = 1;
         private const double MUTATION_PROBABILITY = 0.10;
         private const double CROSSOVER_PROBABILITY = 0.9;
         private const double ELITE_PROBABILITY = 0.1;
@@ -101,96 +101,94 @@ namespace ShapeGrammar3D.Components
 
             _isRunning = true;
 
-            try
+            //try
+            //{
+            if (_currentPopulation == null)
             {
-                if (_currentPopulation == null)
+                List<int> chromosomeLengths = GetChromosomeLengths(rls);
+                List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
+                _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
+                // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
+            }
+
+            List<GAIndividual> evaluatedPop = null;
+            List<SG_Shape> evaluatedShapes = null;
+
+            SG_Shape deep_copied_inishape = new SG_Shape
+            {
+                nodeCount = ini_Shape.nodeCount,
+                elementCount = ini_Shape.elementCount,
+
+                // deep copy needs update
+                Elems = ini_Shape.Elems.Select(e => e.DeepClone()).ToList(),
+                Nodes = ini_Shape.Nodes.Select(n => n.DeepClone()).ToList(),
+                Supports = ini_Shape.Supports.Select(s => s.DeepClone()).ToList(),
+                LineLoads = ini_Shape.LineLoads.Select(ll => (SG_LineLoad) ll.DeepClone()).ToList(),
+                PointLoads = ini_Shape.PointLoads.Select(pl => (SG_PointLoad) pl.DeepClone()).ToList(),
+                SimpleShapeState = ini_Shape.SimpleShapeState
+
+            };
+
+            while (true)
+            {
+
+                // deep copy function
+
+                //deep_copied_inishape = new SG_Shape
+                //{
+                //    nodeCount = iniShape.nodeCount,
+                //    elementCount = iniShape.elementCount,
+
+                //    Elems = iniShape.Elems,
+                //    Nodes = iniShape.Nodes,
+                //    Supports = iniShape.Supports,
+                //    LineLoads = iniShape.LineLoads,
+                //    PointLoads = iniShape.PointLoads,
+                //    SimpleShapeState = iniShape.SimpleShapeState
+                //};
+
+
+
+                evaluatedShapes = new List<SG_Shape>();
+                evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes);
+
+                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
+                _allGenerations.Add(snapshot);
+                _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
+
+
+
+                // Process evaluated individuals and create next generation
+                if (_currentGeneration < NUM_GENERATIONS - 1)
                 {
-                    List<int> chromosomeLengths = GetChromosomeLengths(rls);
-                    List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-                    _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
-                    // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                    //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
+                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    _ga.IncrementGeneration();
+                    _currentGeneration = _ga.CurrentGeneration;
                 }
-
-                List<GAIndividual> evaluatedPop = null;
-                List<SG_Shape> evaluatedShapes = null;
-
-                SG_Shape deep_copied_inishape = new SG_Shape
+                else
                 {
-                    nodeCount = ini_Shape.nodeCount,
-                    elementCount = ini_Shape.elementCount,
-
-                    // deep copy needs update
-                    Elems = ini_Shape.Elems.Select(e => e.DeepClone()).ToList(),
-                    Nodes = ini_Shape.Nodes.Select(n => n.DeepClone()).ToList(),
-                    Supports = ini_Shape.Supports.Select(s => s.DeepClone()).ToList(),
-                    LineLoads = ini_Shape.LineLoads.Select(ll => (SG_LineLoad) ll.DeepClone()).ToList(),
-                    PointLoads = ini_Shape.PointLoads.Select(pl => (SG_PointLoad) pl.DeepClone()).ToList(),
-                    SimpleShapeState = ini_Shape.SimpleShapeState
-
-                    // 
-                    // 
-
-                };
-
-                while (true)
-                {
-
-                    // deep copy function
-
-                    //deep_copied_inishape = new SG_Shape
-                    //{
-                    //    nodeCount = iniShape.nodeCount,
-                    //    elementCount = iniShape.elementCount,
-
-                    //    Elems = iniShape.Elems,
-                    //    Nodes = iniShape.Nodes,
-                    //    Supports = iniShape.Supports,
-                    //    LineLoads = iniShape.LineLoads,
-                    //    PointLoads = iniShape.PointLoads,
-                    //    SimpleShapeState = iniShape.SimpleShapeState
-                    //};
-
-
-
-                    evaluatedShapes = new List<SG_Shape>();
-                    evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes);
-
-                    List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
-                    _allGenerations.Add(snapshot);
-                    _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
-
-
-
-                    // Process evaluated individuals and create next generation
-                    if (_currentGeneration < NUM_GENERATIONS - 1)
-                    {
-                        _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                        _ga.IncrementGeneration();
-                        _currentGeneration = _ga.CurrentGeneration;
-                    }
-                    else
-                    {
-                        _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                            string.Format("Completed all {0} generations", NUM_GENERATIONS));
-                        break;
-                    }
+                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                        string.Format("Completed all {0} generations", NUM_GENERATIONS));
+                    break;
                 }
+            }
 
-                // Output results
-                OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                    string.Format("GA completed {0} generations", NUM_GENERATIONS));
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
-            }
-            finally
-            {
-                _isRunning = false;
-            }
+            // Output results
+            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                string.Format("GA completed {0} generations", NUM_GENERATIONS));
+            // }
+            //catch (Exception ex)
+            //{
+                
+            //    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
+            //}
+            //finally
+            //{
+            //    _isRunning = false;
+            //}
         }
 
         /// <summary>
@@ -226,7 +224,7 @@ namespace ShapeGrammar3D.Components
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(R.Next(2,6)); // default length per rule
+                lengths.Add(R.Next(6,10)); // default length per rule
             }
             return lengths;
         }
@@ -490,7 +488,22 @@ namespace ShapeGrammar3D.Components
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
         {
             SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-            shape = UT.DeepCopy(iniShape);
+            // shape = iniShape;
+
+            shape = new SG_Shape
+            {
+                nodeCount = iniShape.nodeCount,
+                elementCount = iniShape.elementCount,
+
+                // deep copy needs update
+                Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
+                Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
+                Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
+                LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
+                PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
+                SimpleShapeState = iniShape.SimpleShapeState
+
+            };
 
             for (int j = 0; j < rules.Count; j++)
             {

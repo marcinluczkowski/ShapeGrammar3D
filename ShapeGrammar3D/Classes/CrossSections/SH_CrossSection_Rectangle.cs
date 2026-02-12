@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace ShapeGrammar3D.Classes
 {
@@ -25,6 +26,17 @@ namespace ShapeGrammar3D.Classes
             Wy = (_width * Math.Pow(_height, 2)) / 6;
             Iy = (_width * Math.Pow(_height, 3)) / 12;
             Area = width * height;
+        }
+        public SH_CrossSection_Rectangle(double _height = 10, double _width = 10)
+        {
+            Name = "default crosec";
+            height = _height;
+            width = _width;
+            Wy = (_width * Math.Pow(_height, 2)) / 6;
+            Iy = (_width * Math.Pow(_height, 3)) / 12;
+            Area = width * height;
+
+            //Material = 
         }
 
         // --- methods ---

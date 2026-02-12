@@ -8,6 +8,7 @@ using Grasshopper.Kernel;
 using Rhino.Geometry;
 
 using ShapeGrammar3D.Classes.Elements;
+using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar3D.Classes.Rules
 {
@@ -67,6 +68,10 @@ namespace ShapeGrammar3D.Classes.Rules
             ss_ref.UnregisterElemsFromNodes();
             ss_ref.RegisterElemsToNodes();
 
+            // default cross-section
+            SH_CrossSection_Rectangle def_crosec = new SH_CrossSection_Rectangle(10, 10);
+            def_crosec.Material = (SH_Material) SH_Material_Isotrop.Default_Material();
+
             for (int i = 0; i < selectedIntGenes.Count; i++)
             {
                 if (selectedIntGenes[i] == 0) continue;
@@ -100,10 +105,16 @@ namespace ShapeGrammar3D.Classes.Rules
                         Line ln = new Line(ss_ref.Nodes[i].Pt, ss_ref.Nodes[i].NPln.YAxis, length);
                         SG_Elem1D elem = new SG_Elem1D(ln, -999, "3DAR2", new SH_CrossSection_Beam()) { Autorule = UT.RULE020_MARKER };
 
+
+                        // SG_Elem1D newCrv0 = new SG_Elem1D(new SG_Node[2] { elem.Nodes[0], midNode }, elem.Crv.Split(i1.ParameterAt(param))[0], elem.Init_Crv,  ss_ref.elementCount, elem.Name, elem.CrossSection) { Autorule = UT.RULE010_MARKER };
+
                         elem.Init_Crv = baseElem.Init_Crv;
 
                         elem.Nodes[0] = ss_ref.Nodes[i];
                         elem.Nodes[1] = new SG_Node(ln.To, -999);
+
+                        elem.Name = "default";
+                        elem.CrossSection = (SH_CrossSection_Beam) def_crosec; 
 
                         SG_Elem1D iniElem = ss_ref.Nodes[i].Elements.OfType<SG_Elem1D>().FirstOrDefault();
                         if (iniElem != null)

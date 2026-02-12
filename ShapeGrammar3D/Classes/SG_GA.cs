@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
+using Rhino;
 
 namespace ShapeGrammar3D.Classes
 {
@@ -359,6 +360,10 @@ namespace ShapeGrammar3D.Classes
             selectedIndividuals.AddRange(mutated);
 
             // Step 6: Tournament selection for next generation
+            if (selectedIndividuals.Count == 0)
+            {
+                RhinoApp.WriteLine("selected individuals are null.");
+            }
             List<GAIndividual> newGeneration = SelectTournament(selectedIndividuals, popSize);
             newGeneration.Add(best.Clone());
 
@@ -454,6 +459,7 @@ namespace ShapeGrammar3D.Classes
 
         private GAIndividual FindBest(List<GAIndividual> individuals)
         {
+
             return Maximize
                 ? individuals.OrderByDescending(i => i.Fitness).First()
                 : individuals.OrderBy(i => i.Fitness).First();
@@ -491,7 +497,10 @@ namespace ShapeGrammar3D.Classes
                 GAIndividual winner = FindBest(tournament);
                 selected.Add(winner.Clone());
             }
-
+            if (individuals.Count == 0)
+            {
+                RhinoApp.WriteLine("Individuals are null");
+            }
             selected.Add(FindBest(individuals).Clone());
             return selected;
         }
