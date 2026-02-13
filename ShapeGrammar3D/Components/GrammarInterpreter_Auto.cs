@@ -8,15 +8,16 @@ using ShapeGrammar3D.Classes.Rules;
 using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
+using System.Drawing.Drawing2D;
 using System.Linq;
 namespace ShapeGrammar3D.Components
 {
     public class GrammarInterpreter_Auto : GH_Component
     {
         // Genetic Algorithm configuration constants
-        private const int POPULATION_SIZE = 20;
+        private const int POPULATION_SIZE = 5;
         private const int NUM_GENERATIONS = 2;
-        private const int NUM_CLUSTERS = 1;
+        private const int NUM_CLUSTERS = 3;
         private const double MUTATION_PROBABILITY = 0.10;
         private const double CROSSOVER_PROBABILITY = 0.9;
         private const double ELITE_PROBABILITY = 0.1;
@@ -62,10 +63,98 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("All Fitness", "All Fitness", "All fitness values", GH_ParamAccess.list);
             pManager.AddIntegerParameter("Generation", "Gen", "Current generation number", GH_ParamAccess.item);
             pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);
-
+            pManager.AddGenericParameter("FirstGeneration", "1gAll Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);
+            pManager.AddGenericParameter("SecondGeneration", "2gAll Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);
             pManager[1].Optional = true;
         }
 
+        /// <summary>
+        /// Creates a deep copy of the SG_Shape object
+        /// </summary>      
+        private SG_Shape DeepCopySGShape(SG_Shape original)
+        {
+            if (original == null)
+            {
+                throw new ArgumentNullException(nameof(original));
+            }
+
+            return original.DeepCopy();
+        }
+        private SG_Shape InitialShapeForGenotype(SG_Shape template, SG_Genotype genotype, List<SG_Rule> rules)
+        {
+            if (template == null) throw new ArgumentNullException(nameof(template));
+            if (genotype == null) throw new ArgumentNullException(nameof(genotype));
+
+            var shape = new SG_Shape
+            {
+                Elems = new List<SG_Element>(),
+                Nodes = new List<SG_Node>(),
+                Supports = new List<SG_Support>(),
+                LineLoads = template.LineLoads?.Select(ll => ll != null ? (SG_LineLoad)ll.DeepClone() : null).ToList() ?? new List<SG_LineLoad>(),
+                PointLoads = template.PointLoads?.Select(pl => pl != null ? (SG_PointLoad)pl.DeepClone() : null).ToList() ?? new List<SG_PointLoad>(),
+                SimpleShapeState = template.SimpleShapeState,
+                NurbsCurves = template.NurbsCurves,
+            };
+
+            if (template.Supports != null)
+            {
+                foreach (var support in template.Supports)
+                {
+                    if (support == null)
+                    {
+                        shape.Supports.Add(null);
+                        continue;
+                    }
+
+                    var supportClone = support.DeepClone();
+                    var supportNode = new SG_Node
+                    {
+                        ID = shape.nodeCount,
+                        Pt = support.Pt
+                    };
+
+                    supportNode.Support = supportClone;
+                    supportClone.Node = supportNode;
+
+                    shape.Nodes.Add(supportNode);
+                    shape.Supports.Add(supportClone);
+                    shape.nodeCount++;
+                }
+            }
+
+            if (rules != null)
+            {
+                foreach (var rule in rules)
+                {
+                    if (!ShouldApplyRule(rule, genotype))
+                    {
+                        continue;
+                    }
+
+                    rule.RuleOperation(ref shape, ref genotype);
+                }
+            }
+
+            shape.nodeCount = shape.Nodes?.Count ?? 0;
+            shape.elementCount = shape.Elems?.Count ?? 0;
+
+            return shape;
+        }
+
+        private static bool ShouldApplyRule(SG_Rule rule, SG_Genotype genotype)
+        {
+            if (rule == null || genotype == null)
+            {
+                return false;
+            }
+
+            if (!genotype.TryGetGeneSegment(rule.RuleMarker, out var genes, out _))
+            {
+                return false;
+            }
+
+            return genes.Any(g => g != 0 && g != UT.RULE_END_MARKER);
+        }
         /// <summary>
         /// This is the method that actually does the work.
         /// </summary>
@@ -101,94 +190,38 @@ namespace ShapeGrammar3D.Components
 
             _isRunning = true;
 
-            //try
-            //{
-            if (_currentPopulation == null)
+            try
             {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls);
-                List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-                _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
-                // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
-            }
+                if (_currentPopulation == null)
+                {
+                    List<int> chromosomeLengths = GetChromosomeLengths(rls);
+                    List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
+                    _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
+                }
 
-            List<GAIndividual> evaluatedPop = null;
-            List<SG_Shape> evaluatedShapes = null;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Initial population created");
+                List<SG_Shape> evaluatedShapes = new List<SG_Shape>();
+                SG_Shape baseShape = DeepCopySGShape(ini_Shape);
 
-            SG_Shape deep_copied_inishape = new SG_Shape
-            {
-                nodeCount = ini_Shape.nodeCount,
-                elementCount = ini_Shape.elementCount,
+                List<GAIndividual> evaluatedPop = EvaluatePopulation(_currentPopulation, baseShape, rls, out evaluatedShapes);
 
-                // deep copy needs update
-                Elems = ini_Shape.Elems.Select(e => e.DeepClone()).ToList(),
-                Nodes = ini_Shape.Nodes.Select(n => n.DeepClone()).ToList(),
-                Supports = ini_Shape.Supports.Select(s => s.DeepClone()).ToList(),
-                LineLoads = ini_Shape.LineLoads.Select(ll => (SG_LineLoad) ll.DeepClone()).ToList(),
-                PointLoads = ini_Shape.PointLoads.Select(pl => (SG_PointLoad) pl.DeepClone()).ToList(),
-                SimpleShapeState = ini_Shape.SimpleShapeState
-
-            };
-
-            while (true)
-            {
-
-                // deep copy function
-
-                //deep_copied_inishape = new SG_Shape
-                //{
-                //    nodeCount = iniShape.nodeCount,
-                //    elementCount = iniShape.elementCount,
-
-                //    Elems = iniShape.Elems,
-                //    Nodes = iniShape.Nodes,
-                //    Supports = iniShape.Supports,
-                //    LineLoads = iniShape.LineLoads,
-                //    PointLoads = iniShape.PointLoads,
-                //    SimpleShapeState = iniShape.SimpleShapeState
-                //};
-
-
-
-                evaluatedShapes = new List<SG_Shape>();
-                evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Initial population evaluated");
 
                 List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
                 _allGenerations.Add(snapshot);
-                _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
+                _allShapes.Add(evaluatedShapes.Select(DeepCopySGShape).ToList());
 
-
-
-                // Process evaluated individuals and create next generation
-                if (_currentGeneration < NUM_GENERATIONS - 1)
-                {
-                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                    _ga.IncrementGeneration();
-                    _currentGeneration = _ga.CurrentGeneration;
-                }
-                else
-                {
-                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                        string.Format("Completed all {0} generations", NUM_GENERATIONS));
-                    break;
-                }
+                OutputResults(DA, evaluatedPop, baseShape, rls);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Initial population sended");
             }
-
-            // Output results
-            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
-            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                string.Format("GA completed {0} generations", NUM_GENERATIONS));
-            // }
-            //catch (Exception ex)
-            //{
-                
-            //    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
-            //}
-            //finally
-            //{
-            //    _isRunning = false;
-            //}
+            catch (Exception ex)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
+            }
+            finally
+            {
+                _isRunning = false;
+            }
         }
 
         /// <summary>
@@ -224,7 +257,7 @@ namespace ShapeGrammar3D.Components
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(R.Next(6,10)); // default length per rule
+                lengths.Add(3); // default length per rule R.Next(2,6)
             }
             return lengths;
         }
@@ -256,32 +289,15 @@ namespace ShapeGrammar3D.Components
                 try
                 {
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
+
+                    SG_Shape shape = DeepCopySGShape(iniShape);
+                    //SG_Shape shape1 = InitialShapeForGenotype(iniShape, gt, rules);
                     
-                    
-                    // SG_Shape shape = UT.DeepCopy(iniShape);
-
-                    // added on 04 feb 2026
-                    // deep copy function
-
-                    SG_Shape shape = new SG_Shape
-                    {
-                        nodeCount = iniShape.nodeCount,
-                        elementCount = iniShape.elementCount,
-
-                        Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
-                        Nodes = iniShape.Nodes,
-                        Supports = iniShape.Supports,
-                        LineLoads = iniShape.LineLoads,
-                        PointLoads = iniShape.PointLoads,
-                        SimpleShapeState = iniShape.SimpleShapeState
-                    };
-
-
                     for (int j = 0; j < rules.Count; j++)
                     {
                         string message = rules[j].RuleOperation(ref shape, ref gt);
                     }
-
+                    
                     TB_Model tb_mdl = new TB_Model(shape);
                     SolveLS slv = new SolveLS(ref tb_mdl);
 
@@ -485,31 +501,18 @@ namespace ShapeGrammar3D.Components
             DA.SetData(6, info);
         }
 
+
+
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
         {
             SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-            // shape = iniShape;
-
-            shape = new SG_Shape
-            {
-                nodeCount = iniShape.nodeCount,
-                elementCount = iniShape.elementCount,
-
-                // deep copy needs update
-                Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
-                Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
-                Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
-                LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
-                PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
-                SimpleShapeState = iniShape.SimpleShapeState
-
-            };
-
+            shape = UT.DeepCopy(iniShape);
+            /*
             for (int j = 0; j < rules.Count; j++)
             {
                 string message = rules[j].RuleOperation(ref shape, ref gt);
             }
-
+            */
             model = new TB_Model(shape);
             SolveLS slv = new SolveLS(ref model);
         }

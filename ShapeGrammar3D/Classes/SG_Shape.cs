@@ -118,20 +118,104 @@ namespace ShapeGrammar3D.Classes
 
         public SG_Shape DeepCopy()
         {
-            SG_Shape simpleShapeCopy = new SG_Shape
+            var clone = new SG_Shape
             {
-                nodeCount = this.nodeCount,
-                elementCount = this.elementCount,
-
-                Elems = this.Elems,
-                Nodes = this.Nodes,
-                Supports = this.Supports,
-                LineLoads = this.LineLoads,
-                PointLoads = this.PointLoads,
-                SimpleShapeState = this.SimpleShapeState
+                nodeCount = nodeCount,
+                elementCount = elementCount,
+                SimpleShapeState = SimpleShapeState,
+                NurbsCurves = NurbsCurves?.Select(curve => curve?.DuplicateCurve() as NurbsCurve).ToList()
             };
 
-            return simpleShapeCopy;
+            var nodeMap = new Dictionary<SG_Node, SG_Node>();
+
+            List<SG_Node> clonedNodes = null;
+            if (Nodes != null)
+            {
+                clonedNodes = new List<SG_Node>(Nodes.Count);
+                foreach (var node in Nodes)
+                {
+                    if (node == null)
+                    {
+                        clonedNodes.Add(null);
+                        continue;
+                    }
+
+                    var clonedNode = node.DeepClone();
+                    nodeMap[node] = clonedNode;
+                    clonedNodes.Add(clonedNode);
+                }
+            }
+            clone.Nodes = Nodes != null ? clonedNodes ?? new List<SG_Node>() : null;
+
+            List<SG_Element> clonedElems = null;
+            if (Elems != null)
+            {
+                clonedElems = new List<SG_Element>(Elems.Count);
+                foreach (var elem in Elems)
+                {
+                    if (elem == null)
+                    {
+                        clonedElems.Add(null);
+                        continue;
+                    }
+
+                    var elemClone = elem.DeepClone();
+
+                    if (elem.Nodes != null && elemClone.Nodes != null)
+                    {
+                        for (int i = 0; i < elem.Nodes.Length; i++)
+                        {
+                            var sourceNode = elem.Nodes[i];
+                            if (sourceNode != null && nodeMap.TryGetValue(sourceNode, out var mappedNode))
+                            {
+                                elemClone.Nodes[i] = mappedNode;
+                                mappedNode.Elements.Add(elemClone);
+                            }
+                            else if (elemClone.Nodes[i] != null)
+                            {
+                                elemClone.Nodes[i].Elements.Add(elemClone);
+                            }
+                        }
+                    }
+
+                    clonedElems.Add(elemClone);
+                }
+            }
+            clone.Elems = Elems != null ? clonedElems ?? new List<SG_Element>() : null;
+
+            List<SG_Support> clonedSupports = null;
+            if (Supports != null)
+            {
+                clonedSupports = new List<SG_Support>(Supports.Count);
+                foreach (var support in Supports)
+                {
+                    if (support == null)
+                    {
+                        clonedSupports.Add(null);
+                        continue;
+                    }
+
+                    var supportClone = support.DeepClone();
+                    if (support.Node != null && nodeMap.TryGetValue(support.Node, out var mappedNode))
+                    {
+                        supportClone.Node = mappedNode;
+                        mappedNode.Support = supportClone;
+                    }
+
+                    clonedSupports.Add(supportClone);
+                }
+            }
+            clone.Supports = Supports != null ? clonedSupports ?? new List<SG_Support>() : null;
+
+            clone.LineLoads = LineLoads != null
+                ? LineLoads.Select(ll => ll != null ? (SG_LineLoad)ll.DeepClone() : null).ToList()
+                : null;
+
+            clone.PointLoads = PointLoads != null
+                ? PointLoads.Select(pl => pl != null ? (SG_PointLoad)pl.DeepClone() : null).ToList()
+                : null;
+
+            return clone;
         }
         
 

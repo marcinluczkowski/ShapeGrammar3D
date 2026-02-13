@@ -59,5 +59,30 @@ namespace ShapeGrammar3D.Classes
         {
             throw new NotImplementedException();
         }
+
+        public bool TryGetGeneSegment(int ruleMarker, out List<int> intSegment, out List<double> doubleSegment)
+        {
+            intSegment = new List<int>();
+            doubleSegment = new List<double>();
+
+            int start = -1;
+            int end = -1;
+            FindRange(ref start, ref end, ruleMarker);
+
+            if (start < 0 || end < 0 || start >= end)
+            {
+                return false;
+            }
+
+            var length = end - start;
+            intSegment = IntGenes.GetRange(start, Math.Min(length, IntGenes.Count - start));
+
+            if (DGenes.Count > start)
+            {
+                doubleSegment = DGenes.GetRange(start, Math.Min(length, DGenes.Count - start));
+            }
+
+            return true;
+        }
     }
 }

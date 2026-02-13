@@ -204,6 +204,9 @@ namespace ShapeGrammar3D.Classes
         /// <summary>
         /// Creates initial generation with random chromosome values
         /// </summary>
+        /// 
+        
+        
         public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths)
         {
             List<GAIndividual> generation = new List<GAIndividual>();
@@ -236,6 +239,7 @@ namespace ShapeGrammar3D.Classes
 
             return generation;
         }
+        
 
         /// <summary>
         /// Creates initial generation with explicit rule markers.
