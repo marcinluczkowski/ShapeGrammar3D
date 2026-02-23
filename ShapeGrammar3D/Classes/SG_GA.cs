@@ -241,9 +241,14 @@ namespace ShapeGrammar3D.Classes
         }
         
 
-        /// <summary>
+        /// <summary>|
         /// Creates initial generation with explicit rule markers.
-        /// </summary>
+        /// Uses stratified activation with per-rule bias:
+        /// - Rule 02 (struts) and Rule 041 (bars) get higher activation (60%-95%)
+        ///   because they produce the structural elements that drive fitness.
+        /// - Other rules use the default range (30%-90%).
+        /// The population is shuffled after generation to avoid ordering bias.
+        /// </summary>>
         public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths, List<int> ruleMarkers)
         {
             if (chromosomeLengths == null) throw new ArgumentNullException(nameof(chromosomeLengths));
@@ -260,6 +265,9 @@ namespace ShapeGrammar3D.Classes
 
             for (int cnt = 0; cnt < populationCount; cnt++)
             {
+                // Base stratified activation: linearly spread across the population
+                double t = (double)cnt / Math.Max(1, populationCount - 1);
+
                 List<int> chromosome = new List<int>();
                 List<double> chromosomeParam = new List<double>();
 
@@ -268,12 +276,27 @@ namespace ShapeGrammar3D.Classes
                     int len = chromosomeLengths[i];
                     int ruleId = ruleMarkers[i];
 
+                    // Per-rule activation bias:
+                    // Rule 02 (struts) and Rule 041 (bars) are the primary structural producers,
+                    // so they need a higher activation floor to ensure enough elements exist.
+                    double activationProb;
+                    if (ruleId == UT.RULE020_MARKER || ruleId == UT.RULE041_MARKER)
+                    {
+                        // Structural rules: 60% to 95% activation
+                        activationProb = 0.6 + 0.35 * t;
+                    }
+                    else
+                    {
+                        // Other rules (subdivision, rotation, etc.): 30% to 90%
+                        activationProb = 0.3 + 0.6 * t;
+                    }
+
                     chromosome.Add(ruleId);
                     chromosomeParam.Add(ruleId);
 
                     for (int j = 0; j < len; j++)
                     {
-                        chromosome.Add(GAIndividual._rng.Next(0, 2));
+                        chromosome.Add(GAIndividual._rng.NextDouble() < activationProb ? 1 : 0);
                         chromosomeParam.Add(GAIndividual._rng.NextDouble());
                     }
 
@@ -282,6 +305,13 @@ namespace ShapeGrammar3D.Classes
                 }
 
                 generation.Add(new GAIndividual(chromosome, chromosomeParam));
+            }
+
+            // Shuffle to remove ordering bias from stratified activation
+            for (int i = generation.Count - 1; i > 0; i--)
+            {
+                int j = Random.Shared.Next(i + 1);
+                (generation[i], generation[j]) = (generation[j], generation[i]);
             }
 
             return generation;
@@ -336,40 +366,42 @@ namespace ShapeGrammar3D.Classes
                 string.Format("Generation {0}, Cluster {1}: Best: {2:F3}, Worst: {3:F3}, Mean: {4:F3}",
                     _currentGeneration, clustGroup, best.Fitness, worst.Fitness, mean));
 
-            // Step 2: Selection - keep top 50%
-            List<GAIndividual> selectedIndividuals = individuals
-                .OrderBy(i => i.Fitness)
-                .Take((int)(0.5 * popSize))
-                .Select(i => i.Clone())
-                .ToList();
+            List<GAIndividual> newGeneration = new List<GAIndividual>();
 
-            // Step 3: Crossover
+            // Step 2: Elitism - preserve best evaluated individuals (at least 1)
+            int numElites = Math.Max(1, (int)(popSize * EliteProbability));
+            List<GAIndividual> elites = SelectElite(individuals, numElites);
+            newGeneration.AddRange(elites);
+
+            // Step 3: Crossover - create offspring from evaluated parents
             int numChildren = (int)(popSize * CrossoverProbability);
             List<GAIndividual> children = Crossover(individuals, numChildren);
-            selectedIndividuals.AddRange(children);
+            newGeneration.AddRange(children);
 
-            // Step 4: Elite selection
-            int numElites = (int)(popSize * EliteProbability);
-            List<GAIndividual> elites = SelectElite(selectedIndividuals, numElites);
-            selectedIndividuals.AddRange(elites);
-
-            // Step 5: Mutation
+            // Step 4: Mutation - inject fresh random individuals for diversity
             EnsureTemplatesFromPopulation(individuals);
             int numMutated = (int)(popSize * MutationProbability);
             List<int> mutLengths = _chromosomeTemplateLengths.Count > 0 ? _chromosomeTemplateLengths : new List<int> { 1 };
             List<int> mutMarkers = (_ruleMarkersTemplate.Count == mutLengths.Count && mutLengths.Count > 0)
                 ? _ruleMarkersTemplate
                 : mutLengths.Select((_, idx) => GetRuleId(idx)).ToList();
-            List<GAIndividual> mutated = CreateInitialGeneration(numMutated, mutLengths, mutMarkers);
-            selectedIndividuals.AddRange(mutated);
-
-            // Step 6: Tournament selection for next generation
-            if (selectedIndividuals.Count == 0)
+            if (numMutated > 0)
             {
-                RhinoApp.WriteLine("selected individuals are null.");
+                List<GAIndividual> mutated = CreateInitialGeneration(numMutated, mutLengths, mutMarkers);
+                newGeneration.AddRange(mutated);
             }
-            List<GAIndividual> newGeneration = SelectTournament(selectedIndividuals, popSize);
-            newGeneration.Add(best.Clone());
+
+            // Step 5: Fill remaining spots via tournament on EVALUATED population only
+            if (newGeneration.Count < popSize)
+            {
+                int remaining = popSize - newGeneration.Count;
+                List<GAIndividual> tournamentSelected = SelectTournament(individuals, remaining);
+                newGeneration.AddRange(tournamentSelected);
+            }
+
+            // Trim to exact population size (elites are at the front, so they survive)
+            if (newGeneration.Count > popSize)
+                newGeneration = newGeneration.Take(popSize).ToList();
 
             // Assign cluster group
             foreach (GAIndividual individual in newGeneration)
@@ -488,13 +520,12 @@ namespace ShapeGrammar3D.Classes
         private List<GAIndividual> SelectTournament(List<GAIndividual> individuals, int count)
         {
             List<GAIndividual> selected = new List<GAIndividual>();
-            Random random = new Random();
 
             for (int i = 0; i < count - 1; i++)
             {
                 int sampleSize = Math.Min(3, individuals.Count);
                 List<GAIndividual> tournament = individuals
-                    .OrderBy(x => random.Next())
+                    .OrderBy(x => Random.Shared.Next())
                     .Take(sampleSize)
                     .ToList();
 
@@ -512,12 +543,11 @@ namespace ShapeGrammar3D.Classes
         private List<GAIndividual> Crossover(List<GAIndividual> individuals, int numChildren)
         {
             List<GAIndividual> children = new List<GAIndividual>();
-            Random random = new Random();
 
             for (int i = 0; i < numChildren; i++)
             {
                 List<GAIndividual> parents = individuals
-                    .OrderBy(x => random.Next())
+                    .OrderBy(x => Random.Shared.Next())
                     .Take(2)
                     .ToList();
 
@@ -587,12 +617,11 @@ namespace ShapeGrammar3D.Classes
                 return;
             }
 
-            Random random = new Random();
             List<int> chromo1 = new List<int>(parent1.Chromosome);
             List<int> chromo2 = new List<int>(parent2.Chromosome);
 
-            int point1 = random.Next(1, size);
-            int point2 = random.Next(1, size - 1);
+            int point1 = Random.Shared.Next(1, size);
+            int point2 = Random.Shared.Next(1, size - 1);
             if (point2 >= point1)
                 point2++;
             else
@@ -650,9 +679,8 @@ namespace ShapeGrammar3D.Classes
                 double minCx = minX - BlxAlpha * dx;
                 double maxCx = maxX + BlxAlpha * dx;
 
-                Random random = new Random();
-                double gene1 = (maxCx - minCx) * random.NextDouble() + minCx;
-                double gene2 = (maxCx - minCx) * random.NextDouble() + minCx;
+                double gene1 = (maxCx - minCx) * Random.Shared.NextDouble() + minCx;
+                double gene2 = (maxCx - minCx) * Random.Shared.NextDouble() + minCx;
 
                 gene1 = Clamp(gene1, 0.0, 1.0);
                 gene2 = Clamp(gene2, 0.0, 1.0);

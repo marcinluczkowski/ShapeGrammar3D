@@ -103,18 +103,16 @@ namespace ShapeGrammar3D.Classes.Rules
                     for (int j = 0; j < numStuds; j++)
                     {
                         Line ln = new Line(ss_ref.Nodes[i].Pt, ss_ref.Nodes[i].NPln.YAxis, length);
-                        SG_Elem1D elem = new SG_Elem1D(ln, -999, "3DAR2", new SH_CrossSection_Beam()) { Autorule = UT.RULE020_MARKER };
-
-
-                        // SG_Elem1D newCrv0 = new SG_Elem1D(new SG_Node[2] { elem.Nodes[0], midNode }, elem.Crv.Split(i1.ParameterAt(param))[0], elem.Init_Crv,  ss_ref.elementCount, elem.Name, elem.CrossSection) { Autorule = UT.RULE010_MARKER };
+                        SG_Elem1D elem = new SG_Elem1D(ln, -999, "3DAR2", def_crosec)
+                        {
+                            Autorule = UT.RULE020_MARKER
+                        };
 
                         elem.Init_Crv = baseElem.Init_Crv;
-
                         elem.Nodes[0] = ss_ref.Nodes[i];
                         elem.Nodes[1] = new SG_Node(ln.To, -999);
 
-                        elem.Name = "default";
-                        elem.CrossSection = (SH_CrossSection_Beam) def_crosec; 
+                        elem.CrossSection = (SH_CrossSection_Beam)def_crosec;
 
                         SG_Elem1D iniElem = ss_ref.Nodes[i].Elements.OfType<SG_Elem1D>().FirstOrDefault();
                         if (iniElem != null)

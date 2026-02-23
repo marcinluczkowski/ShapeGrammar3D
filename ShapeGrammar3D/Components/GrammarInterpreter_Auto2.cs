@@ -11,15 +11,15 @@ using System.Collections.Generic;
 using System.Linq;
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto : GH_Component
+    public class GrammarInterpreter_Auto2 : GH_Component
     {
-        // Genetic Algorithm configuration constants
-        private const int POPULATION_SIZE = 5;
-        private const int NUM_GENERATIONS = 3;
-        private const int NUM_CLUSTERS = 1;
-        private const double MUTATION_PROBABILITY = 0.10;
-        private const double CROSSOVER_PROBABILITY = 0.9;
-        private const double ELITE_PROBABILITY = 0.1;
+        // Genetic Algorithm configuration (overridable from GH inputs)
+        private int _populationSize = 5;
+        private int _numGenerations = 3;
+        private int _numClusters = 1;
+        private double _mutationProbability = 0.10;
+        private double _crossoverProbability = 0.9;
+        private double _eliteProbability = 0.1;
         private const bool MAXIMIZE = false; // Minimize displacement
 
         private SG_GA _ga;
@@ -33,8 +33,8 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// Initializes a new instance of the GrammerInterpreter_Auto class.
         /// </summary>
-        public GrammarInterpreter_Auto()
-          : base("GrammerInterpreter_Auto", "GI_Auto",
+        public GrammarInterpreter_Auto2()
+          : base("GrammerInterpreter_Auto2", "GI_Auto",
               "Automatic Grammar Interpreter with Genetic Optimization and Linear Static Analysis",
               UT.CAT, UT.GR_INT)
         {
@@ -49,6 +49,13 @@ namespace ShapeGrammar3D.Components
             pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);
             pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list);
             pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);
+            pManager.AddIntegerParameter("Population Size", "Pop", "GA population size", GH_ParamAccess.item, 5);
+            pManager.AddIntegerParameter("Generations", "Gen", "Number of GA generations", GH_ParamAccess.item, 3);
+            pManager.AddIntegerParameter("Clusters", "Clusters", "Number of clusters", GH_ParamAccess.item, 1);
+            pManager.AddNumberParameter("Mutation Prob.", "Mut", "Mutation probability (0–1)", GH_ParamAccess.item, 0.10);
+            pManager.AddNumberParameter("Crossover Prob.", "Cross", "Crossover probability (0–1)", GH_ParamAccess.item, 0.9);
+            pManager.AddNumberParameter("Elite Prob.", "Elite", "Elite probability (0–1)", GH_ParamAccess.item, 0.1);
+
         }
 
         /// <summary>
@@ -90,6 +97,27 @@ namespace ShapeGrammar3D.Components
             if (!DA.GetDataList(1, rls)) return;
             if (!DA.GetData(2, ref reset)) return;
 
+            int populationSize = _populationSize;
+            int numGenerations = _numGenerations;
+            int numClusters = _numClusters;
+            double mutationProb = _mutationProbability;
+            double crossoverProb = _crossoverProbability;
+            double eliteProb = _eliteProbability;
+
+            if (!DA.GetData(3, ref populationSize)) return;
+            if (!DA.GetData(4, ref numGenerations)) return;
+            if (!DA.GetData(5, ref numClusters)) return;
+            if (!DA.GetData(6, ref mutationProb)) return;
+            if (!DA.GetData(7, ref crossoverProb)) return;
+            if (!DA.GetData(8, ref eliteProb)) return;
+
+            _populationSize = Math.Max(1, populationSize);
+            _numGenerations = Math.Max(1, numGenerations);
+            _numClusters = Math.Max(1, numClusters);
+            _mutationProbability = Clamp01(mutationProb);
+            _crossoverProbability = Clamp01(crossoverProb);
+            _eliteProbability = Clamp01(eliteProb);
+
             if (_ga == null || reset)
             {
                 InitializeGA();
@@ -104,81 +132,82 @@ namespace ShapeGrammar3D.Components
 
             _isRunning = true;
 
-            //try
-            //{
-            if (_currentPopulation == null)
-            {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls);
-                List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-                _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
-                // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
-            }
-
-            List<GAIndividual> evaluatedPop = null;
-            List<SG_Shape> evaluatedShapes = null;
-            List<TB_Model> evaluatedModels = null;
-
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
-            while (true)
-            {
+//try
+//{
+if (_currentPopulation == null)
+{
+    List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape.Nodes?.Count ?? 11);
+    List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
+    _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
+    // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+    //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
+}
 
-                // deep copy function
+List<GAIndividual> evaluatedPop = null;
+List<SG_Shape> evaluatedShapes = null;
+List<TB_Model> evaluatedModels = null;
 
-                //deep_copied_inishape = new SG_Shape
-                //{
-                //    nodeCount = iniShape.nodeCount,
-                //    elementCount = iniShape.elementCount,
+while (true)
+{
 
-                //    Elems = iniShape.Elems,
-                //    Nodes = iniShape.Nodes,
-                //    Supports = iniShape.Supports,
-                //    LineLoads = iniShape.LineLoads,
-                //    PointLoads = iniShape.PointLoads,
-                //    SimpleShapeState = iniShape.SimpleShapeState
-                //};
+    // deep copy function
 
-                evaluatedShapes = new List<SG_Shape>();
-                evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
+    //deep_copied_inishape = new SG_Shape
+    //{
+    //    nodeCount = iniShape.nodeCount,
+    //    elementCount = iniShape.elementCount,
 
-                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
-                _allGenerations.Add(snapshot);
-                _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
-                _allModels.Add(evaluatedModels.Select(m => CloneModel(m)).ToList());
+    //    Elems = iniShape.Elems,
+    //    Nodes = iniShape.Nodes,
+    //    Supports = iniShape.Supports,
+    //    LineLoads = iniShape.LineLoads,
+    //    PointLoads = iniShape.PointLoads,
+    //    SimpleShapeState = iniShape.SimpleShapeState
+    //};
+
+    deep_copied_inishape = CloneShape(ini_Shape); // Fresh clone each generation
+
+    evaluatedShapes = new List<SG_Shape>();
+    evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
+    List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
+    _allGenerations.Add(snapshot);
+    _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
+    _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
 
 
 
-                // Process evaluated individuals and create next generation
-                if (_currentGeneration < NUM_GENERATIONS - 1)
-                {
-                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                    _ga.IncrementGeneration();
-                    _currentGeneration = _ga.CurrentGeneration;
-                }
-                else
-                {
-                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                        string.Format("Completed all {0} generations", NUM_GENERATIONS));
-                    break;
-                }
-            }
+    // Process evaluated individuals and create next generation
+    if (_currentGeneration < _numGenerations - 1)
+    {
+        _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+        _ga.IncrementGeneration();
+        _currentGeneration = _ga.CurrentGeneration;
+    }
+    else
+    {
+        _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+            string.Format("Completed all {0} generations", _numGenerations));
+        break;
+    }
+}
 
-            // Output results
-            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
-            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                string.Format("GA completed {0} generations", NUM_GENERATIONS));
-            // }
-            //catch (Exception ex)
-            //{
+// Output results
+OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
+AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+    string.Format("GA completed {0} generations", _numGenerations));
+// }
+//catch (Exception ex)
+//{
 
-            //    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
-            //}
-            //finally
-            //{
-            //    _isRunning = false;
-            //}
+//    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
+//}
+//finally
+//{
+ //   _isRunning = false;
+ //}
         }
 
         /// <summary>
@@ -188,12 +217,12 @@ namespace ShapeGrammar3D.Components
         {
             _ga = new SG_GA
             {
-                PopulationSize = POPULATION_SIZE,
-                NumGenerations = NUM_GENERATIONS,
-                NumClusters = NUM_CLUSTERS,
-                MutationProbability = MUTATION_PROBABILITY,
-                CrossoverProbability = CROSSOVER_PROBABILITY,
-                EliteProbability = ELITE_PROBABILITY,
+                PopulationSize = _populationSize,
+                NumGenerations = _numGenerations,
+                NumClusters = _numClusters,
+                MutationProbability = _mutationProbability,
+                CrossoverProbability = _crossoverProbability,
+                EliteProbability = _eliteProbability,
                 Maximize = MAXIMIZE,
                 InitialBoost = 6,
                 BlxAlpha = 0.3
@@ -208,14 +237,12 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// Gets chromosome lengths based on the number of rules
         /// </summary>
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, int nodeCount)
         {
-            // Allocate genes per rule; adjust as needed per rule complexity
-            var R = new Random();
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(11); // default length per rule
+                lengths.Add(Math.Max(11, nodeCount + 2));
             }
             return lengths;
         }
@@ -282,6 +309,8 @@ namespace ShapeGrammar3D.Components
                     individual.Topo = 0;
                     individual.Shpe = 0;
                     evaluatedPop.Add(individual);
+                    shapesOut.Add(null);   // ← keep lists aligned
+                    modelsOut.Add(null);   // ← keep lists aligned
 
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
                         string.Format("Individual {0} evaluation failed: {1}", i, ex.Message));
@@ -439,7 +468,7 @@ namespace ShapeGrammar3D.Components
                 "Mean Fitness: {5:F6}\n" +
                 "Best Individual ID: {6}",
                 _currentGeneration,
-                NUM_GENERATIONS,
+                _numGenerations,
                 evaluatedPop.Count,
                 best.Fitness,
                 (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
@@ -506,7 +535,7 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return null;// Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;// Properties.Resources.icons_Generic;
             }
         }
 
@@ -515,7 +544,7 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         public override Guid ComponentGuid
         {
-            get { return new Guid("38d35ef6-a3b2-44b2-bfa7-23d1292d37f5"); }
+            get { return new Guid("38d35ef6-a3b2-44b2-bfa7-23d1292d22f5"); }
         }
 
         private static SG_Shape CloneShape(SG_Shape source)
@@ -528,6 +557,11 @@ namespace ShapeGrammar3D.Components
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             return source.DeepCopy();
+        }
+
+        private static double Clamp01(double value) 
+        {   
+            return Math.Clamp(value, 0.0, 1.0);
         }
     }
 }

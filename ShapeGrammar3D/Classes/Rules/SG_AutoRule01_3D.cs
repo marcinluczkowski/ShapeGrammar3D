@@ -15,20 +15,10 @@ namespace ShapeGrammar3D.Classes.Rules
     public class SG_AutoRule01_3D : SG_Rule
     {
         // --- properties ---
-
-        // from parent class
-        // public State RuleState;
-        // public string Name;
-
-        // from this class
-
-        // public int EID { get; set; }
-        // public double T { get; set; }
         public List<string> ElemNames { get; set; } = new List<string>();
         private readonly double[] bounds = { 0.2, 0.8 };
 
         // --- constructors --- 
-
         public SG_AutoRule01_3D()
         {
             RuleState = State.alpha;
@@ -92,9 +82,6 @@ namespace ShapeGrammar3D.Classes.Rules
                     param = bounds[1];
                 }
 
-                // double seglen1 = elem.Ln.Length * param;
-                // double seglen2 = elem.Ln.Length * (1 - param);
-
                 Interval i1 = elem.Crv.Domain;
                 Interval new_i1 = new Interval(i1.Min, i1.ParameterAt(param));
 
@@ -119,15 +106,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 SG_Elem1D newCrv0 = new SG_Elem1D(new SG_Node[2] { elem.Nodes[0], midNode }, elem.Crv.Split(i1.ParameterAt(param))[0], elem.Init_Crv,  ss_ref.elementCount, elem.Name, elem.CrossSection) { Autorule = UT.RULE010_MARKER };
                 SG_Elem1D newCrv1 = new SG_Elem1D(new SG_Node[] { midNode, elem.Nodes[1] }, elem.Crv.Split(i1.ParameterAt(param))[1], elem.Init_Crv, ss_ref.elementCount+1, elem.Name, elem.CrossSection) { Autorule = UT.RULE010_MARKER };
 
-                //SG_Elem1D newLn0 = new SG_Elem1D(new SG_Node[] { elem.Nodes[0], midNode }, ss_ref.elementCount, elem.Name) { Autorule = 1 };
-                //SG_Elem1D newLn1 = new SG_Elem1D(new SG_Node[] { midNode, elem.Nodes[1] }, ss_ref.elementCount + 1, elem.Name) { Autorule = 1 };
-
                 ss_ref.elementCount += 2;
-
-                // assign element to node 250904
-
-
-                // assign node to element 250904
 
                 // remove Element just split
                 removeIds.Add(elem.ID);
@@ -143,8 +122,6 @@ namespace ShapeGrammar3D.Classes.Rules
         {
             throw new NotImplementedException();
         }
-
         // methods of this class
-
     }
 }

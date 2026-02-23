@@ -109,15 +109,19 @@ namespace ShapeGrammar3D.Classes.Toolbox
             {
                 if (e is SG_Elem1D sg_e1d)
                 {
-                    var sg_e = e as SG_Elem1D; 
-                    var sg_m = sg_e.CrossSection.Material as SH_Material_Isotrop;
-                    var sg_cs = sg_e.CrossSection as SH_CrossSection_Rectangle;
+                    // always rebuild the line from the current node positions
+                    Point3d fromPt = sg_e1d.Nodes?[0]?.Pt ?? sg_e1d.Ln.From;
+                    Point3d toPt = sg_e1d.Nodes?[1]?.Pt ?? sg_e1d.Ln.To;
+                    Line liveLine = new Line(fromPt, toPt);
+
+                    var sg_m = sg_e1d.CrossSection.Material as SH_Material_Isotrop;
+                    var sg_cs = sg_e1d.CrossSection as SH_CrossSection_Rectangle;
 
                     TB_Material tb_m = new TB_Material(sg_m.Tag, sg_m.E, sg_m.G_ip, sg_m.Density, sg_m.alphaT, sg_m.Fy);
 
+                    Vector3d zvec = liveLine.Direction;
                     TB_Section tb_sec = new Section_Rect(tb_m, sg_cs.Name, sg_cs.width, sg_cs.height);
-                    var zvec = sg_e1d.EPln.ZAxis;
-                    TB_Element_1D tb_e1d = new TB_Element_1D(sg_e1d.Ln, sg_e1d.Name, tb_sec, zvec, sg_e.Ln.Length);
+                    TB_Element_1D tb_e1d = new TB_Element_1D(liveLine, sg_e1d.Name, tb_sec, zvec, liveLine.Length);
                     tb_elems.Add(tb_e1d);
                 }
             }

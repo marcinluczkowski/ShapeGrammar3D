@@ -47,7 +47,8 @@ namespace ShapeGrammar3D.Classes.Rules
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
             // algorithm for rule 05-3d
-
+            SH_CrossSection_Rectangle def_crosec = new SH_CrossSection_Rectangle(10, 10);
+            def_crosec.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
             // find relevant range in genotype
             int sid = -999;
             int eid = -999;
@@ -117,7 +118,7 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var targetStud = targetElements.OrderBy(t => t.Nodes[0].Pt.DistanceTo(stud0.Nodes[0].Pt)).ToList()[0];
 
-                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[0].Pt, targetStud.Nodes[0].Pt), -999, "3DAR5", new SH_CrossSection_Beam()) { Autorule = UT.RULE061_MARKER };
+                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[0].Pt, targetStud.Nodes[0].Pt), -999, "3DAR5", def_crosec) { Autorule = UT.RULE061_MARKER };
 
                 ss_ref.AddNewElement(newBeam);
 

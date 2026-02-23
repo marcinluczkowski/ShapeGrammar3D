@@ -30,7 +30,7 @@ namespace ShapeGrammar3D.Classes.Rules
         public SG_AutoRule041_3D(string _eName, int[] _domain)
         {
             RuleState = State.alpha;
-            Name = "SG_AutoRule04-3D";
+            Name = "SG_AutoRule041-3D";
             ElemName = _eName;
             //Option = _opt;
             Domain = _domain;
@@ -48,7 +48,8 @@ namespace ShapeGrammar3D.Classes.Rules
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
             // algorithm for rule 04-3d
-
+            SH_CrossSection_Rectangle def_crosec = new SH_CrossSection_Rectangle(10, 10);
+            def_crosec.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
             // find relevant range in genotype
             int sid = -999;
             int eid = -999;
@@ -107,7 +108,7 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (optionNumber == 2 || optionNumber == 3)
                     {
                         line = new Line(tip, rightElemPt);
-                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = UT.RULE041_MARKER };
+                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
                     }
                 }
@@ -117,7 +118,7 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (optionNumber == 1 || optionNumber == 3)
                     {
                         line = new Line(tip, leftElemPt);
-                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = UT.RULE041_MARKER };
+                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
                     }
                 }

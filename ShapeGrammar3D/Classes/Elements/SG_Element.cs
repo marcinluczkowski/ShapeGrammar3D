@@ -18,5 +18,15 @@ namespace ShapeGrammar3D.Classes.Elements
         public SG_Node[] Nodes { get; set; }
 
         public abstract SG_Element DeepClone();
+
+        private static SG_Shape CloneShape(SG_Shape source)
+        {
+            if (source == null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            return source.DeepCopy();
+        }
     }
 }
