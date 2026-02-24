@@ -244,11 +244,15 @@ namespace ShapeGrammar3D.Classes
         /// <summary>|
         /// Creates initial generation with explicit rule markers.
         /// Uses stratified activation with per-rule bias:
-        /// - Rule 02 (struts) and Rule 041 (bars) get higher activation (60%-95%)
-        ///   because they produce the structural elements that drive fitness.
+        /// - Rule 011 (num struts per node) and Rule 02 (struts): ~80% activation
+        ///   because they are the primary structural drivers.
+        /// - Rule 041 (bars) and Rule 051: high activation (70%-90%).
+        /// - Rule 01 (subdivision): moderate-high (40%-70%) to ensure enough
+        ///   node diversity for strut attachment.
+        /// - Rule 031 (rotation): lower activation (20%-60%).
         /// - Other rules use the default range (30%-90%).
         /// The population is shuffled after generation to avoid ordering bias.
-        /// </summary>>
+        /// </summary>
         public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths, List<int> ruleMarkers)
         {
             if (chromosomeLengths == null) throw new ArgumentNullException(nameof(chromosomeLengths));
@@ -277,18 +281,32 @@ namespace ShapeGrammar3D.Classes
                     int ruleId = ruleMarkers[i];
 
                     // Per-rule activation bias:
-                    // Rule 02 (struts) and Rule 041 (bars) are the primary structural producers,
-                    // so they need a higher activation floor to ensure enough elements exist.
                     double activationProb;
-                    if (ruleId == UT.RULE020_MARKER || ruleId == UT.RULE041_MARKER)
+                    if (ruleId == UT.RULE011_MARKER || ruleId == UT.RULE020_MARKER)
                     {
-                        // Structural rules: 60% to 95% activation
-                        activationProb = 0.6 + 0.35 * t;
+                        // Core structural rules (strut count + strut creation): 75% to 85%
+                        activationProb = 0.75 + 0.10 * t;
+                    }
+                    else if (ruleId == UT.RULE041_MARKER || ruleId == UT.RULE051_MARKER)
+                    {
+                        // Secondary structural rules (bars, rule051): 70% to 90%
+                        activationProb = 0.70 + 0.20 * t;
+                    }
+                    else if (ruleId == UT.RULE010_MARKER)
+                    {
+                        // Subdivision: 40% to 70% — needs to be high enough
+                        // to create diverse node layouts for struts to attach to
+                        activationProb = 0.40 + 0.30 * t;
+                    }
+                    else if (ruleId == UT.RULE031_MARKER)
+                    {
+                        // Rotation: 20% to 60%
+                        activationProb = 0.20 + 0.40 * t;
                     }
                     else
                     {
-                        // Other rules (subdivision, rotation, etc.): 30% to 90%
-                        activationProb = 0.3 + 0.6 * t;
+                        // Other rules: 30% to 90%
+                        activationProb = 0.30 + 0.60 * t;
                     }
 
                     chromosome.Add(ruleId);

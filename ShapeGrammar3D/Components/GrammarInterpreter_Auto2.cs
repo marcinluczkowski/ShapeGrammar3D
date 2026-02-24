@@ -290,6 +290,10 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
 
                     double fitness = CalculateMaxNodalDisplacement(slv.Mdl);
 
+                    System.Diagnostics.Debug.WriteLine(
+                        $"  Ind {i}: nodes={shape.Nodes?.Count}, elems={shape.Elems?.Count}, " +
+                        $"supports={shape.Supports?.Count}, fitness={fitness:E3}");
+
                     individual.Fitness = fitness;
 
                     double topo = CalculateTopologyMetric(shape);
