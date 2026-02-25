@@ -90,7 +90,7 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return null; //return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;
             }
         }
         public override Guid ComponentGuid

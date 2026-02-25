@@ -506,7 +506,7 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return null;// Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;
             }
         }
 
