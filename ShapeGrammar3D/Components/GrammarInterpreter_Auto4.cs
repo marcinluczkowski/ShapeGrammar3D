@@ -1,4 +1,4 @@
-﻿using Grasshopper.Kernel;
+using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
@@ -9,9 +9,10 @@ using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto2 : GH_Component
+    public class GrammarInterpreter_Auto4 : GH_Component
     {
         // Genetic Algorithm configuration (overridable from GH inputs)
         private int _populationSize = 5;
@@ -22,6 +23,13 @@ namespace ShapeGrammar3D.Components
         private double _eliteProbability = 0.1;
         private const bool MAXIMIZE = false; // Minimize displacement
 
+        // Clustering configuration
+        private double _topoWeight = 1.0;
+        private double _shapeWeight = 1.0;
+        private double _fitnessWeight = 0.0;
+        private int _kmeansIterations = 10;
+        private int _reclusterInterval = 5;
+
         private SG_GA _ga;
         private int _currentGeneration;
         private List<GAIndividual> _currentPopulation;
@@ -31,31 +39,42 @@ namespace ShapeGrammar3D.Components
         private List<List<TB_Model>> _allModels;
 
         /// <summary>
-        /// Initializes a new instance of the GrammerInterpreter_Auto class.
+        /// Initializes a new instance of the GrammarInterpreter_Auto4 class.
         /// </summary>
-        public GrammarInterpreter_Auto2()
-          : base("GrammerInterpreter_Auto2", "GI_Auto",
-              "Automatic Grammar Interpreter with Genetic Optimization and Linear Static Analysis",
+        public GrammarInterpreter_Auto4()
+          : base("GrammerInterpreter_Auto4", "GI_Auto4",
+              "Automatic Grammar Interpreter with GA Optimization and Clustering Control",
               UT.CAT, UT.GR_INT)
         {
-
         }
 
-        /// <summary>   
+        /// <summary>
         /// Registers all the input parameters for this component.
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list);
-            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);
-            pManager.AddIntegerParameter("Population Size", "Pop", "GA population size", GH_ParamAccess.item, 5);
-            pManager.AddIntegerParameter("Generations", "Gen", "Number of GA generations", GH_ParamAccess.item, 3);
-            pManager.AddIntegerParameter("Clusters", "Clusters", "Number of clusters", GH_ParamAccess.item, 1);
-            pManager.AddNumberParameter("Mutation Prob.", "Mut", "Mutation probability (0–1)", GH_ParamAccess.item, 0.10);
-            pManager.AddNumberParameter("Crossover Prob.", "Cross", "Crossover probability (0–1)", GH_ParamAccess.item, 0.9);
-            pManager.AddNumberParameter("Elite Prob.", "Elite", "Elite probability (0–1)", GH_ParamAccess.item, 0.1);
+            // --- Original Auto2 inputs (0-8) ---
+            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);                          // 0
+            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list); // 1
+            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 2
+            pManager.AddIntegerParameter("Population Size", "Pop", "GA population size", GH_ParamAccess.item, 5);                // 3
+            pManager.AddIntegerParameter("Generations", "Gen", "Number of GA generations", GH_ParamAccess.item, 3);              // 4
+            pManager.AddIntegerParameter("Clusters", "Clusters", "Number of clusters", GH_ParamAccess.item, 1);                 // 5
+            pManager.AddNumberParameter("Mutation Prob.", "Mut", "Mutation probability (0–1)", GH_ParamAccess.item, 0.10);       // 6
+            pManager.AddNumberParameter("Crossover Prob.", "Cross", "Crossover probability (0–1)", GH_ParamAccess.item, 0.9);   // 7
+            pManager.AddNumberParameter("Elite Prob.", "Elite", "Elite probability (0–1)", GH_ParamAccess.item, 0.1);            // 8
 
+            // --- Clustering control inputs (9-13) ---
+            pManager.AddNumberParameter("Topology Weight", "wTopo",
+                "Weight for topology metric (element count) in clustering. 0 = ignore.", GH_ParamAccess.item, 1.0);               // 9
+            pManager.AddNumberParameter("Shape Weight", "wShpe",
+                "Weight for shape metric (total element length) in clustering. 0 = ignore.", GH_ParamAccess.item, 1.0);           // 10
+            pManager.AddNumberParameter("Fitness Weight", "wFit",
+                "Weight for fitness metric in clustering. 0 = ignore (default).", GH_ParamAccess.item, 0.0);                      // 11
+            pManager.AddIntegerParameter("KMeans Iterations", "KIter",
+                "Max iterations for KMeans centroid updates per generation.", GH_ParamAccess.item, 10);                            // 12
+            pManager.AddIntegerParameter("Recluster Interval", "ReClust",
+                "Re-initialize centroids every N generations. 0 = only at generation 0.", GH_ParamAccess.item, 5);                // 13
         }
 
         /// <summary>
@@ -63,15 +82,16 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "Best SG Assembly", GH_ParamAccess.item);
-            pManager.AddParameter(new Param_TB_Model(), "TBModel", "TBModel", "Best TBModel", GH_ParamAccess.item);
-            pManager.AddNumberParameter("Fitness", "Fitness", "Best fitness value (maximal nodal displacement)", GH_ParamAccess.item);
-            pManager.AddGenericParameter("All Shapes", "All Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);
-            pManager.AddParameter(new Param_TB_Model(), "All Models", "All Models", "All evaluated TB Models", GH_ParamAccess.list);
-            pManager.AddNumberParameter("All Fitness", "All Fitness", "All fitness values", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Generation", "Gen", "Current generation number", GH_ParamAccess.item);
-            pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 8
+            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "Best SG Assembly", GH_ParamAccess.item);                      // 0
+            pManager.AddParameter(new Param_TB_Model(), "TBModel", "TBModel", "Best TBModel", GH_ParamAccess.item);             // 1
+            pManager.AddNumberParameter("Fitness", "Fitness", "Best fitness value (maximal nodal displacement)", GH_ParamAccess.item); // 2
+            pManager.AddGenericParameter("All Shapes", "All Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);        // 3
+            pManager.AddParameter(new Param_TB_Model(), "All Models", "All Models", "All evaluated TB Models", GH_ParamAccess.list); // 4
+            pManager.AddNumberParameter("All Fitness", "All Fitness", "All fitness values", GH_ParamAccess.list);                // 5
+            pManager.AddIntegerParameter("Generation", "Gen", "Current generation number", GH_ParamAccess.item);                 // 6
+            pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);                                    // 7
+            pManager.AddTextParameter("Cluster Info", "ClustInfo", "Per-cluster statistics per generation", GH_ParamAccess.item); // 8
+            pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 9
 
             pManager[1].Optional = true;
         }
@@ -79,7 +99,6 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// This is the method that actually does the work.
         /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             _ga = null;
@@ -98,6 +117,7 @@ namespace ShapeGrammar3D.Components
             if (!DA.GetDataList(1, rls)) return;
             if (!DA.GetData(2, ref reset)) return;
 
+            // --- GA parameters ---
             int populationSize = _populationSize;
             int numGenerations = _numGenerations;
             int numClusters = _numClusters;
@@ -119,6 +139,26 @@ namespace ShapeGrammar3D.Components
             _crossoverProbability = Clamp01(crossoverProb);
             _eliteProbability = Clamp01(eliteProb);
 
+            // --- Clustering parameters ---
+            double topoWeight = _topoWeight;
+            double shapeWeight = _shapeWeight;
+            double fitnessWeight = _fitnessWeight;
+            int kmeansIter = _kmeansIterations;
+            int reclusterInterval = _reclusterInterval;
+
+            DA.GetData(9, ref topoWeight);
+            DA.GetData(10, ref shapeWeight);
+            DA.GetData(11, ref fitnessWeight);
+            DA.GetData(12, ref kmeansIter);
+            DA.GetData(13, ref reclusterInterval);
+
+            _topoWeight = Math.Max(0.0, topoWeight);
+            _shapeWeight = Math.Max(0.0, shapeWeight);
+            _fitnessWeight = Math.Max(0.0, fitnessWeight);
+            _kmeansIterations = Math.Max(1, kmeansIter);
+            _reclusterInterval = Math.Max(0, reclusterInterval);
+
+            // --- init GA ---
             if (_ga == null || reset)
             {
                 InitializeGA();
@@ -135,84 +175,87 @@ namespace ShapeGrammar3D.Components
 
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
-//try
-//{
-if (_currentPopulation == null)
-{
-    List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape.Nodes?.Count ?? 11);
-    List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-    _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
-    // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-    //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
-}
+            if (_currentPopulation == null)
+            {
+                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape.Nodes?.Count ?? 11);
+                List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
+                _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
+            }
 
-List<GAIndividual> evaluatedPop = null;
-List<SG_Shape> evaluatedShapes = null;
-List<TB_Model> evaluatedModels = null;
+            List<GAIndividual> evaluatedPop = null;
+            List<SG_Shape> evaluatedShapes = null;
+            List<TB_Model> evaluatedModels = null;
+            List<string> clusterLogLines = new List<string>();
 
-while (true)
-{
+            while (true)
+            {
+                deep_copied_inishape = CloneShape(ini_Shape);
 
-    // deep copy function
+                evaluatedShapes = new List<SG_Shape>();
+                evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
+                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
+                _allGenerations.Add(snapshot);
+                _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
+                _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
 
-    //deep_copied_inishape = new SG_Shape
-    //{
-    //    nodeCount = iniShape.nodeCount,
-    //    elementCount = iniShape.elementCount,
+                // Build cluster info for this generation
+                clusterLogLines.Add(BuildClusterInfo(evaluatedPop, _currentGeneration));
 
-    //    Elems = iniShape.Elems,
-    //    Nodes = iniShape.Nodes,
-    //    Supports = iniShape.Supports,
-    //    LineLoads = iniShape.LineLoads,
-    //    PointLoads = iniShape.PointLoads,
-    //    SimpleShapeState = iniShape.SimpleShapeState
-    //};
+                if (_currentGeneration < _numGenerations - 1)
+                {
+                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    _ga.IncrementGeneration();
+                    _currentGeneration = _ga.CurrentGeneration;
+                }
+                else
+                {
+                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                        string.Format("Completed all {0} generations", _numGenerations));
+                    break;
+                }
+            }
 
-    deep_copied_inishape = CloneShape(ini_Shape); // Fresh clone each generation
+            // Output results
+            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
+            DA.SetData(8, string.Join("\n", clusterLogLines));
 
-    evaluatedShapes = new List<SG_Shape>();
-    evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
-    List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
-    _allGenerations.Add(snapshot);
-    _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
-    _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
-
-
-
-    // Process evaluated individuals and create next generation
-    if (_currentGeneration < _numGenerations - 1)
-    {
-        _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-        _ga.IncrementGeneration();
-        _currentGeneration = _ga.CurrentGeneration;
-    }
-    else
-    {
-        _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-            string.Format("Completed all {0} generations", _numGenerations));
-        break;
-    }
-}
-
-// Output results
-OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
-AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-    string.Format("GA completed {0} generations", _numGenerations));
-// }
-//catch (Exception ex)
-//{
-
-//    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
-//}
-//finally
-//{
- //   _isRunning = false;
- //}
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                string.Format("GA completed {0} generations", _numGenerations));
         }
 
         /// <summary>
-        /// Initializes the genetic algorithm with constant parameters
+        /// Builds a summary string for cluster distribution at a given generation.
+        /// </summary>
+        private string BuildClusterInfo(List<GAIndividual> population, int generation)
+        {
+            var grouped = population.GroupBy(ind => ind.ClustGrp).OrderBy(g => g.Key);
+            var parts = new List<string>();
+            parts.Add(string.Format("Gen {0}:", generation));
+
+            foreach (var grp in grouped)
+            {
+                var validFitness = grp
+                    .Where(ind => !double.IsInfinity(ind.Fitness) && ind.Fitness != double.MaxValue && ind.Fitness != double.MinValue)
+                    .ToList();
+
+                string bestStr = validFitness.Count > 0
+                    ? validFitness.Min(ind => ind.Fitness).ToString("E3")
+                    : "N/A";
+
+                double avgTopo = grp.Average(ind => ind.Topo);
+                double avgShpe = grp.Average(ind => ind.Shpe);
+
+                parts.Add(string.Format(
+                    "  Cluster {0}: n={1}, BestFit={2}, AvgTopo={3:F1}, AvgShpe={4:F1}",
+                    grp.Key, grp.Count(), bestStr, avgTopo, avgShpe));
+            }
+
+            return string.Join("\n", parts);
+        }
+
+        /// <summary>
+        /// Initializes the genetic algorithm with current parameters.
         /// </summary>
         private void InitializeGA()
         {
@@ -226,7 +269,13 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 EliteProbability = _eliteProbability,
                 Maximize = MAXIMIZE,
                 InitialBoost = 6,
-                BlxAlpha = 0.3
+                BlxAlpha = 0.3,
+                // Clustering control
+                TopoWeight = _topoWeight,
+                ShapeWeight = _shapeWeight,
+                FitnessWeight = _fitnessWeight,
+                KMeansMaxIterations = _kmeansIterations,
+                ReclusterInterval = _reclusterInterval
             };
             _currentGeneration = 0;
             _currentPopulation = null;
@@ -236,7 +285,7 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Gets chromosome lengths based on the number of rules
+        /// Gets chromosome lengths based on the number of rules.
         /// </summary>
         private List<int> GetChromosomeLengths(List<SG_Rule> rules, int nodeCount)
         {
@@ -249,20 +298,14 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Evaluates a population of individuals
+        /// Evaluates a population of individuals.
         /// </summary>
         private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut, out List<TB_Model> modelsOut)
         {
-
             shapesOut = new List<SG_Shape>();
             modelsOut = new List<TB_Model>();
 
             List<GAIndividual> evaluatedPop = new List<GAIndividual>();
-
-            //if (shapesOut == null)
-            //{
-            //    throw new ArgumentNullException(nameof(shapesOut));
-            //}
 
             if (population == null || population.Count == 0)
             {
@@ -291,10 +334,6 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
 
                     double fitness = CalculateMaxNodalDisplacement(slv.Mdl);
 
-                    System.Diagnostics.Debug.WriteLine(
-                        $"  Ind {i}: nodes={shape.Nodes?.Count}, elems={shape.Elems?.Count}, " +
-                        $"supports={shape.Supports?.Count}, fitness={fitness:E3}");
-
                     individual.Fitness = fitness;
 
                     double topo = CalculateTopologyMetric(shape);
@@ -314,8 +353,8 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                     individual.Topo = 0;
                     individual.Shpe = 0;
                     evaluatedPop.Add(individual);
-                    shapesOut.Add(null);   // ← keep lists aligned
-                    modelsOut.Add(null);   // ← keep lists aligned
+                    shapesOut.Add(null);
+                    modelsOut.Add(null);
 
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
                         string.Format("Individual {0} evaluation failed: {1}", i, ex.Message));
@@ -326,22 +365,18 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Creates a genotype from a GA individual
+        /// Creates a genotype from a GA individual.
         /// </summary>
         private SG_Genotype CreateGenotypeFromIndividual(GAIndividual individual)
         {
-            // Convert individual chromosome to genotype
-            // SG_Genotype uses IntGenes and DGenes
             List<int> intGenes = new List<int>(individual.Chromosome);
             List<double> dGenes = new List<double>(individual.ChromosomeParam);
-
             SG_Genotype gt = new SG_Genotype(intGenes, dGenes);
-
             return gt;
         }
 
         /// <summary>
-        /// Calculates the maximum nodal displacement from the analysis results
+        /// Calculates the maximum nodal displacement from the analysis results.
         /// </summary>
         private double CalculateMaxNodalDisplacement(TB_Model model)
         {
@@ -349,20 +384,17 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
 
             if (model == null || model.Nodes == null || model.Nodes.Count == 0)
             {
-                return MAXIMIZE ? double.MinValue : double.MaxValue; // Penalize invalid models
+                return MAXIMIZE ? double.MinValue : double.MaxValue;
             }
 
-            // Node.Disps is a List<double[]>, get the latest displacement
             foreach (var node in model.Nodes)
             {
                 if (node.Disps != null && node.Disps.Count > 0)
                 {
-                    // Get the last displacement result
                     double[] disp = node.Disps.Last();
 
                     if (disp != null && disp.Length >= 3)
                     {
-                        // Calculate total displacement magnitude (ignoring rotations)
                         double displacement = Math.Sqrt(
                             disp[0] * disp[0] +
                             disp[1] * disp[1] +
@@ -377,7 +409,6 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 }
             }
 
-            // Return penalty if no valid displacement found
             if (maxDisplacement == 0.0)
             {
                 return MAXIMIZE ? double.MinValue : double.MaxValue;
@@ -387,11 +418,10 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Calculates topology metric for clustering
+        /// Calculates topology metric for clustering.
         /// </summary>
         private double CalculateTopologyMetric(SG_Shape shape)
         {
-            // Simple metric: number of elements
             if (shape == null || shape.Elems == null)
                 return 0.0;
 
@@ -399,11 +429,10 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Calculates shape metric for clustering
+        /// Calculates shape metric for clustering.
         /// </summary>
         private double CalculateShapeMetric(SG_Shape shape)
         {
-            // Simple metric: total length of elements
             if (shape == null || shape.Elems == null)
                 return 0.0;
 
@@ -420,7 +449,7 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
         }
 
         /// <summary>
-        /// Outputs results to Grasshopper
+        /// Outputs results to Grasshopper.
         /// </summary>
         private void OutputResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, SG_Shape iniShape, List<SG_Rule> rules)
         {
@@ -466,22 +495,23 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 }
             }
 
-            // Prepare info string
             string info = string.Format(
                 "Generation: {0}/{1}\n" +
                 "Population Size: {2}\n" +
                 "Best Fitness: {3:F6}\n" +
                 "Worst Fitness: {4:F6}\n" +
                 "Mean Fitness: {5:F6}\n" +
-                "Best Individual ID: {6}",
+                "Best Individual ID: {6}\n" +
+                "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}",
                 _currentGeneration,
                 _numGenerations,
                 evaluatedPop.Count,
                 best.Fitness,
                 (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
                 evaluatedPop.Average(i => i.Fitness),
-                best.Id
-            );
+                best.Id,
+                _topoWeight, _shapeWeight, _fitnessWeight,
+                _kmeansIterations, _reclusterInterval);
 
             SG_Shape bestShape = null;
             TB_Model bestModel = null;
@@ -504,27 +534,24 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
             DA.SetDataTree(5, fitnessTree);
             DA.SetData(6, _currentGeneration);
             DA.SetData(7, info);
-            DA.SetDataTree(8, clustGrpTree);
+            // Output 8 (ClustInfo) is set in SolveInstance after OutputResults
+            DA.SetDataTree(9, clustGrpTree);
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
         {
             SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-            // shape = iniShape;
 
             shape = new SG_Shape
             {
                 nodeCount = iniShape.nodeCount,
                 elementCount = iniShape.elementCount,
-
-                // deep copy needs update
                 Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
                 Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
                 Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
                 LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
                 PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
                 SimpleShapeState = iniShape.SimpleShapeState
-
             };
 
             for (int j = 0; j < rules.Count; j++)
@@ -536,23 +563,14 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
             SolveLS slv = new SolveLS(ref model);
         }
 
-        /// <summary>
-        /// Provides an Icon for the component.
-        /// </summary>
         protected override System.Drawing.Bitmap Icon
         {
-            get
-            {
-                return Properties.Resources.icons_Generic;// Properties.Resources.icons_Generic;
-            }
+            get { return Properties.Resources.icons_Generic; }
         }
 
-        /// <summary>
-        /// Gets the unique ID for this component. Do not change this ID after release.
-        /// </summary>
         public override Guid ComponentGuid
         {
-            get { return new Guid("38d35ef6-a3b2-44b2-bfa7-23d1292d22f5"); }
+            get { return new Guid("B4D6E8F1-2A3C-4D5E-9F1A-8B7C6D5E4F3A"); }
         }
 
         private static SG_Shape CloneShape(SG_Shape source)
@@ -567,8 +585,8 @@ AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
             return source.DeepCopy();
         }
 
-        private static double Clamp01(double value) 
-        {   
+        private static double Clamp01(double value)
+        {
             return Math.Clamp(value, 0.0, 1.0);
         }
     }

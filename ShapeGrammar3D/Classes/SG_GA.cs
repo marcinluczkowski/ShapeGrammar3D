@@ -169,6 +169,13 @@ namespace ShapeGrammar3D.Classes
         public double EliteProbability { get; set; } = 0.1;
         public double BlxAlpha { get; set; } = 0.3;
 
+        // Clustering configuration
+        public double TopoWeight { get; set; } = 1.0;
+        public double ShapeWeight { get; set; } = 1.0;
+        public double FitnessWeight { get; set; } = 0.0;
+        public int KMeansMaxIterations { get; set; } = 10;
+        public int ReclusterInterval { get; set; } = 0; // 0 = only at generation 0
+
         // State variables
         private List<GAIndividual> _currentPopulation;
         private List<double> _bestFits;
@@ -177,6 +184,7 @@ namespace ShapeGrammar3D.Classes
         private int _currentGeneration;
         private double _topoDenominator;
         private double _shapeDenominator;
+        private double _fitnessDenominator;
 
         // Tracking templates for chromosome generation
         private List<int> _chromosomeTemplateLengths = new List<int>();
@@ -431,7 +439,7 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Performs clustering on population based on topology and shape metrics
+        /// Performs clustering on population based on weighted topology, shape, and fitness metrics.
         /// </summary>
         public void ClusterPopulation(List<GAIndividual> individuals)
         {
@@ -440,22 +448,59 @@ namespace ShapeGrammar3D.Classes
 
             List<double> topoValues = individuals.Select(i => i.Topo).ToList();
             List<double> shapeValues = individuals.Select(i => i.Shpe).ToList();
+            List<double> fitnessValues = individuals.Select(i => i.Fitness).ToList();
 
-            if (_currentGeneration == 0)
+            // Compute current-generation maxima for normalization
+            double topoMax = topoValues.Max();
+            double shapeMax = shapeValues.Max();
+            double fitnessMax = fitnessValues
+                .Where(f => !double.IsInfinity(f) && !double.IsNaN(f)
+                         && f != double.MaxValue && f != double.MinValue)
+                .DefaultIfEmpty(1.0)
+                .Max();
+
+            if (topoMax <= 0) topoMax = 1.0;
+            if (shapeMax <= 0) shapeMax = 1.0;
+            if (fitnessMax <= 0) fitnessMax = 1.0;
+
+            bool shouldInitialize = _currentGeneration == 0
+                || _kmeans == null
+                || (ReclusterInterval > 0 && _currentGeneration % ReclusterInterval == 0);
+
+            if (shouldInitialize)
             {
-                _topoDenominator = topoValues.Max();
-                _shapeDenominator = shapeValues.Max();
+                _topoDenominator = topoMax;
+                _shapeDenominator = shapeMax;
+                _fitnessDenominator = fitnessMax;
                 _kmeans = new SimpleKMeans(NumClusters);
             }
 
-            // Normalize values
-            List<double> normalizedTopo = topoValues.Select(t => t / _topoDenominator).ToList();
-            List<double> normalizedShape = shapeValues.Select(s => s / _shapeDenominator).ToList();
+            // Build weighted, normalized data points
+            List<double[]> dataPoints = new List<double[]>(individuals.Count);
+            for (int i = 0; i < individuals.Count; i++)
+            {
+                double normTopo = (_topoDenominator > 0)
+                    ? topoValues[i] / _topoDenominator * TopoWeight : 0.0;
+                double normShape = (_shapeDenominator > 0)
+                    ? shapeValues[i] / _shapeDenominator * ShapeWeight : 0.0;
 
-            // Perform clustering
-            List<int> clusters = _kmeans.Cluster(normalizedTopo, normalizedShape, _currentGeneration == 0);
+                double normFitness = 0.0;
+                if (FitnessWeight > 0)
+                {
+                    double f = fitnessValues[i];
+                    if (!double.IsInfinity(f) && !double.IsNaN(f)
+                        && f != double.MaxValue && f != double.MinValue
+                        && _fitnessDenominator > 0)
+                    {
+                        normFitness = f / _fitnessDenominator * FitnessWeight;
+                    }
+                }
 
-            // Assign cluster groups
+                dataPoints.Add(new double[] { normTopo, normShape, normFitness });
+            }
+
+            List<int> clusters = _kmeans.Cluster(dataPoints, shouldInitialize, KMeansMaxIterations);
+
             for (int i = 0; i < clusters.Count && i < individuals.Count; i++)
             {
                 individuals[i].ClustGrp = clusters[i];
@@ -726,101 +771,174 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Simple K-Means clustering implementation
+        /// K-Means clustering with K-means++ initialization, multi-dimensional support,
+        /// and iterative centroid updates.
         /// </summary>
         private class SimpleKMeans
         {
             private int _numClusters;
-            private List<CentroidPoint> _centroids;
+            private List<double[]> _centroids;
             private Random _random;
-
-            private class CentroidPoint
-            {
-                public double Topo { get; set; }
-                public double Shape { get; set; }
-
-                public CentroidPoint(double topo, double shape)
-                {
-                    Topo = topo;
-                    Shape = shape;
-                }
-            }
 
             public SimpleKMeans(int numClusters)
             {
-                _numClusters = numClusters;
-                _centroids = new List<CentroidPoint>();
+                _numClusters = Math.Max(1, numClusters);
+                _centroids = new List<double[]>();
                 _random = new Random();
             }
 
-            public List<int> Cluster(List<double> topoValues, List<double> shapeValues, bool initialize)
+            /// <summary>
+            /// Clusters the data points. When initialize is true, centroids are
+            /// seeded using K-means++. Runs up to maxIterations of assign-update.
+            /// </summary>
+            public List<int> Cluster(List<double[]> data, bool initialize, int maxIterations)
             {
-                List<CentroidPoint> data = new List<CentroidPoint>();
-                for (int i = 0; i < topoValues.Count; i++)
+                if (data.Count == 0)
+                    return new List<int>();
+
+                if (initialize || _centroids.Count != _numClusters)
                 {
-                    data.Add(new CentroidPoint(topoValues[i], shapeValues[i]));
+                    InitializeCentroidsPlusPlus(data);
                 }
 
-                if (initialize)
-                {
-                    // Initialize centroids with random points
-                    _centroids.Clear();
-                    for (int i = 0; i < _numClusters; i++)
-                    {
-                        int idx = _random.Next(data.Count);
-                        _centroids.Add(new CentroidPoint(data[idx].Topo, data[idx].Shape));
-                    }
-                }
+                List<int> assignments = AssignToClusters(data);
 
-                // Assign points to nearest centroid
-                List<int> assignments = new List<int>();
-                foreach (CentroidPoint point in data)
+                for (int iter = 0; iter < maxIterations; iter++)
                 {
-                    int bestCluster = 0;
-                    double bestDistance = double.MaxValue;
+                    UpdateCentroids(data, assignments);
+                    List<int> newAssignments = AssignToClusters(data);
 
-                    for (int i = 0; i < _centroids.Count; i++)
+                    bool converged = true;
+                    for (int i = 0; i < assignments.Count; i++)
                     {
-                        double dist = EuclideanDistance(point, _centroids[i]);
-                        if (dist < bestDistance)
+                        if (assignments[i] != newAssignments[i])
                         {
-                            bestDistance = dist;
-                            bestCluster = i;
+                            converged = false;
+                            break;
                         }
                     }
 
-                    assignments.Add(bestCluster);
-                }
-
-                // Update centroids (simplified - single iteration)
-                if (initialize)
-                {
-                    for (int i = 0; i < _numClusters; i++)
-                    {
-                        List<CentroidPoint> clusterPoints = new List<CentroidPoint>();
-                        for (int j = 0; j < assignments.Count; j++)
-                        {
-                            if (assignments[j] == i)
-                                clusterPoints.Add(data[j]);
-                        }
-
-                        if (clusterPoints.Count > 0)
-                        {
-                            double avgTopo = clusterPoints.Average(p => p.Topo);
-                            double avgShape = clusterPoints.Average(p => p.Shape);
-                            _centroids[i] = new CentroidPoint(avgTopo, avgShape);
-                        }
-                    }
+                    assignments = newAssignments;
+                    if (converged) break;
                 }
 
                 return assignments;
             }
 
-            private double EuclideanDistance(CentroidPoint p1, CentroidPoint p2)
+            /// <summary>
+            /// K-means++ seeding: first centroid random, subsequent centroids
+            /// chosen with probability proportional to squared distance.
+            /// </summary>
+            private void InitializeCentroidsPlusPlus(List<double[]> data)
             {
-                double dx = p1.Topo - p2.Topo;
-                double dy = p1.Shape - p2.Shape;
-                return Math.Sqrt(dx * dx + dy * dy);
+                _centroids.Clear();
+
+                int firstIdx = _random.Next(data.Count);
+                _centroids.Add((double[])data[firstIdx].Clone());
+
+                for (int c = 1; c < _numClusters; c++)
+                {
+                    double[] distances = new double[data.Count];
+                    double totalDist = 0;
+
+                    for (int i = 0; i < data.Count; i++)
+                    {
+                        double minDist = double.MaxValue;
+                        foreach (double[] centroid in _centroids)
+                        {
+                            double dist = SquaredDistance(data[i], centroid);
+                            if (dist < minDist) minDist = dist;
+                        }
+                        distances[i] = minDist;
+                        totalDist += minDist;
+                    }
+
+                    if (totalDist == 0)
+                    {
+                        _centroids.Add((double[])data[_random.Next(data.Count)].Clone());
+                        continue;
+                    }
+
+                    double r = _random.NextDouble() * totalDist;
+                    double cumulative = 0;
+                    bool added = false;
+                    for (int i = 0; i < data.Count; i++)
+                    {
+                        cumulative += distances[i];
+                        if (cumulative >= r)
+                        {
+                            _centroids.Add((double[])data[i].Clone());
+                            added = true;
+                            break;
+                        }
+                    }
+
+                    if (!added)
+                        _centroids.Add((double[])data[data.Count - 1].Clone());
+                }
+            }
+
+            private List<int> AssignToClusters(List<double[]> data)
+            {
+                List<int> assignments = new List<int>(data.Count);
+                foreach (double[] point in data)
+                {
+                    int bestCluster = 0;
+                    double bestDist = double.MaxValue;
+
+                    for (int c = 0; c < _centroids.Count; c++)
+                    {
+                        double dist = SquaredDistance(point, _centroids[c]);
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            bestCluster = c;
+                        }
+                    }
+
+                    assignments.Add(bestCluster);
+                }
+                return assignments;
+            }
+
+            private void UpdateCentroids(List<double[]> data, List<int> assignments)
+            {
+                int dims = data[0].Length;
+
+                for (int c = 0; c < _numClusters; c++)
+                {
+                    List<double[]> clusterPoints = new List<double[]>();
+                    for (int i = 0; i < assignments.Count; i++)
+                    {
+                        if (assignments[i] == c)
+                            clusterPoints.Add(data[i]);
+                    }
+
+                    if (clusterPoints.Count > 0)
+                    {
+                        double[] newCentroid = new double[dims];
+                        for (int d = 0; d < dims; d++)
+                        {
+                            double sum = 0;
+                            for (int p = 0; p < clusterPoints.Count; p++)
+                                sum += clusterPoints[p][d];
+                            newCentroid[d] = sum / clusterPoints.Count;
+                        }
+                        _centroids[c] = newCentroid;
+                    }
+                }
+            }
+
+            private double SquaredDistance(double[] p1, double[] p2)
+            {
+                double sum = 0;
+                int dims = Math.Min(p1.Length, p2.Length);
+                for (int d = 0; d < dims; d++)
+                {
+                    double diff = p1[d] - p2[d];
+                    sum += diff * diff;
+                }
+                return sum;
             }
         }
 
