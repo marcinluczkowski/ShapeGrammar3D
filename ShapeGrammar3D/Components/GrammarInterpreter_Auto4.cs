@@ -29,6 +29,8 @@ namespace ShapeGrammar3D.Components
         private double _fitnessWeight = 0.0;
         private int _kmeansIterations = 10;
         private int _reclusterInterval = 5;
+        private int _topoMetricType = 0;
+        private int _shapeMetricType = 0;
 
         private SG_GA _ga;
         private int _currentGeneration;
@@ -75,6 +77,16 @@ namespace ShapeGrammar3D.Components
                 "Max iterations for KMeans centroid updates per generation.", GH_ParamAccess.item, 10);                            // 12
             pManager.AddIntegerParameter("Recluster Interval", "ReClust",
                 "Re-initialize centroids every N generations. 0 = only at generation 0.", GH_ParamAccess.item, 5);                // 13
+            pManager.AddIntegerParameter("Topology Metric", "TopoMet",
+                "Topology metric selector: 0=ElemCount, 1=NodeCount, 2=Elem/Node ratio, " +
+                "3=AvgValence, 4=MaxValence, 5=LeafNodes, 6=BranchNodes, " +
+                "7=Euler(V-E), 8=DistinctNames, 9=SupportCount",
+                GH_ParamAccess.item, 0);                                                                                          // 14
+            pManager.AddIntegerParameter("Shape Metric", "ShpeMet",
+                "Shape metric selector: 0=TotalLength, 1=AvgLength, 2=MaxLength, " +
+                "3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
+                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness",
+                GH_ParamAccess.item, 0);                                                                                           // 15
         }
 
         /// <summary>
@@ -92,6 +104,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);                                    // 7
             pManager.AddTextParameter("Cluster Info", "ClustInfo", "Per-cluster statistics per generation", GH_ParamAccess.item); // 8
             pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 9
+            pManager.AddNumberParameter("All Topology", "AllTopo", "Topology metric per individual {generation}(individual)", GH_ParamAccess.tree); // 10
+            pManager.AddNumberParameter("All Shape", "AllShpe", "Shape metric per individual {generation}(individual)", GH_ParamAccess.tree); // 11
 
             pManager[1].Optional = true;
         }
@@ -157,6 +171,14 @@ namespace ShapeGrammar3D.Components
             _fitnessWeight = Math.Max(0.0, fitnessWeight);
             _kmeansIterations = Math.Max(1, kmeansIter);
             _reclusterInterval = Math.Max(0, reclusterInterval);
+
+            // --- Metric selectors ---
+            int topoMetricType = _topoMetricType;
+            int shapeMetricType = _shapeMetricType;
+            DA.GetData(14, ref topoMetricType);
+            DA.GetData(15, ref shapeMetricType);
+            _topoMetricType = Math.Clamp(topoMetricType, 0, TopologyMetrics.Count - 1);
+            _shapeMetricType = Math.Clamp(shapeMetricType, 0, ShapeMetrics.Count - 1);
 
             // --- init GA ---
             if (_ga == null || reset)
@@ -336,8 +358,8 @@ namespace ShapeGrammar3D.Components
 
                     individual.Fitness = fitness;
 
-                    double topo = CalculateTopologyMetric(shape);
-                    double shpe = CalculateShapeMetric(shape);
+                    double topo = TopologyMetrics.Compute(shape, _topoMetricType);
+                    double shpe = ShapeMetrics.Compute(shape, _shapeMetricType);
 
                     individual.Fitness = fitness;
                     individual.Topo = topo;
@@ -418,14 +440,11 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Calculates topology metric for clustering.
+        /// Calculates topology metric for clustering using selected metric type.
         /// </summary>
         private double CalculateTopologyMetric(SG_Shape shape)
         {
-            if (shape == null || shape.Elems == null)
-                return 0.0;
-
-            return shape.Elems.Count;
+            return TopologyMetrics.Compute(shape, _topoMetricType);
         }
 
         /// <summary>
@@ -467,6 +486,8 @@ namespace ShapeGrammar3D.Components
             GH_Structure<GH_TB_Model> modelsTree = new GH_Structure<GH_TB_Model>();
             GH_Structure<GH_Number> fitnessTree = new GH_Structure<GH_Number>();
             GH_Structure<GH_Integer> clustGrpTree = new GH_Structure<GH_Integer>();
+            GH_Structure<GH_Number> topoTree = new GH_Structure<GH_Number>();
+            GH_Structure<GH_Number> shpeTree = new GH_Structure<GH_Number>();
 
             if (_allShapes != null && _allShapes.Count > 0)
             {
@@ -490,6 +511,8 @@ namespace ShapeGrammar3D.Components
                         {
                             fitnessTree.Append(new GH_Number(genInds[idx].Fitness), path);
                             clustGrpTree.Append(new GH_Integer(genInds[idx].ClustGrp), path);
+                            topoTree.Append(new GH_Number(genInds[idx].Topo), path);
+                            shpeTree.Append(new GH_Number(genInds[idx].Shpe), path);
                         }
                     }
                 }
@@ -502,7 +525,9 @@ namespace ShapeGrammar3D.Components
                 "Worst Fitness: {4:F6}\n" +
                 "Mean Fitness: {5:F6}\n" +
                 "Best Individual ID: {6}\n" +
-                "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}",
+                "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
+                "Topology Metric: {12}\n" +
+                "Shape Metric: {13}",
                 _currentGeneration,
                 _numGenerations,
                 evaluatedPop.Count,
@@ -511,7 +536,9 @@ namespace ShapeGrammar3D.Components
                 evaluatedPop.Average(i => i.Fitness),
                 best.Id,
                 _topoWeight, _shapeWeight, _fitnessWeight,
-                _kmeansIterations, _reclusterInterval);
+                _kmeansIterations, _reclusterInterval,
+                TopologyMetrics.GetLabel(_topoMetricType),
+                ShapeMetrics.GetLabel(_shapeMetricType));
 
             SG_Shape bestShape = null;
             TB_Model bestModel = null;
@@ -536,6 +563,8 @@ namespace ShapeGrammar3D.Components
             DA.SetData(7, info);
             // Output 8 (ClustInfo) is set in SolveInstance after OutputResults
             DA.SetDataTree(9, clustGrpTree);
+            DA.SetDataTree(10, topoTree);
+            DA.SetDataTree(11, shpeTree);
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
