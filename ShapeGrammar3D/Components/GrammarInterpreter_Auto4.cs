@@ -32,6 +32,11 @@ namespace ShapeGrammar3D.Components
         private int _topoMetricType = 0;
         private int _shapeMetricType = 0;
 
+        // Feasibility configuration
+        private double _wDang = 0.20;
+        private double _wAng = 0.0;
+        private double _wLen = 0.0;
+
         private SG_GA _ga;
         private int _currentGeneration;
         private List<GAIndividual> _currentPopulation;
@@ -87,6 +92,22 @@ namespace ShapeGrammar3D.Components
                 "3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
                 "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness",
                 GH_ParamAccess.item, 0);                                                                                           // 15
+            pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
+                "Use a deterministic pre-generated population (same genotypes every run) " +
+                "for controlled metric comparison experiments.",
+                GH_ParamAccess.item, false);                                                                                        // 16
+            pManager.AddNumberParameter("Dangling Weight", "wDang",
+                "Weight for dangling-bar feasibility penalty (0..1). " +
+                "Penalizes edges whose endpoint node has degree ≤ 1. " +
+                "Applied as multiplicative fitness penalty: fit*(1+wDang*vDang). " +
+                "Set 0 to disable.",
+                GH_ParamAccess.item, 0.20);                                                                                         // 17
+            pManager.AddNumberParameter("Angle Weight", "wAng",
+                "Weight for angle-based feasibility penalty (0..1). Penalizes very small angles (<10°), optimal >=30°.",
+                GH_ParamAccess.item, 0.0);                                                                                            // 18
+            pManager.AddNumberParameter("Length Weight", "wLen",
+                "Weight for element length penalty (0..1). Penalizes elements <0.5m or >10m (gentle).",
+                GH_ParamAccess.item, 0.0);                                                                                            // 19
         }
 
         /// <summary>
@@ -106,6 +127,14 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 9
             pManager.AddNumberParameter("All Topology", "AllTopo", "Topology metric per individual {generation}(individual)", GH_ParamAccess.tree); // 10
             pManager.AddNumberParameter("All Shape", "AllShpe", "Shape metric per individual {generation}(individual)", GH_ParamAccess.tree); // 11
+            pManager.AddNumberParameter("All Feasibility", "AllFeas",
+                "Total feasibility violation per individual {generation}(individual)", GH_ParamAccess.tree);                          // 12
+            pManager.AddNumberParameter("All VDang", "AllVDang",
+                "Raw dangling bar penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                     // 13
+            pManager.AddNumberParameter("All VAng", "AllVAng",
+                "Raw angle penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                     // 14
+            pManager.AddNumberParameter("All VLen", "AllVLen",
+                "Raw length penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                    // 15
 
             pManager[1].Optional = true;
         }
@@ -180,6 +209,21 @@ namespace ShapeGrammar3D.Components
             _topoMetricType = Math.Clamp(topoMetricType, 0, TopologyMetrics.Count - 1);
             _shapeMetricType = Math.Clamp(shapeMetricType, 0, ShapeMetrics.Count - 1);
 
+            // --- Fixed seed mode ---
+            bool useFixedSeed = false;
+            DA.GetData(16, ref useFixedSeed);
+
+            // --- Feasibility parameters ---
+            double wDang = _wDang;
+            double wAng = _wAng;
+            double wLen = _wLen;
+            DA.GetData(17, ref wDang);
+            DA.GetData(18, ref wAng);
+            DA.GetData(19, ref wLen);
+            _wDang = Math.Clamp(wDang, 0.0, 1.0);
+            _wAng = Math.Clamp(wAng, 0.0, 1.0);
+            _wLen = Math.Clamp(wLen, 0.0, 1.0);
+
             // --- init GA ---
             if (_ga == null || reset)
             {
@@ -201,7 +245,17 @@ namespace ShapeGrammar3D.Components
             {
                 List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape.Nodes?.Count ?? 11);
                 List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-                _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
+
+                if (useFixedSeed)
+                {
+                    _currentPopulation = FixedGenotypes.Get(_populationSize, chromosomeLengths, ruleMarkers);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                        string.Format("Using fixed-seed population ({0} individuals)", _currentPopulation.Count));
+                }
+                else
+                {
+                    _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
+                }
             }
 
             List<GAIndividual> evaluatedPop = null;
@@ -267,10 +321,11 @@ namespace ShapeGrammar3D.Components
 
                 double avgTopo = grp.Average(ind => ind.Topo);
                 double avgShpe = grp.Average(ind => ind.Shpe);
+                double avgFeas = grp.Average(ind => ind.Feas);
 
                 parts.Add(string.Format(
-                    "  Cluster {0}: n={1}, BestFit={2}, AvgTopo={3:F1}, AvgShpe={4:F1}",
-                    grp.Key, grp.Count(), bestStr, avgTopo, avgShpe));
+                    "  Cluster {0}: n={1}, BestFit={2}, AvgTopo={3:F1}, AvgShpe={4:F1}, AvgFeas={5:F4}",
+                    grp.Key, grp.Count(), bestStr, avgTopo, avgShpe, avgFeas));
             }
 
             return string.Join("\n", parts);
@@ -304,6 +359,7 @@ namespace ShapeGrammar3D.Components
             _allGenerations = new List<List<GAIndividual>>();
             _allShapes = new List<List<SG_Shape>>();
             _allModels = new List<List<TB_Model>>();
+            FixedGenotypes.Reset();
         }
 
         /// <summary>
@@ -321,6 +377,8 @@ namespace ShapeGrammar3D.Components
 
         /// <summary>
         /// Evaluates a population of individuals.
+        /// Feasibility is computed on the graph (cheap) before expensive FEM.
+        /// The penalty is applied multiplicatively: fitness * (1 + totalViolation).
         /// </summary>
         private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut, out List<TB_Model> modelsOut)
         {
@@ -351,19 +409,33 @@ namespace ShapeGrammar3D.Components
 
                     shape.RegisterElemsToNodes();
 
+                    // --- Feasibility check (graph-based, before expensive FEM) ---
+                    FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _wDang, _wAng, _wLen);
+
                     TB_Model tb_mdl = new TB_Model(shape);
                     SolveLS slv = new SolveLS(ref tb_mdl);
 
-                    double fitness = CalculateMaxNodalDisplacement(slv.Mdl);
+                    double rawFitness = CalculateMaxNodalDisplacement(slv.Mdl);
 
-                    individual.Fitness = fitness;
+                    // Apply gentle multiplicative penalty so infeasible structures
+                    // rank worse without being discarded.
+                    // Guard: when rawFitness is MaxValue (failed FEM / zero displacement),
+                    // skip multiplication to avoid overflow to +Infinity.
+                    double penalizedFitness = (rawFitness >= double.MaxValue || rawFitness <= double.MinValue)
+                        ? rawFitness
+                        : rawFitness * (1.0 + feasResult.TotalViolation);
 
+                    individual.Fitness = penalizedFitness;
+                    //
                     double topo = TopologyMetrics.Compute(shape, _topoMetricType);
                     double shpe = ShapeMetrics.Compute(shape, _shapeMetricType);
 
-                    individual.Fitness = fitness;
                     individual.Topo = topo;
                     individual.Shpe = shpe;
+                    individual.Feas = feasResult.TotalViolation;
+                    individual.VDang = feasResult.VDang;
+                    individual.VAng = feasResult.VAng;
+                    individual.VLen = feasResult.VLen;
 
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
@@ -374,6 +446,8 @@ namespace ShapeGrammar3D.Components
                     individual.Fitness = MAXIMIZE ? double.MinValue : double.MaxValue;
                     individual.Topo = 0;
                     individual.Shpe = 0;
+                    individual.Feas = 0;
+                    individual.VDang = 0;
                     evaluatedPop.Add(individual);
                     shapesOut.Add(null);
                     modelsOut.Add(null);
@@ -488,6 +562,10 @@ namespace ShapeGrammar3D.Components
             GH_Structure<GH_Integer> clustGrpTree = new GH_Structure<GH_Integer>();
             GH_Structure<GH_Number> topoTree = new GH_Structure<GH_Number>();
             GH_Structure<GH_Number> shpeTree = new GH_Structure<GH_Number>();
+            GH_Structure<GH_Number> feasTree = new GH_Structure<GH_Number>();
+            GH_Structure<GH_Number> vDangTree = new GH_Structure<GH_Number>();
+            GH_Structure<GH_Number> vAngTree = new GH_Structure<GH_Number>();
+            GH_Structure<GH_Number> vLenTree = new GH_Structure<GH_Number>();
 
             if (_allShapes != null && _allShapes.Count > 0)
             {
@@ -513,6 +591,10 @@ namespace ShapeGrammar3D.Components
                             clustGrpTree.Append(new GH_Integer(genInds[idx].ClustGrp), path);
                             topoTree.Append(new GH_Number(genInds[idx].Topo), path);
                             shpeTree.Append(new GH_Number(genInds[idx].Shpe), path);
+                            feasTree.Append(new GH_Number(genInds[idx].Feas), path);
+                            vDangTree.Append(new GH_Number(genInds[idx].VDang), path);
+                            vAngTree.Append(new GH_Number(genInds[idx].VAng), path);
+                            vLenTree.Append(new GH_Number(genInds[idx].VLen), path);
                         }
                     }
                 }
@@ -527,7 +609,8 @@ namespace ShapeGrammar3D.Components
                 "Best Individual ID: {6}\n" +
                 "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
                 "Topology Metric: {12}\n" +
-                "Shape Metric: {13}",
+                "Shape Metric: {13}\n" +
+                "Feasibility: wDang={14:F2}, BestVDang={15:F4}, BestFeas={16:F4}, AvgFeas={17:F4}",
                 _currentGeneration,
                 _numGenerations,
                 evaluatedPop.Count,
@@ -538,7 +621,11 @@ namespace ShapeGrammar3D.Components
                 _topoWeight, _shapeWeight, _fitnessWeight,
                 _kmeansIterations, _reclusterInterval,
                 TopologyMetrics.GetLabel(_topoMetricType),
-                ShapeMetrics.GetLabel(_shapeMetricType));
+                ShapeMetrics.GetLabel(_shapeMetricType),
+                _wDang,
+                best.VDang,
+                best.Feas,
+                evaluatedPop.Average(i => i.Feas));
 
             SG_Shape bestShape = null;
             TB_Model bestModel = null;
@@ -565,6 +652,10 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(9, clustGrpTree);
             DA.SetDataTree(10, topoTree);
             DA.SetDataTree(11, shpeTree);
+            DA.SetDataTree(12, feasTree);
+            DA.SetDataTree(13, vDangTree);
+            DA.SetDataTree(14, vAngTree);
+            DA.SetDataTree(15, vLenTree);
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)

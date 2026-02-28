@@ -27,6 +27,14 @@ namespace ShapeGrammar3D.Classes
         public double Fitness { get; set; }
         public double Topo { get; set; }
         public double Shpe { get; set; }
+        /// <summary>Total feasibility violation (weighted sum of all components).</summary>
+        public double Feas { get; set; }
+        /// <summary>Raw dangling bar penalty [0..1] before weighting.</summary>
+        public double VDang { get; set; }
+        /// <summary>Raw angle penalty [0..1] before weighting.</summary>
+        public double VAng { get; set; }
+        /// <summary>Raw length penalty [0..1] before weighting.</summary>
+        public double VLen { get; set; }
         public int ClustGrp { get; set; }
         public string Id { get; set; }
 
@@ -37,6 +45,8 @@ namespace ShapeGrammar3D.Classes
             Fitness = -999;
             Topo = -999;
             Shpe = -999;
+            Feas = 0.0;
+            VDang = 0.0;
             ClustGrp = -999;
 
             if (id == null)
@@ -65,6 +75,10 @@ namespace ShapeGrammar3D.Classes
             cloned.Fitness = Fitness;
             cloned.Topo = Topo;
             cloned.Shpe = Shpe;
+            cloned.Feas = Feas;
+            cloned.VDang = VDang;
+            cloned.VAng = VAng;
+            cloned.VLen = VLen;
             cloned.ClustGrp = ClustGrp;
             return cloned;
         }
