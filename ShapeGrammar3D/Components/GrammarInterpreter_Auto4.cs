@@ -37,7 +37,17 @@ namespace ShapeGrammar3D.Components
         private double _wAng = 0.0;
         private double _wLen = 0.0;
 
+        // Multi-objective configuration
+        private int _numObjectives = 1;
+
+        // Self-weight
+        private bool _useSelfWeight = false;
+
+        // Cross-section optimization
+        private bool _useCroSecOpt = false;
+
         private SG_GA _ga;
+        private SG_MOGA _moga;
         private int _currentGeneration;
         private List<GAIndividual> _currentPopulation;
         private bool _isRunning;
@@ -108,6 +118,20 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Length Weight", "wLen",
                 "Weight for element length penalty (0..1). Penalizes elements <0.5m or >10m (gentle).",
                 GH_ParamAccess.item, 0.0);                                                                                            // 19
+            pManager.AddIntegerParameter("Num Objectives", "nObj",
+                "Number of objectives: 1 = single-objective (existing GA), " +
+                "2 = bi-objective (displacement + structural volume), " +
+                "3 = tri-objective (displacement + structural volume + feasibility). " +
+                "Multi-objective uses NSGA-II.",
+                GH_ParamAccess.item, 1);                                                                                               // 20
+            pManager.AddBooleanParameter("Self Weight", "SW",
+                "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
+                "Uses element length, cross-section area [mm²], and material density [kN/m³].",
+                GH_ParamAccess.item, false);                                                                                            // 21
+            pManager.AddBooleanParameter("CroSec Opt", "CSOpt",
+                "Optimize cross-sections per element. Iteratively increases rectangular sections " +
+                "(50–1000 mm in 50 mm steps) until utilization ≤ 1.0 for each element.",
+                GH_ParamAccess.item, false);                                                                                            // 22
         }
 
         /// <summary>
@@ -135,6 +159,15 @@ namespace ShapeGrammar3D.Components
                 "Raw angle penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                     // 14
             pManager.AddNumberParameter("All VLen", "AllVLen",
                 "Raw length penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                    // 15
+            pManager.AddIntegerParameter("Pareto Rank", "Rank",
+                "NSGA-II Pareto rank per individual {generation}(individual). Only set in multi-objective mode.",
+                GH_ParamAccess.tree);                                                                                         // 16
+            pManager.AddNumberParameter("Obj Struct Vol", "ObjVol",
+                "Structural volume objective per individual {generation}(individual). Multi-objective only.",
+                GH_ParamAccess.tree);                                                                                         // 17
+            pManager.AddNumberParameter("Obj Feasibility", "ObjFeas",
+                "Feasibility objective per individual {generation}(individual). Tri-objective only.",
+                GH_ParamAccess.tree);                                                                                         // 18
 
             pManager[1].Optional = true;
         }
@@ -224,6 +257,23 @@ namespace ShapeGrammar3D.Components
             _wAng = Math.Clamp(wAng, 0.0, 1.0);
             _wLen = Math.Clamp(wLen, 0.0, 1.0);
 
+            // --- Multi-objective ---
+            int numObjectives = _numObjectives;
+            DA.GetData(20, ref numObjectives);
+            _numObjectives = Math.Clamp(numObjectives, 1, 3);
+
+            bool isMultiObjective = _numObjectives > 1;
+
+            // --- Self weight ---
+            bool useSelfWeight = _useSelfWeight;
+            DA.GetData(21, ref useSelfWeight);
+            _useSelfWeight = useSelfWeight;
+
+            // --- Cross-section optimization ---
+            bool useCroSecOpt = _useCroSecOpt;
+            DA.GetData(22, ref useCroSecOpt);
+            _useCroSecOpt = useCroSecOpt;
+
             // --- init GA ---
             if (_ga == null || reset)
             {
@@ -252,6 +302,10 @@ namespace ShapeGrammar3D.Components
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                         string.Format("Using fixed-seed population ({0} individuals)", _currentPopulation.Count));
                 }
+                else if (isMultiObjective)
+                {
+                    _currentPopulation = _moga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
+                }
                 else
                 {
                     _currentPopulation = _ga.CreateInitialGeneration(_populationSize, chromosomeLengths, ruleMarkers);
@@ -274,20 +328,34 @@ namespace ShapeGrammar3D.Components
                 _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
                 _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
 
-                // Build cluster info for this generation
-                clusterLogLines.Add(BuildClusterInfo(evaluatedPop, _currentGeneration));
+                clusterLogLines.Add(isMultiObjective
+                    ? BuildMOInfo(evaluatedPop, _currentGeneration)
+                    : BuildClusterInfo(evaluatedPop, _currentGeneration));
 
                 if (_currentGeneration < _numGenerations - 1)
                 {
-                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                    _ga.IncrementGeneration();
-                    _currentGeneration = _ga.CurrentGeneration;
+                    if (isMultiObjective)
+                    {
+                        _currentPopulation = _moga.ProcessEvaluatedIndividuals(evaluatedPop);
+                        _moga.IncrementGeneration();
+                        _currentGeneration = _moga.CurrentGeneration;
+                    }
+                    else
+                    {
+                        _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                        _ga.IncrementGeneration();
+                        _currentGeneration = _ga.CurrentGeneration;
+                    }
                 }
                 else
                 {
-                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    if (isMultiObjective)
+                        _moga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    else
+                        _ga.ProcessEvaluatedIndividuals(evaluatedPop);
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                        string.Format("Completed all {0} generations", _numGenerations));
+                        string.Format("Completed all {0} generations ({1})",
+                            _numGenerations, isMultiObjective ? "NSGA-II" : "single-objective"));
                     break;
                 }
             }
@@ -332,6 +400,32 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
+        /// Builds a summary string for multi-objective NSGA-II at a given generation.
+        /// </summary>
+        private string BuildMOInfo(List<GAIndividual> population, int generation)
+        {
+            int frontZeroCount = population.Count(ind => ind.Rank == 0);
+            int maxRank = population.Max(ind => ind.Rank);
+
+            var validDisp = population
+                .Where(ind => ind.ObjectiveValues.Count > 0
+                    && ind.ObjectiveValues[0] < double.MaxValue)
+                .ToList();
+
+            string bestDisp = validDisp.Count > 0
+                ? validDisp.Min(ind => ind.ObjectiveValues[0]).ToString("E3")
+                : "N/A";
+            string bestVol = validDisp.Count > 0 && validDisp[0].ObjectiveValues.Count > 1
+                ? validDisp.Min(ind => ind.ObjectiveValues[1]).ToString("E3")
+                : "N/A";
+
+            return string.Format(
+                "Gen {0} [NSGA-II, {1} obj]: Pareto front size={2}, Max rank={3}, " +
+                "Best displacement={4}, Best volume={5}",
+                generation, _numObjectives, frontZeroCount, maxRank, bestDisp, bestVol);
+        }
+
+        /// <summary>
         /// Initializes the genetic algorithm with current parameters.
         /// </summary>
         private void InitializeGA()
@@ -347,13 +441,24 @@ namespace ShapeGrammar3D.Components
                 Maximize = MAXIMIZE,
                 InitialBoost = 6,
                 BlxAlpha = 0.3,
-                // Clustering control
                 TopoWeight = _topoWeight,
                 ShapeWeight = _shapeWeight,
                 FitnessWeight = _fitnessWeight,
                 KMeansMaxIterations = _kmeansIterations,
                 ReclusterInterval = _reclusterInterval
             };
+
+            _moga = new SG_MOGA
+            {
+                PopulationSize = _populationSize,
+                NumGenerations = _numGenerations,
+                MutationProbability = _mutationProbability,
+                CrossoverProbability = _crossoverProbability,
+                EliteProbability = _eliteProbability,
+                BlxAlpha = 0.3,
+                NumObjectives = _numObjectives
+            };
+
             _currentGeneration = 0;
             _currentPopulation = null;
             _allGenerations = new List<List<GAIndividual>>();
@@ -409,26 +514,41 @@ namespace ShapeGrammar3D.Components
 
                     shape.RegisterElemsToNodes();
 
+                    if (_useSelfWeight)
+                        ApplySelfWeightLoads(shape);
+
                     // --- Feasibility check (graph-based, before expensive FEM) ---
                     FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _wDang, _wAng, _wLen);
 
                     TB_Model tb_mdl = new TB_Model(shape);
                     SolveLS slv = new SolveLS(ref tb_mdl);
+                    TB_Model finalModel = slv.Mdl;
 
-                    double rawFitness = CalculateMaxNodalDisplacement(slv.Mdl);
+                    if (_useCroSecOpt)
+                        finalModel = OptimizeCrossSections(finalModel);
 
-                    // Apply gentle multiplicative penalty so infeasible structures
-                    // rank worse without being discarded.
-                    // Guard: when rawFitness is MaxValue (failed FEM / zero displacement),
-                    // skip multiplication to avoid overflow to +Infinity.
-                    double penalizedFitness = (rawFitness >= double.MaxValue || rawFitness <= double.MinValue)
-                        ? rawFitness
-                        : rawFitness * (1.0 + feasResult.TotalViolation);
+                    double rawFitness = CalculateMaxNodalDisplacement(finalModel);
 
-                    individual.Fitness = penalizedFitness;
-                    //
                     double topo = TopologyMetrics.Compute(shape, _topoMetricType);
                     double shpe = ShapeMetrics.Compute(shape, _shapeMetricType);
+                    double structuralVolume = ShapeMetrics.TotalStructuralVolume(shape);
+
+                    if (_numObjectives > 1)
+                    {
+                        // Multi-objective: objectives are kept separate, no penalty folding
+                        individual.Fitness = rawFitness;
+                        individual.ObjectiveValues = new List<double> { rawFitness, structuralVolume };
+                        if (_numObjectives >= 3)
+                            individual.ObjectiveValues.Add(feasResult.TotalViolation);
+                    }
+                    else
+                    {
+                        // Single-objective: apply feasibility penalty as before
+                        double penalizedFitness = (rawFitness >= double.MaxValue || rawFitness <= double.MinValue)
+                            ? rawFitness
+                            : rawFitness * (1.0 + feasResult.TotalViolation);
+                        individual.Fitness = penalizedFitness;
+                    }
 
                     individual.Topo = topo;
                     individual.Shpe = shpe;
@@ -439,7 +559,7 @@ namespace ShapeGrammar3D.Components
 
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
-                    modelsOut.Add(CloneModel(tb_mdl));
+                    modelsOut.Add(CloneModel(finalModel));
                 }
                 catch (Exception ex)
                 {
@@ -448,6 +568,14 @@ namespace ShapeGrammar3D.Components
                     individual.Shpe = 0;
                     individual.Feas = 0;
                     individual.VDang = 0;
+
+                    if (_numObjectives > 1)
+                    {
+                        individual.ObjectiveValues = new List<double> { double.MaxValue, double.MaxValue };
+                        if (_numObjectives >= 3)
+                            individual.ObjectiveValues.Add(double.MaxValue);
+                    }
+
                     evaluatedPop.Add(individual);
                     shapesOut.Add(null);
                     modelsOut.Add(null);
@@ -542,6 +670,59 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
+        /// Adds self-weight as lumped nodal point loads.
+        /// Each element's weight is split 50/50 to its two end nodes, applied as downward (-Z) force.
+        /// Weight [kN] = length [m] × (Area [mm²] × 1e-6) [m²] × Density [kN/m³].
+        /// </summary>
+        private void ApplySelfWeightLoads(SG_Shape shape)
+        {
+            if (shape == null || shape.Nodes == null || shape.Elems == null)
+                return;
+
+            var nodalForces = new Dictionary<int, double>();
+            foreach (var node in shape.Nodes)
+                nodalForces[node.ID] = 0.0;
+
+            foreach (var elem in shape.Elems)
+            {
+                if (!(elem is SG_Elem1D elem1d)) continue;
+
+                double length = elem1d.Crv != null ? elem1d.Crv.GetLength() : elem1d.Ln.Length;
+                double areaMm2 = elem1d.CrossSection?.Area ?? 0.0;
+                double density = elem1d.CrossSection?.Material?.Density ?? 0.0;
+
+                if (areaMm2 <= 0 || density <= 0 || length <= 0) continue;
+
+                double areaM2 = areaMm2 * 1e-6;
+                double weightKN = length * areaM2 * density;
+                double halfWeight = weightKN * 0.5;
+
+                if (elem1d.Nodes != null && elem1d.Nodes.Length >= 2
+                    && elem1d.Nodes[0] != null && elem1d.Nodes[1] != null)
+                {
+                    int id0 = elem1d.Nodes[0].ID;
+                    int id1 = elem1d.Nodes[1].ID;
+                    if (nodalForces.ContainsKey(id0)) nodalForces[id0] += halfWeight;
+                    if (nodalForces.ContainsKey(id1)) nodalForces[id1] += halfWeight;
+                }
+            }
+
+            if (shape.PointLoads == null)
+                shape.PointLoads = new List<SG_PointLoad>();
+
+            foreach (var node in shape.Nodes)
+            {
+                double force = nodalForces.ContainsKey(node.ID) ? nodalForces[node.ID] : 0.0;
+                if (force <= 0) continue;
+
+                shape.PointLoads.Add(new SG_PointLoad(
+                    new Vector3d(0, 0, -force),
+                    Vector3d.Zero,
+                    node.Pt));
+            }
+        }
+
+        /// <summary>
         /// Outputs results to Grasshopper.
         /// </summary>
         private void OutputResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, SG_Shape iniShape, List<SG_Rule> rules)
@@ -552,20 +733,37 @@ namespace ShapeGrammar3D.Components
                 return;
             }
 
-            GAIndividual best = MAXIMIZE
-                ? evaluatedPop.OrderByDescending(i => i.Fitness).First()
-                : evaluatedPop.OrderBy(i => i.Fitness).First();
+            bool isMultiObjective = _numObjectives > 1;
 
-            GH_Structure<GH_ObjectWrapper> shapesTree = new GH_Structure<GH_ObjectWrapper>();
-            GH_Structure<GH_TB_Model> modelsTree = new GH_Structure<GH_TB_Model>();
-            GH_Structure<GH_Number> fitnessTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Integer> clustGrpTree = new GH_Structure<GH_Integer>();
-            GH_Structure<GH_Number> topoTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Number> shpeTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Number> feasTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Number> vDangTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Number> vAngTree = new GH_Structure<GH_Number>();
-            GH_Structure<GH_Number> vLenTree = new GH_Structure<GH_Number>();
+            GAIndividual best;
+            if (isMultiObjective)
+            {
+                var frontZero = evaluatedPop.Where(i => i.Rank == 0).ToList();
+                if (frontZero.Count > 0)
+                    best = frontZero.OrderBy(i => i.Fitness).First();
+                else
+                    best = evaluatedPop.OrderBy(i => i.Fitness).First();
+            }
+            else
+            {
+                best = MAXIMIZE
+                    ? evaluatedPop.OrderByDescending(i => i.Fitness).First()
+                    : evaluatedPop.OrderBy(i => i.Fitness).First();
+            }
+
+            var shapesTree = new GH_Structure<GH_ObjectWrapper>();
+            var modelsTree = new GH_Structure<GH_TB_Model>();
+            var fitnessTree = new GH_Structure<GH_Number>();
+            var clustGrpTree = new GH_Structure<GH_Integer>();
+            var topoTree = new GH_Structure<GH_Number>();
+            var shpeTree = new GH_Structure<GH_Number>();
+            var feasTree = new GH_Structure<GH_Number>();
+            var vDangTree = new GH_Structure<GH_Number>();
+            var vAngTree = new GH_Structure<GH_Number>();
+            var vLenTree = new GH_Structure<GH_Number>();
+            var rankTree = new GH_Structure<GH_Integer>();
+            var objVolTree = new GH_Structure<GH_Number>();
+            var objFeasTree = new GH_Structure<GH_Number>();
 
             if (_allShapes != null && _allShapes.Count > 0)
             {
@@ -581,51 +779,87 @@ namespace ShapeGrammar3D.Components
                         shapesTree.Append(new GH_ObjectWrapper(genShapes[idx]), path);
 
                         if (genModels != null && idx < genModels.Count)
-                        {
                             modelsTree.Append(new GH_TB_Model(genModels[idx]), path);
-                        }
 
                         if (genInds != null && idx < genInds.Count)
                         {
-                            fitnessTree.Append(new GH_Number(genInds[idx].Fitness), path);
-                            clustGrpTree.Append(new GH_Integer(genInds[idx].ClustGrp), path);
-                            topoTree.Append(new GH_Number(genInds[idx].Topo), path);
-                            shpeTree.Append(new GH_Number(genInds[idx].Shpe), path);
-                            feasTree.Append(new GH_Number(genInds[idx].Feas), path);
-                            vDangTree.Append(new GH_Number(genInds[idx].VDang), path);
-                            vAngTree.Append(new GH_Number(genInds[idx].VAng), path);
-                            vLenTree.Append(new GH_Number(genInds[idx].VLen), path);
+                            var ind = genInds[idx];
+                            fitnessTree.Append(new GH_Number(ind.Fitness), path);
+                            clustGrpTree.Append(new GH_Integer(ind.ClustGrp), path);
+                            topoTree.Append(new GH_Number(ind.Topo), path);
+                            shpeTree.Append(new GH_Number(ind.Shpe), path);
+                            feasTree.Append(new GH_Number(ind.Feas), path);
+                            vDangTree.Append(new GH_Number(ind.VDang), path);
+                            vAngTree.Append(new GH_Number(ind.VAng), path);
+                            vLenTree.Append(new GH_Number(ind.VLen), path);
+
+                            rankTree.Append(new GH_Integer(ind.Rank), path);
+                            double objVol = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 1)
+                                ? ind.ObjectiveValues[1] : 0.0;
+                            objVolTree.Append(new GH_Number(objVol), path);
+                            double objFeas = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 2)
+                                ? ind.ObjectiveValues[2] : 0.0;
+                            objFeasTree.Append(new GH_Number(objFeas), path);
                         }
                     }
                 }
             }
 
-            string info = string.Format(
-                "Generation: {0}/{1}\n" +
-                "Population Size: {2}\n" +
-                "Best Fitness: {3:F6}\n" +
-                "Worst Fitness: {4:F6}\n" +
-                "Mean Fitness: {5:F6}\n" +
-                "Best Individual ID: {6}\n" +
-                "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
-                "Topology Metric: {12}\n" +
-                "Shape Metric: {13}\n" +
-                "Feasibility: wDang={14:F2}, BestVDang={15:F4}, BestFeas={16:F4}, AvgFeas={17:F4}",
-                _currentGeneration,
-                _numGenerations,
-                evaluatedPop.Count,
-                best.Fitness,
-                (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
-                evaluatedPop.Average(i => i.Fitness),
-                best.Id,
-                _topoWeight, _shapeWeight, _fitnessWeight,
-                _kmeansIterations, _reclusterInterval,
-                TopologyMetrics.GetLabel(_topoMetricType),
-                ShapeMetrics.GetLabel(_shapeMetricType),
-                _wDang,
-                best.VDang,
-                best.Feas,
-                evaluatedPop.Average(i => i.Feas));
+            string info;
+            if (isMultiObjective)
+            {
+                int frontZero = evaluatedPop.Count(ind => ind.Rank == 0);
+                string objLabels = _numObjectives == 2
+                    ? "Displacement, Structural Volume"
+                    : "Displacement, Structural Volume, Feasibility";
+                info = string.Format(
+                    "Mode: NSGA-II ({0} objectives: {1})\n" +
+                    "Generation: {2}/{3}\n" +
+                    "Population Size: {4}\n" +
+                    "Pareto Front (rank 0) Size: {5}\n" +
+                    "Best Displacement: {6:F6}\n" +
+                    "Best Individual ID: {7}\n" +
+                    "Topology Metric: {8}\n" +
+                    "Shape Metric: {9}",
+                    _numObjectives, objLabels,
+                    _currentGeneration, _numGenerations,
+                    evaluatedPop.Count,
+                    frontZero,
+                    best.Fitness,
+                    best.Id,
+                    TopologyMetrics.GetLabel(_topoMetricType),
+                    ShapeMetrics.GetLabel(_shapeMetricType));
+            }
+            else
+            {
+                info = string.Format(
+                    "Mode: Single-Objective\n" +
+                    "Generation: {0}/{1}\n" +
+                    "Population Size: {2}\n" +
+                    "Best Fitness: {3:F6}\n" +
+                    "Worst Fitness: {4:F6}\n" +
+                    "Mean Fitness: {5:F6}\n" +
+                    "Best Individual ID: {6}\n" +
+                    "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
+                    "Topology Metric: {12}\n" +
+                    "Shape Metric: {13}\n" +
+                    "Feasibility: wDang={14:F2}, BestVDang={15:F4}, BestFeas={16:F4}, AvgFeas={17:F4}",
+                    _currentGeneration,
+                    _numGenerations,
+                    evaluatedPop.Count,
+                    best.Fitness,
+                    (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
+                    evaluatedPop.Average(i => i.Fitness),
+                    best.Id,
+                    _topoWeight, _shapeWeight, _fitnessWeight,
+                    _kmeansIterations, _reclusterInterval,
+                    TopologyMetrics.GetLabel(_topoMetricType),
+                    ShapeMetrics.GetLabel(_shapeMetricType),
+                    _wDang,
+                    best.VDang,
+                    best.Feas,
+                    evaluatedPop.Average(i => i.Feas));
+            }
 
             SG_Shape bestShape = null;
             TB_Model bestModel = null;
@@ -656,6 +890,9 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(13, vDangTree);
             DA.SetDataTree(14, vAngTree);
             DA.SetDataTree(15, vLenTree);
+            DA.SetDataTree(16, rankTree);
+            DA.SetDataTree(17, objVolTree);
+            DA.SetDataTree(18, objFeasTree);
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
@@ -679,8 +916,15 @@ namespace ShapeGrammar3D.Components
                 string message = rules[j].RuleOperation(ref shape, ref gt);
             }
 
+            shape.RegisterElemsToNodes();
+            if (_useSelfWeight)
+                ApplySelfWeightLoads(shape);
+
             model = new TB_Model(shape);
             SolveLS slv = new SolveLS(ref model);
+
+            if (_useCroSecOpt)
+                model = OptimizeCrossSections(model);
         }
 
         protected override System.Drawing.Bitmap Icon
@@ -691,6 +935,102 @@ namespace ShapeGrammar3D.Components
         public override Guid ComponentGuid
         {
             get { return new Guid("B4D6E8F1-2A3C-4D5E-9F1A-8B7C6D5E4F3A"); }
+        }
+
+        /// <summary>
+        /// Iteratively finds the smallest adequate square rectangular section for each element.
+        /// Sections range from 50 mm to 1000 mm (5 cm to 100 cm) in 50 mm steps.
+        /// </summary>
+        private TB_Model OptimizeCrossSections(TB_Model solvedModel)
+        {
+            if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
+                return solvedModel;
+
+            const int NUM_SIZES = 20;
+            const double STEP_MM = 50.0;
+
+            int elemCount = solvedModel.Elem1Ds.Count;
+            int[] sectionIdx = new int[elemCount];
+
+            TB_Model currentModel = RebuildModelWithRectSections(solvedModel, sectionIdx, STEP_MM);
+            SolveLS slv = new SolveLS(ref currentModel);
+            currentModel = slv.Mdl;
+
+            for (int iter = 0; iter < NUM_SIZES; iter++)
+            {
+                bool anyChanged = false;
+
+                for (int e = 0; e < currentModel.Elem1Ds.Count; e++)
+                {
+                    if (sectionIdx[e] >= NUM_SIZES - 1) continue;
+
+                    double util = ComputeElementUtilization(currentModel, currentModel.Elem1Ds[e]);
+
+                    if (util > 1.0)
+                    {
+                        sectionIdx[e]++;
+                        anyChanged = true;
+                    }
+                }
+
+                if (!anyChanged) break;
+
+                currentModel = RebuildModelWithRectSections(solvedModel, sectionIdx, STEP_MM);
+                slv = new SolveLS(ref currentModel);
+                currentModel = slv.Mdl;
+            }
+
+            return currentModel;
+        }
+
+        /// <summary>
+        /// Rebuilds the model geometry with new square rectangular sections based on the index array.
+        /// </summary>
+        private static TB_Model RebuildModelWithRectSections(TB_Model template, int[] sectionIdx, double stepMm)
+        {
+            var newElems = new List<TB_Element_1D>();
+            for (int i = 0; i < template.Elem1Ds.Count; i++)
+            {
+                TB_Element_1D orig = template.Elem1Ds[i];
+                double dim = (sectionIdx[i] + 1) * stepMm;
+                string tag = string.Format("Rect_{0}x{0}", dim);
+                Section_Rect sec = new Section_Rect(orig.Sec.Mat, tag, dim, dim);
+                newElems.Add(new TB_Element_1D(orig.Line, orig.Tag, sec, orig.Vz, orig.Line.Length));
+            }
+            return new TB_Model(newElems, template.Sups, template.Loads);
+        }
+
+        /// <summary>
+        /// Simplified EC3 utilization: N/N_Rd + My/My_Rd + Mz/Mz_Rd, envelope over all load cases.
+        /// </summary>
+        private static double ComputeElementUtilization(TB_Model model, TB_Element_1D elem)
+        {
+            const double GAMMA_M0 = 1.0;
+
+            double N_Rd  = elem.Sec.Area * elem.Sec.Mat.Fy / GAMMA_M0;
+            double My_Rd = elem.Sec.Wy   * elem.Sec.Mat.Fy / GAMMA_M0 * 1e-3;
+            double Mz_Rd = elem.Sec.Wz   * elem.Sec.Mat.Fy / GAMMA_M0 * 1e-3;
+
+            if (N_Rd <= 0 || My_Rd <= 0 || Mz_Rd <= 0)
+                return double.MaxValue;
+
+            double maxUtil = 0.0;
+            if (model.LCs == null) return maxUtil;
+
+            foreach (int lc in model.LCs)
+            {
+                int lcId = Array.IndexOf(model.LCs, lc);
+                double[] F = elem.Calc_Forces(lcId);
+
+                double N_Ed  = Math.Max(Math.Abs(F[0]),  Math.Abs(F[6]));
+                double My_Ed = Math.Max(Math.Abs(F[4]),  Math.Abs(F[10]));
+                double Mz_Ed = Math.Max(Math.Abs(F[5]),  Math.Abs(F[11]));
+
+                double util = N_Ed / N_Rd + My_Ed / My_Rd + Mz_Ed / Mz_Rd;
+                if (util > maxUtil) maxUtil = util;
+            }
+
+            return maxUtil;
         }
 
         private static SG_Shape CloneShape(SG_Shape source)

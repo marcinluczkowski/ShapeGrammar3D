@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -37,6 +37,13 @@ namespace ShapeGrammar3D.Classes
         public double VLen { get; set; }
         public int ClustGrp { get; set; }
         public string Id { get; set; }
+
+        /// <summary>Multi-objective fitness values (one per objective). Used by SG_MOGA / NSGA-II.</summary>
+        public List<double> ObjectiveValues { get; set; } = new List<double>();
+        /// <summary>Non-domination rank (Pareto front level). 0 = first front. Used by SG_MOGA.</summary>
+        public int Rank { get; set; } = -1;
+        /// <summary>Crowding distance within a Pareto front. Used by SG_MOGA.</summary>
+        public double CrowdingDistance { get; set; } = 0.0;
 
         public GAIndividual(List<int> chromosome, List<double> chromosomeParam, string id = null)
         {
@@ -80,6 +87,9 @@ namespace ShapeGrammar3D.Classes
             cloned.VAng = VAng;
             cloned.VLen = VLen;
             cloned.ClustGrp = ClustGrp;
+            cloned.ObjectiveValues = new List<double>(ObjectiveValues);
+            cloned.Rank = Rank;
+            cloned.CrowdingDistance = CrowdingDistance;
             return cloned;
         }
 
