@@ -29,8 +29,8 @@ namespace ShapeGrammar3D.Components
         private double _fitnessWeight = 0.0;
         private int _kmeansIterations = 10;
         private int _reclusterInterval = 5;
-        private int _topoMetricType = 0;
-        private int _shapeMetricType = 0;
+        private List<int> _topoMetricTypes = new List<int> { 0 };
+        private List<int> _shapeMetricTypes = new List<int> { 0 };
 
         // Feasibility configuration
         private double _wDang = 0.20;
@@ -54,6 +54,7 @@ namespace ShapeGrammar3D.Components
         private List<List<GAIndividual>> _allGenerations;
         private List<List<SG_Shape>> _allShapes;
         private List<List<TB_Model>> _allModels;
+        private GARunStore _runStore;
 
         /// <summary>
         /// Initializes a new instance of the GrammarInterpreter_Auto4 class.
@@ -92,16 +93,22 @@ namespace ShapeGrammar3D.Components
                 "Max iterations for KMeans centroid updates per generation.", GH_ParamAccess.item, 10);                            // 12
             pManager.AddIntegerParameter("Recluster Interval", "ReClust",
                 "Re-initialize centroids every N generations. 0 = only at generation 0.", GH_ParamAccess.item, 5);                // 13
-            pManager.AddIntegerParameter("Topology Metric", "TopoMet",
-                "Topology metric selector: 0=ElemCount, 1=NodeCount, 2=Elem/Node ratio, " +
+            pManager.AddIntegerParameter("Topology Metrics", "TopoMet",
+                "Topology metric selectors (supply one or many for n-dimensional clustering):\n" +
+                "0=ElemCount, 1=NodeCount, 2=Elem/Node ratio, " +
                 "3=AvgValence, 4=MaxValence, 5=LeafNodes, 6=BranchNodes, " +
-                "7=Euler(V-E), 8=DistinctNames, 9=SupportCount",
-                GH_ParamAccess.item, 0);                                                                                          // 14
-            pManager.AddIntegerParameter("Shape Metric", "ShpeMet",
-                "Shape metric selector: 0=TotalLength, 1=AvgLength, 2=MaxLength, " +
+                "7=Euler(V-E), 8=DistinctNames, 9=SupportCount, " +
+                "10=ConnectedComponents(b₀), 11=CycleRank(b₁), " +
+                "12=MaxPipeIntersections, 13=AvgPipeIntersections",
+                GH_ParamAccess.list);                                                                                              // 14
+            pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
+                "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
+                "0=TotalLength, 1=AvgLength, 2=MaxLength, " +
                 "3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
                 "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness",
-                GH_ParamAccess.item, 0);                                                                                           // 15
+                GH_ParamAccess.list);                                                                                              // 15
+            pManager[14].Optional = true;
+            pManager[15].Optional = true;
             pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
                 "Use a deterministic pre-generated population (same genotypes every run) " +
                 "for controlled metric comparison experiments.",
@@ -149,8 +156,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);                                    // 7
             pManager.AddTextParameter("Cluster Info", "ClustInfo", "Per-cluster statistics per generation", GH_ParamAccess.item); // 8
             pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 9
-            pManager.AddNumberParameter("All Topology", "AllTopo", "Topology metric per individual {generation}(individual)", GH_ParamAccess.tree); // 10
-            pManager.AddNumberParameter("All Shape", "AllShpe", "Shape metric per individual {generation}(individual)", GH_ParamAccess.tree); // 11
+            pManager.AddNumberParameter("All Topology", "AllTopo", "First topology metric value per individual {generation}(individual)", GH_ParamAccess.tree); // 10
+            pManager.AddNumberParameter("All Shape", "AllShpe", "First shape metric value per individual {generation}(individual)", GH_ParamAccess.tree); // 11
             pManager.AddNumberParameter("All Feasibility", "AllFeas",
                 "Total feasibility violation per individual {generation}(individual)", GH_ParamAccess.tree);                          // 12
             pManager.AddNumberParameter("All VDang", "AllVDang",
@@ -168,6 +175,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Obj Feasibility", "ObjFeas",
                 "Feasibility objective per individual {generation}(individual). Tri-objective only.",
                 GH_ParamAccess.tree);                                                                                         // 18
+            pManager.AddTextParameter("JSON Path", "JSON",
+                "Path to saved JSON file with full GA run data", GH_ParamAccess.item);                                        // 19
 
             pManager[1].Optional = true;
         }
@@ -234,13 +243,19 @@ namespace ShapeGrammar3D.Components
             _kmeansIterations = Math.Max(1, kmeansIter);
             _reclusterInterval = Math.Max(0, reclusterInterval);
 
-            // --- Metric selectors ---
-            int topoMetricType = _topoMetricType;
-            int shapeMetricType = _shapeMetricType;
-            DA.GetData(14, ref topoMetricType);
-            DA.GetData(15, ref shapeMetricType);
-            _topoMetricType = Math.Clamp(topoMetricType, 0, TopologyMetrics.Count - 1);
-            _shapeMetricType = Math.Clamp(shapeMetricType, 0, ShapeMetrics.Count - 1);
+            // --- Metric selectors (list-based for n-dimensional clustering) ---
+            var rawTopoMetrics = new List<int>();
+            var rawShpeMetrics = new List<int>();
+            if (!DA.GetDataList(14, rawTopoMetrics) || rawTopoMetrics.Count == 0)
+                rawTopoMetrics = new List<int> { 0 };
+            if (!DA.GetDataList(15, rawShpeMetrics) || rawShpeMetrics.Count == 0)
+                rawShpeMetrics = new List<int> { 0 };
+            _topoMetricTypes = rawTopoMetrics
+                .Select(v => Math.Clamp(v, 0, TopologyMetrics.Count - 1))
+                .Distinct().ToList();
+            _shapeMetricTypes = rawShpeMetrics
+                .Select(v => Math.Clamp(v, 0, ShapeMetrics.Count - 1))
+                .Distinct().ToList();
 
             // --- Fixed seed mode ---
             bool useFixedSeed = false;
@@ -328,6 +343,8 @@ namespace ShapeGrammar3D.Components
                 _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
                 _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
 
+                _runStore.AppendGeneration(evaluatedPop, _currentGeneration);
+
                 clusterLogLines.Add(isMultiObjective
                     ? BuildMOInfo(evaluatedPop, _currentGeneration)
                     : BuildClusterInfo(evaluatedPop, _currentGeneration));
@@ -360,9 +377,24 @@ namespace ShapeGrammar3D.Components
                 }
             }
 
+            // Save JSON
+            string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                string.Format("GA4_run_{0}.json", _runStore.RunId));
+            try
+            {
+                _runStore.SaveToJson(jsonPath);
+            }
+            catch (Exception ex)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    string.Format("Failed to save JSON: {0}", ex.Message));
+                jsonPath = string.Empty;
+            }
+
             // Output results
             OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
             DA.SetData(8, string.Join("\n", clusterLogLines));
+            DA.SetData(19, jsonPath);
 
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
@@ -464,6 +496,24 @@ namespace ShapeGrammar3D.Components
             _allGenerations = new List<List<GAIndividual>>();
             _allShapes = new List<List<SG_Shape>>();
             _allModels = new List<List<TB_Model>>();
+
+            _runStore = new GARunStore
+            {
+                RunId = Guid.NewGuid().ToString("N").Substring(0, 8),
+                StartedAt = DateTime.Now,
+                PopulationSize = _populationSize,
+                NumGenerations = _numGenerations,
+                NumClusters = _numClusters,
+                MutationProb = _mutationProbability,
+                CrossoverProb = _crossoverProbability,
+                EliteProb = _eliteProbability,
+                NumObjectives = _numObjectives,
+                UseSelfWeight = _useSelfWeight,
+                UseCroSecOpt = _useCroSecOpt,
+                TopoMetricTypes = new List<int>(_topoMetricTypes),
+                ShapeMetricTypes = new List<int>(_shapeMetricTypes)
+            };
+
             FixedGenotypes.Reset();
         }
 
@@ -529,8 +579,8 @@ namespace ShapeGrammar3D.Components
 
                     double rawFitness = CalculateMaxNodalDisplacement(finalModel);
 
-                    double topo = TopologyMetrics.Compute(shape, _topoMetricType);
-                    double shpe = ShapeMetrics.Compute(shape, _shapeMetricType);
+                    var topoVals = _topoMetricTypes.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
+                    var shpeVals = _shapeMetricTypes.Select(mt => ShapeMetrics.Compute(shape, mt)).ToList();
                     double structuralVolume = ShapeMetrics.TotalStructuralVolume(shape);
 
                     if (_numObjectives > 1)
@@ -550,8 +600,8 @@ namespace ShapeGrammar3D.Components
                         individual.Fitness = penalizedFitness;
                     }
 
-                    individual.Topo = topo;
-                    individual.Shpe = shpe;
+                    individual.TopoValues = topoVals;
+                    individual.ShpeValues = shpeVals;
                     individual.Feas = feasResult.TotalViolation;
                     individual.VDang = feasResult.VDang;
                     individual.VAng = feasResult.VAng;
@@ -564,8 +614,8 @@ namespace ShapeGrammar3D.Components
                 catch (Exception ex)
                 {
                     individual.Fitness = MAXIMIZE ? double.MinValue : double.MaxValue;
-                    individual.Topo = 0;
-                    individual.Shpe = 0;
+                    individual.TopoValues = _topoMetricTypes.Select(_ => 0.0).ToList();
+                    individual.ShpeValues = _shapeMetricTypes.Select(_ => 0.0).ToList();
                     individual.Feas = 0;
                     individual.VDang = 0;
 
@@ -639,34 +689,6 @@ namespace ShapeGrammar3D.Components
             }
 
             return maxDisplacement;
-        }
-
-        /// <summary>
-        /// Calculates topology metric for clustering using selected metric type.
-        /// </summary>
-        private double CalculateTopologyMetric(SG_Shape shape)
-        {
-            return TopologyMetrics.Compute(shape, _topoMetricType);
-        }
-
-        /// <summary>
-        /// Calculates shape metric for clustering.
-        /// </summary>
-        private double CalculateShapeMetric(SG_Shape shape)
-        {
-            if (shape == null || shape.Elems == null)
-                return 0.0;
-
-            double totalLength = 0.0;
-            foreach (var elem in shape.Elems)
-            {
-                if (elem is SG_Elem1D elem1d && elem1d.Crv != null)
-                {
-                    totalLength += elem1d.Crv.GetLength();
-                }
-            }
-
-            return totalLength;
         }
 
         /// <summary>
@@ -805,6 +827,10 @@ namespace ShapeGrammar3D.Components
                 }
             }
 
+            string topoLabels = string.Join(", ", _topoMetricTypes.Select(t => TopologyMetrics.GetLabel(t)));
+            string shpeLabels = string.Join(", ", _shapeMetricTypes.Select(s => ShapeMetrics.GetLabel(s)));
+            int clusterDims = _topoMetricTypes.Count + _shapeMetricTypes.Count + (_fitnessWeight > 0 ? 1 : 0);
+
             string info;
             if (isMultiObjective)
             {
@@ -819,16 +845,18 @@ namespace ShapeGrammar3D.Components
                     "Pareto Front (rank 0) Size: {5}\n" +
                     "Best Displacement: {6:F6}\n" +
                     "Best Individual ID: {7}\n" +
-                    "Topology Metric: {8}\n" +
-                    "Shape Metric: {9}",
+                    "Topology Metrics ({8}D): {9}\n" +
+                    "Shape Metrics ({10}D): {11}\n" +
+                    "Clustering Dimensions: {12}",
                     _numObjectives, objLabels,
                     _currentGeneration, _numGenerations,
                     evaluatedPop.Count,
                     frontZero,
                     best.Fitness,
                     best.Id,
-                    TopologyMetrics.GetLabel(_topoMetricType),
-                    ShapeMetrics.GetLabel(_shapeMetricType));
+                    _topoMetricTypes.Count, topoLabels,
+                    _shapeMetricTypes.Count, shpeLabels,
+                    clusterDims);
             }
             else
             {
@@ -841,9 +869,10 @@ namespace ShapeGrammar3D.Components
                     "Mean Fitness: {5:F6}\n" +
                     "Best Individual ID: {6}\n" +
                     "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
-                    "Topology Metric: {12}\n" +
-                    "Shape Metric: {13}\n" +
-                    "Feasibility: wDang={14:F2}, BestVDang={15:F4}, BestFeas={16:F4}, AvgFeas={17:F4}",
+                    "Topology Metrics ({12}D): {13}\n" +
+                    "Shape Metrics ({14}D): {15}\n" +
+                    "Clustering Dimensions: {16}\n" +
+                    "Feasibility: wDang={17:F2}, BestVDang={18:F4}, BestFeas={19:F4}, AvgFeas={20:F4}",
                     _currentGeneration,
                     _numGenerations,
                     evaluatedPop.Count,
@@ -853,8 +882,9 @@ namespace ShapeGrammar3D.Components
                     best.Id,
                     _topoWeight, _shapeWeight, _fitnessWeight,
                     _kmeansIterations, _reclusterInterval,
-                    TopologyMetrics.GetLabel(_topoMetricType),
-                    ShapeMetrics.GetLabel(_shapeMetricType),
+                    _topoMetricTypes.Count, topoLabels,
+                    _shapeMetricTypes.Count, shpeLabels,
+                    clusterDims,
                     _wDang,
                     best.VDang,
                     best.Feas,

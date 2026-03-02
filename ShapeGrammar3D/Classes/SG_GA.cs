@@ -25,8 +25,26 @@ namespace ShapeGrammar3D.Classes
         public List<int> Chromosome { get; set; }
         public List<double> ChromosomeParam { get; set; }
         public double Fitness { get; set; }
-        public double Topo { get; set; }
-        public double Shpe { get; set; }
+
+        /// <summary>All selected topology metric values (one per chosen metric).</summary>
+        public List<double> TopoValues { get; set; } = new List<double>();
+        /// <summary>All selected shape metric values (one per chosen metric).</summary>
+        public List<double> ShpeValues { get; set; } = new List<double>();
+
+        /// <summary>First topology metric value (backward compatibility).</summary>
+        public double Topo
+        {
+            get => TopoValues != null && TopoValues.Count > 0 ? TopoValues[0] : -999;
+            set { if (TopoValues == null) TopoValues = new List<double>(); if (TopoValues.Count == 0) TopoValues.Add(value); else TopoValues[0] = value; }
+        }
+
+        /// <summary>First shape metric value (backward compatibility).</summary>
+        public double Shpe
+        {
+            get => ShpeValues != null && ShpeValues.Count > 0 ? ShpeValues[0] : -999;
+            set { if (ShpeValues == null) ShpeValues = new List<double>(); if (ShpeValues.Count == 0) ShpeValues.Add(value); else ShpeValues[0] = value; }
+        }
+
         /// <summary>Total feasibility violation (weighted sum of all components).</summary>
         public double Feas { get; set; }
         /// <summary>Raw dangling bar penalty [0..1] before weighting.</summary>
@@ -50,8 +68,8 @@ namespace ShapeGrammar3D.Classes
             Chromosome = new List<int>(chromosome);
             ChromosomeParam = new List<double>(chromosomeParam);
             Fitness = -999;
-            Topo = -999;
-            Shpe = -999;
+            TopoValues = new List<double>();
+            ShpeValues = new List<double>();
             Feas = 0.0;
             VDang = 0.0;
             ClustGrp = -999;
@@ -80,8 +98,8 @@ namespace ShapeGrammar3D.Classes
                 new List<double>(ChromosomeParam),
                 Id);
             cloned.Fitness = Fitness;
-            cloned.Topo = Topo;
-            cloned.Shpe = Shpe;
+            cloned.TopoValues = new List<double>(TopoValues ?? new List<double>());
+            cloned.ShpeValues = new List<double>(ShpeValues ?? new List<double>());
             cloned.Feas = Feas;
             cloned.VDang = VDang;
             cloned.VAng = VAng;
@@ -206,8 +224,8 @@ namespace ShapeGrammar3D.Classes
         private List<double> _worstFits;
         private GAIndividual _bestOfAll;
         private int _currentGeneration;
-        private double _topoDenominator;
-        private double _shapeDenominator;
+        private double[] _topoDenominators;
+        private double[] _shapeDenominators;
         private double _fitnessDenominator;
 
         // Tracking templates for chromosome generation
@@ -470,21 +488,33 @@ namespace ShapeGrammar3D.Classes
             if (individuals.Count == 0)
                 return;
 
-            List<double> topoValues = individuals.Select(i => i.Topo).ToList();
-            List<double> shapeValues = individuals.Select(i => i.Shpe).ToList();
-            List<double> fitnessValues = individuals.Select(i => i.Fitness).ToList();
+            int numTopo = individuals[0].TopoValues?.Count ?? 0;
+            int numShpe = individuals[0].ShpeValues?.Count ?? 0;
+            bool useFitness = FitnessWeight > 0;
+            int dims = numTopo + numShpe + (useFitness ? 1 : 0);
 
-            // Compute current-generation maxima for normalization
-            double topoMax = topoValues.Max();
-            double shapeMax = shapeValues.Max();
-            double fitnessMax = fitnessValues
+            if (dims == 0) dims = 1;
+
+            double[] topoMaxes = new double[numTopo];
+            double[] shpeMaxes = new double[numShpe];
+
+            for (int d = 0; d < numTopo; d++)
+            {
+                double mx = individuals.Max(ind => ind.TopoValues != null && ind.TopoValues.Count > d ? ind.TopoValues[d] : 0);
+                topoMaxes[d] = mx > 0 ? mx : 1.0;
+            }
+            for (int d = 0; d < numShpe; d++)
+            {
+                double mx = individuals.Max(ind => ind.ShpeValues != null && ind.ShpeValues.Count > d ? ind.ShpeValues[d] : 0);
+                shpeMaxes[d] = mx > 0 ? mx : 1.0;
+            }
+
+            double fitnessMax = individuals
+                .Select(ind => ind.Fitness)
                 .Where(f => !double.IsInfinity(f) && !double.IsNaN(f)
                          && f != double.MaxValue && f != double.MinValue)
                 .DefaultIfEmpty(1.0)
                 .Max();
-
-            if (topoMax <= 0) topoMax = 1.0;
-            if (shapeMax <= 0) shapeMax = 1.0;
             if (fitnessMax <= 0) fitnessMax = 1.0;
 
             bool shouldInitialize = _currentGeneration == 0
@@ -493,34 +523,48 @@ namespace ShapeGrammar3D.Classes
 
             if (shouldInitialize)
             {
-                _topoDenominator = topoMax;
-                _shapeDenominator = shapeMax;
+                _topoDenominators = (double[])topoMaxes.Clone();
+                _shapeDenominators = (double[])shpeMaxes.Clone();
                 _fitnessDenominator = fitnessMax;
                 _kmeans = new SimpleKMeans(NumClusters);
             }
 
-            // Build weighted, normalized data points
             List<double[]> dataPoints = new List<double[]>(individuals.Count);
             for (int i = 0; i < individuals.Count; i++)
             {
-                double normTopo = (_topoDenominator > 0)
-                    ? topoValues[i] / _topoDenominator * TopoWeight : 0.0;
-                double normShape = (_shapeDenominator > 0)
-                    ? shapeValues[i] / _shapeDenominator * ShapeWeight : 0.0;
+                double[] pt = new double[dims];
+                int idx = 0;
 
-                double normFitness = 0.0;
-                if (FitnessWeight > 0)
+                for (int d = 0; d < numTopo; d++)
                 {
-                    double f = fitnessValues[i];
+                    double val = (individuals[i].TopoValues != null && individuals[i].TopoValues.Count > d)
+                        ? individuals[i].TopoValues[d] : 0;
+                    double denom = (_topoDenominators != null && _topoDenominators.Length > d && _topoDenominators[d] > 0)
+                        ? _topoDenominators[d] : 1.0;
+                    pt[idx++] = val / denom * TopoWeight;
+                }
+
+                for (int d = 0; d < numShpe; d++)
+                {
+                    double val = (individuals[i].ShpeValues != null && individuals[i].ShpeValues.Count > d)
+                        ? individuals[i].ShpeValues[d] : 0;
+                    double denom = (_shapeDenominators != null && _shapeDenominators.Length > d && _shapeDenominators[d] > 0)
+                        ? _shapeDenominators[d] : 1.0;
+                    pt[idx++] = val / denom * ShapeWeight;
+                }
+
+                if (useFitness)
+                {
+                    double f = individuals[i].Fitness;
                     if (!double.IsInfinity(f) && !double.IsNaN(f)
                         && f != double.MaxValue && f != double.MinValue
                         && _fitnessDenominator > 0)
                     {
-                        normFitness = f / _fitnessDenominator * FitnessWeight;
+                        pt[idx] = f / _fitnessDenominator * FitnessWeight;
                     }
                 }
 
-                dataPoints.Add(new double[] { normTopo, normShape, normFitness });
+                dataPoints.Add(pt);
             }
 
             List<int> clusters = _kmeans.Cluster(dataPoints, shouldInitialize, KMeansMaxIterations);

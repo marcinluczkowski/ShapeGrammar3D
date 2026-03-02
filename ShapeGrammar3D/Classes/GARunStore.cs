@@ -22,11 +22,18 @@ namespace ShapeGrammar3D.Classes
         public double MutationProb { get; set; }
         public double CrossoverProb { get; set; }
         public double EliteProb { get; set; }
+        public int NumObjectives { get; set; }
+        public bool UseSelfWeight { get; set; }
+        public bool UseCroSecOpt { get; set; }
+        public List<int> TopoMetricTypes { get; set; }
+        public List<int> ShapeMetricTypes { get; set; }
         public List<GenerationRecord> Generations { get; set; }
 
         public GARunStore()
         {
             Generations = new List<GenerationRecord>();
+            TopoMetricTypes = new List<int>();
+            ShapeMetricTypes = new List<int>();
         }
 
         /// <summary>
@@ -45,7 +52,16 @@ namespace ShapeGrammar3D.Classes
                     Fitness = ind.Fitness,
                     Topo = ind.Topo,
                     Shpe = ind.Shpe,
-                    ClustGrp = ind.ClustGrp
+                    TopoValues = ind.TopoValues != null ? new List<double>(ind.TopoValues) : new List<double>(),
+                    ShpeValues = ind.ShpeValues != null ? new List<double>(ind.ShpeValues) : new List<double>(),
+                    ClustGrp = ind.ClustGrp,
+                    Feas = ind.Feas,
+                    VDang = ind.VDang,
+                    VAng = ind.VAng,
+                    VLen = ind.VLen,
+                    Rank = ind.Rank,
+                    CrowdingDistance = ind.CrowdingDistance,
+                    ObjectiveValues = ind.ObjectiveValues != null ? new List<double>(ind.ObjectiveValues) : new List<double>()
                 }).ToList()
             };
 
@@ -108,6 +124,22 @@ namespace ShapeGrammar3D.Classes
         public double Fitness { get; set; }
         public double Topo { get; set; }
         public double Shpe { get; set; }
+        public List<double> TopoValues { get; set; }
+        public List<double> ShpeValues { get; set; }
         public int ClustGrp { get; set; }
+        public double Feas { get; set; }
+        public double VDang { get; set; }
+        public double VAng { get; set; }
+        public double VLen { get; set; }
+        public int Rank { get; set; }
+        public double CrowdingDistance { get; set; }
+        public List<double> ObjectiveValues { get; set; }
+
+        public IndividualRecord()
+        {
+            TopoValues = new List<double>();
+            ShpeValues = new List<double>();
+            ObjectiveValues = new List<double>();
+        }
     }
 }
