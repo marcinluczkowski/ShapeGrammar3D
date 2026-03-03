@@ -21,6 +21,7 @@ namespace ShapeGrammar3D.Components
     {
         private RectangleF _panelBounds;
         private RectangleF _btnMesh;
+        private RectangleF _btnUtilText;
 
         private const float BTN_H = 22f;
         private const float PAD = 4f;
@@ -47,6 +48,9 @@ namespace ShapeGrammar3D.Components
             _btnMesh = new RectangleF(cx, y, cw, BTN_H);
             y += BTN_H + PAD;
 
+            _btnUtilText = new RectangleF(cx, y, cw, BTN_H);
+            y += BTN_H + PAD;
+
             _panelBounds = new RectangleF(x, std.Bottom + PAD, w, y - std.Bottom - PAD);
             Bounds = new RectangleF(x, std.Y, w, y - std.Y);
         }
@@ -68,6 +72,7 @@ namespace ShapeGrammar3D.Components
             }
 
             DrawToggle(g, _btnMesh, "Utilization Mesh", Comp.ShowMesh);
+            DrawToggle(g, _btnUtilText, "Utilization Text", Comp.ShowUtilText);
             g.SmoothingMode = prev;
         }
 
@@ -115,12 +120,22 @@ namespace ShapeGrammar3D.Components
 
         public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
         {
-            if (e.Button == System.Windows.Forms.MouseButtons.Left && _btnMesh.Contains(e.CanvasLocation))
+            if (e.Button == System.Windows.Forms.MouseButtons.Left)
             {
-                Owner.RecordUndoEvent("Toggle Utilization Mesh");
-                Comp.ShowMesh = !Comp.ShowMesh;
-                Owner.ExpireSolution(true);
-                return GH_ObjectResponse.Handled;
+                if (_btnMesh.Contains(e.CanvasLocation))
+                {
+                    Owner.RecordUndoEvent("Toggle Utilization Mesh");
+                    Comp.ShowMesh = !Comp.ShowMesh;
+                    Owner.ExpireSolution(true);
+                    return GH_ObjectResponse.Handled;
+                }
+                if (_btnUtilText.Contains(e.CanvasLocation))
+                {
+                    Owner.RecordUndoEvent("Toggle Utilization Text");
+                    Comp.ShowUtilText = !Comp.ShowUtilText;
+                    Owner.ExpireSolution(true);
+                    return GH_ObjectResponse.Handled;
+                }
             }
             return base.RespondToMouseDown(sender, e);
         }
@@ -145,6 +160,16 @@ namespace ShapeGrammar3D.Components
     public class GrammarInterpreter_DeformPreview : GH_Component
     {
         public bool ShowMesh { get; set; }
+        public bool ShowUtilText { get; set; }
+
+        private struct UtilLabel
+        {
+            public Point3d Position;
+            public string Text;
+            public Color Colour;
+        }
+        private List<UtilLabel> _utilLabels = new List<UtilLabel>();
+        private double _textHeight = 0.3;
 
         public GrammarInterpreter_DeformPreview()
           : base("GI_DeformPreview", "GI_DeformPreview",
@@ -158,15 +183,31 @@ namespace ShapeGrammar3D.Components
             m_attributes = new DeformPreviewAttributes(this);
         }
 
+        public override bool IsPreviewCapable => true;
+
+        public override void DrawViewportWires(IGH_PreviewArgs args)
+        {
+            base.DrawViewportWires(args);
+            if (!ShowUtilText || _utilLabels == null || _utilLabels.Count == 0) return;
+
+            foreach (var lbl in _utilLabels)
+            {
+                Plane txtPlane = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
+                args.Display.Draw3dText(lbl.Text, lbl.Colour, txtPlane, _textHeight, "Arial");
+            }
+        }
+
         public override bool Write(GH_IO.Serialization.GH_IWriter writer)
         {
             writer.SetBoolean("ShowMesh", ShowMesh);
+            writer.SetBoolean("ShowUtilText", ShowUtilText);
             return base.Write(writer);
         }
 
         public override bool Read(GH_IO.Serialization.GH_IReader reader)
         {
             if (reader.ItemExists("ShowMesh")) ShowMesh = reader.GetBoolean("ShowMesh");
+            if (reader.ItemExists("ShowUtilText")) ShowUtilText = reader.GetBoolean("ShowUtilText");
             return base.Read(reader);
         }
 
@@ -185,12 +226,16 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("X Spacing", "dX",
                 "Horizontal spacing between generation columns", GH_ParamAccess.item, 30.0);          // 5
             pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between individual rows", GH_ParamAccess.item, 30.0);               // 6
+                "Vertical spacing between individual rows", GH_ParamAccess.item, 10.0);               // 6
             pManager.AddNumberParameter("Util Ranges", "URng",
                 "5 utilization thresholds (%) defining 6 colour bands.\n" +
                 "Default: 50, 80, 95, 100, 110\n" +
                 "Band colours: Blue | Blue→Green | Green | Green→Yellow | Yellow→Red | Red",
                 GH_ParamAccess.list);                                                                  // 7
+            pManager.AddPointParameter("Insert Point", "InsPt",
+                "Base point for the grid layout", GH_ParamAccess.item, Point3d.Origin);               // 8
+            pManager.AddNumberParameter("Text Height", "TxH",
+                "Text height in model units for utilization labels", GH_ParamAccess.item, 0.3);       // 9
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
@@ -236,7 +281,8 @@ namespace ShapeGrammar3D.Components
             double scale = 1.0;
             int lcIndex = -1;
             double xSpacing = 30.0;
-            double ySpacing = 30.0;
+            double ySpacing = 10.0;
+            Point3d insertPt = Point3d.Origin;
 
             DA.GetData(3, ref scale);
             DA.GetData(4, ref lcIndex);
@@ -246,6 +292,14 @@ namespace ShapeGrammar3D.Components
             var rawRanges = new List<double>();
             DA.GetDataList(7, rawRanges);
             double[] thresholds = ParseThresholds(rawRanges);
+
+            DA.GetData(8, ref insertPt);
+
+            double textH = 0.3;
+            DA.GetData(9, ref textH);
+            _textHeight = Math.Max(0.01, textH);
+
+            _utilLabels.Clear();
 
             var genToBranch = new Dictionary<int, int>();
             for (int b = 0; b < modelsTree.PathCount; b++)
@@ -289,7 +343,10 @@ namespace ShapeGrammar3D.Components
                     TB_Model model = modelBranch[i].Value;
                     if (model.Elem1Ds == null || model.Nodes == null) continue;
 
-                    Vector3d offset = new Vector3d(col * xSpacing, -row * ySpacing, 0);
+                    Vector3d offset = new Vector3d(
+                        insertPt.X + col * xSpacing,
+                        insertPt.Y - row * ySpacing,
+                        insertPt.Z);
                     GH_Path outPath = new GH_Path(col, row);
 
                     int resolvedLC = ResolveLoadCase(model, lcIndex);
@@ -348,6 +405,17 @@ namespace ShapeGrammar3D.Components
                         Color clr = UtilizationColour(util, thresholds);
                         colourTree.Append(new GH_Colour(clr), outPath);
 
+                        if (ShowUtilText)
+                        {
+                            Point3d midPt = defLine.PointAt(0.5);
+                            _utilLabels.Add(new UtilLabel
+                            {
+                                Position = midPt,
+                                Text = string.Format("{0:F1}%", util * 100.0),
+                                Colour = clr
+                            });
+                        }
+
                         string secText = "N/A";
                         if (elem.Sec is Section_RHS rhs2)
                             secText = string.Format("SHS {0}x{1} t={2} mm", rhs2.W, rhs2.H, rhs2.Tw);
@@ -389,8 +457,8 @@ namespace ShapeGrammar3D.Components
 
             string info = string.Format(
                 "Models: {0}\nGenerations: [{1}]\nScale: {2}\nLC: {3}\n" +
-                "Layout: {4} cols x {5} rows\nMesh: {6}\n" +
-                "Util ranges (%): {7}\n" +
+                "Layout: {4} cols x {5} rows\nMesh: {6}\nUtilText: {7}\n" +
+                "Util ranges (%): {8}\n" +
                 "Colours: Blue | Blue→Green | Green | Green→Yellow | Yellow→Red | Red",
                 totalModels,
                 string.Join(", ", generationList),
@@ -398,6 +466,7 @@ namespace ShapeGrammar3D.Components
                 lcIndex == -1 ? "last" : lcIndex.ToString(),
                 generationList.Count, maxRows,
                 ShowMesh ? "ON" : "OFF",
+                ShowUtilText ? "ON" : "OFF",
                 rangeStr);
 
             DA.SetDataTree(0, undefTree);

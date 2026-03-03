@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -47,9 +47,16 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 04-3d
-            SH_CrossSection_Rectangle def_crosec = new SH_CrossSection_Rectangle(10, 10);
-            def_crosec.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
+            // inherit cross-section from existing elements; fall back to 10×10 rect
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection;
+            if (def_crosec == null)
+            {
+                var fallback = new SH_CrossSection_Rectangle(10, 10);
+                fallback.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
+                def_crosec = fallback;
+            }
             // find relevant range in genotype
             int sid = -999;
             int eid = -999;

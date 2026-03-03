@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -67,6 +67,11 @@ namespace ShapeGrammar3D.Classes.Rules
             ss_ref.UnregisterElemsFromNodes();
             ss_ref.RegisterElemsToNodes();
 
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection
+                ?? new SH_CrossSection_Beam();
+
             for (int i = 0; i < selectedIntGenes.Count; i++)
             {
                 if (selectedIntGenes[i] == 0) continue;
@@ -83,7 +88,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 if (Math.Abs(length) >= UT.MIN_SEG_LEN)
                 {
                     Line ln = new Line(ss_ref.Nodes[i].Pt, Vector3d.ZAxis, length);
-                    SG_Elem1D elem = new SG_Elem1D(ln, -999, "AR2", new SH_CrossSection_Beam()) { Autorule = 2 };
+                    SG_Elem1D elem = new SG_Elem1D(ln, -999, "AR2", def_crosec) { Autorule = 2 };
                     ss_ref.AddNewElement(elem);
                 }
                 else

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -68,9 +68,16 @@ namespace ShapeGrammar3D.Classes.Rules
             ss_ref.UnregisterElemsFromNodes();
             ss_ref.RegisterElemsToNodes();
 
-            // default cross-section
-            SH_CrossSection_Rectangle def_crosec = new SH_CrossSection_Rectangle(10, 10);
-            def_crosec.Material = (SH_Material) SH_Material_Isotrop.Default_Material();
+            // inherit cross-section from existing elements; fall back to 10×10 rect
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection;
+            if (def_crosec == null)
+            {
+                var fallback = new SH_CrossSection_Rectangle(10, 10);
+                fallback.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
+                def_crosec = fallback;
+            }
 
             for (int i = 0; i < selectedIntGenes.Count; i++)
             {

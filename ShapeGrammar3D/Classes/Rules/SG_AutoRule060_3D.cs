@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -45,7 +45,10 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 05-3d
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection
+                ?? new SH_CrossSection_Beam();
 
             // find relevant range in genotype
             int sid = -999;
@@ -122,7 +125,7 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var targetStud = targetElements.OrderBy(t => t.Nodes[1].Pt.DistanceTo(stud0.Nodes[1].Pt)).ToList()[0];
 
-                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt), -999, "3DAR5", new SH_CrossSection_Beam()) { Autorule = UT.RULE060_MARKER };
+                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt), -999, "3DAR5", def_crosec) { Autorule = UT.RULE060_MARKER };
 
                 ss_ref.AddNewElement(newBeam);
             }

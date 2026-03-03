@@ -142,10 +142,20 @@ namespace ShapeGrammar3D.Components
 
                             double secW = 0, secH = 0;
                             TB_Section tbSec = GetSectionForElement(model, elemIdx);
-                            if (tbSec is Section_Rect rect)
+                            if (tbSec is Section_RHS rhsSec)
+                            {
+                                secW = rhsSec.W;
+                                secH = rhsSec.H;
+                            }
+                            else if (tbSec is Section_Rect rect)
                             {
                                 secW = rect.B;
                                 secH = rect.H;
+                            }
+                            else if (elem1d.CrossSection is SH_CrossSection_RHS shRhs)
+                            {
+                                secW = shRhs.Width;
+                                secH = shRhs.Height;
                             }
                             else if (elem1d.CrossSection is SH_CrossSection_Rectangle shRect)
                             {

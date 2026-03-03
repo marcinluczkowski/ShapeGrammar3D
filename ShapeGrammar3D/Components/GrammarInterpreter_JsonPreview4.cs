@@ -317,6 +317,11 @@ namespace ShapeGrammar3D.Components
                             else if (tbSec4 is Section_Rect rect)
                             { secW = rect.B; secH = rect.H; }
                         }
+                        else if (elem1d.CrossSection is SH_CrossSection_RHS shRhs4)
+                        {
+                            secW = shRhs4.Width;
+                            secH = shRhs4.Height;
+                        }
                         else if (elem1d.CrossSection is SH_CrossSection_Rectangle shRect)
                         {
                             secW = shRect.width;

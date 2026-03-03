@@ -58,32 +58,29 @@ namespace ShapeGrammar3D.Components
             SH_Material shMat = null;
             DA.GetData(1, ref shMat);
 
+            TB_Material tbMat = ghMat?.Value;
+            if (tbMat == null)
+                tbMat = new TB_Material("S355", 210000, 80769, 78.5, 1.2e-5, 355);
+
             double s = _selectedSize;
             double t = _selectedThickness;
             string tag = string.Format("SHS {0}x{0}x{1}", _selectedSize, _selectedThickness);
 
-            if (ghMat?.Value != null)
+            var sec = new Section_RHS(tbMat, tag, s, s, t, t);
+            DA.SetData(0, new GH_Section(sec));
+            DA.SetDataList(2, sec.Curves);
+
+            if (shMat == null)
             {
-                var sec = new Section_RHS(ghMat.Value, tag, s, s, t, t);
-                DA.SetData(0, new GH_Section(sec));
-                DA.SetDataList(2, sec.Curves);
+                shMat = new SH_Material_Isotrop(
+                    "Steel", tbMat.Tag,
+                    tbMat.E, 0.3, tbMat.Fy,
+                    tbMat.Gamma * 1000.0 / 9.81,
+                    tbMat.Alpha);
             }
 
-            if (shMat != null)
-            {
-                var shSec = new SH_CrossSection_RHS(tag, s, s, t, t) { Material = shMat };
-                DA.SetData(1, shSec);
-            }
-            else if (ghMat?.Value != null)
-            {
-                var fallbackShMat = new SH_Material_Isotrop(
-                    "Steel", ghMat.Value.Tag,
-                    ghMat.Value.E, 0.3, ghMat.Value.Fy,
-                    ghMat.Value.Gamma * 1000.0 / 9.81,
-                    ghMat.Value.Alpha);
-                var shSec = new SH_CrossSection_RHS(tag, s, s, t, t) { Material = fallbackShMat };
-                DA.SetData(1, shSec);
-            }
+            var shSec = new SH_CrossSection_RHS(tag, s, s, t, t) { Material = shMat };
+            DA.SetData(1, shSec);
 
             double bi = s - 2 * t;
             double hi = bi;

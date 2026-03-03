@@ -245,6 +245,7 @@ namespace ShapeGrammar3D.Classes
 
         // Clustering
         private SimpleKMeans _kmeans;
+        private bool _clusteringInitialized;
 
         public SG_GA()
         {
@@ -531,9 +532,7 @@ namespace ShapeGrammar3D.Classes
                 .Max();
             if (fitnessMax <= 0) fitnessMax = 1.0;
 
-            bool shouldInitialize = _currentGeneration == 0
-                || _kmeans == null
-                || (ReclusterInterval > 0 && _currentGeneration % ReclusterInterval == 0);
+            bool shouldInitialize = !_clusteringInitialized || _kmeans == null;
 
             if (shouldInitialize)
             {
@@ -605,7 +604,16 @@ namespace ShapeGrammar3D.Classes
                 dataPoints.Add(pt);
             }
 
-            List<int> clusters = _kmeans.Cluster(dataPoints, shouldInitialize, KMeansMaxIterations);
+            List<int> clusters;
+            if (shouldInitialize)
+            {
+                clusters = _kmeans.Cluster(dataPoints, true, KMeansMaxIterations);
+                _clusteringInitialized = true;
+            }
+            else
+            {
+                clusters = _kmeans.Cluster(dataPoints, false, 0);
+            }
 
             for (int i = 0; i < clusters.Count && i < individuals.Count; i++)
             {
