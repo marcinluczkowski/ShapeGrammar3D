@@ -218,6 +218,13 @@ namespace ShapeGrammar3D.Classes
         public int KMeansMaxIterations { get; set; } = 10;
         public int ReclusterInterval { get; set; } = 0; // 0 = only at generation 0
 
+        /// <summary>
+        /// User-supplied [min, max] domains for each clustering dimension.
+        /// Order: topo metrics first, then shape metrics.
+        /// When set, normalization uses (val - min) / (max - min) instead of val / observedMax.
+        /// </summary>
+        public List<Rhino.Geometry.Interval> MetricDomains { get; set; } = null;
+
         // State variables
         private List<GAIndividual> _currentPopulation;
         private List<double> _bestFits;
@@ -482,6 +489,8 @@ namespace ShapeGrammar3D.Classes
 
         /// <summary>
         /// Performs clustering on population based on weighted topology, shape, and fitness metrics.
+        /// When <see cref="MetricDomains"/> is set, normalization uses (val - min) / (max - min).
+        /// Otherwise falls back to val / observedMax.
         /// </summary>
         public void ClusterPopulation(List<GAIndividual> individuals)
         {
@@ -495,18 +504,23 @@ namespace ShapeGrammar3D.Classes
 
             if (dims == 0) dims = 1;
 
+            bool hasDomains = MetricDomains != null && MetricDomains.Count >= numTopo + numShpe;
+
             double[] topoMaxes = new double[numTopo];
             double[] shpeMaxes = new double[numShpe];
 
-            for (int d = 0; d < numTopo; d++)
+            if (!hasDomains)
             {
-                double mx = individuals.Max(ind => ind.TopoValues != null && ind.TopoValues.Count > d ? ind.TopoValues[d] : 0);
-                topoMaxes[d] = mx > 0 ? mx : 1.0;
-            }
-            for (int d = 0; d < numShpe; d++)
-            {
-                double mx = individuals.Max(ind => ind.ShpeValues != null && ind.ShpeValues.Count > d ? ind.ShpeValues[d] : 0);
-                shpeMaxes[d] = mx > 0 ? mx : 1.0;
+                for (int d = 0; d < numTopo; d++)
+                {
+                    double mx = individuals.Max(ind => ind.TopoValues != null && ind.TopoValues.Count > d ? ind.TopoValues[d] : 0);
+                    topoMaxes[d] = mx > 0 ? mx : 1.0;
+                }
+                for (int d = 0; d < numShpe; d++)
+                {
+                    double mx = individuals.Max(ind => ind.ShpeValues != null && ind.ShpeValues.Count > d ? ind.ShpeValues[d] : 0);
+                    shpeMaxes[d] = mx > 0 ? mx : 1.0;
+                }
             }
 
             double fitnessMax = individuals
@@ -539,18 +553,42 @@ namespace ShapeGrammar3D.Classes
                 {
                     double val = (individuals[i].TopoValues != null && individuals[i].TopoValues.Count > d)
                         ? individuals[i].TopoValues[d] : 0;
-                    double denom = (_topoDenominators != null && _topoDenominators.Length > d && _topoDenominators[d] > 0)
-                        ? _topoDenominators[d] : 1.0;
-                    pt[idx++] = val / denom * TopoWeight;
+
+                    if (hasDomains)
+                    {
+                        var dom = MetricDomains[d];
+                        double range = dom.Max - dom.Min;
+                        pt[idx++] = range > 0
+                            ? (val - dom.Min) / range * TopoWeight
+                            : 0;
+                    }
+                    else
+                    {
+                        double denom = (_topoDenominators != null && _topoDenominators.Length > d && _topoDenominators[d] > 0)
+                            ? _topoDenominators[d] : 1.0;
+                        pt[idx++] = val / denom * TopoWeight;
+                    }
                 }
 
                 for (int d = 0; d < numShpe; d++)
                 {
                     double val = (individuals[i].ShpeValues != null && individuals[i].ShpeValues.Count > d)
                         ? individuals[i].ShpeValues[d] : 0;
-                    double denom = (_shapeDenominators != null && _shapeDenominators.Length > d && _shapeDenominators[d] > 0)
-                        ? _shapeDenominators[d] : 1.0;
-                    pt[idx++] = val / denom * ShapeWeight;
+
+                    if (hasDomains)
+                    {
+                        var dom = MetricDomains[numTopo + d];
+                        double range = dom.Max - dom.Min;
+                        pt[idx++] = range > 0
+                            ? (val - dom.Min) / range * ShapeWeight
+                            : 0;
+                    }
+                    else
+                    {
+                        double denom = (_shapeDenominators != null && _shapeDenominators.Length > d && _shapeDenominators[d] > 0)
+                            ? _shapeDenominators[d] : 1.0;
+                        pt[idx++] = val / denom * ShapeWeight;
+                    }
                 }
 
                 if (useFitness)

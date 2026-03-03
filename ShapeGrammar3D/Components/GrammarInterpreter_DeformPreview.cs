@@ -349,7 +349,9 @@ namespace ShapeGrammar3D.Components
                         colourTree.Append(new GH_Colour(clr), outPath);
 
                         string secText = "N/A";
-                        if (elem.Sec is Section_Rect rect2)
+                        if (elem.Sec is Section_RHS rhs2)
+                            secText = string.Format("SHS {0}x{1} t={2} mm", rhs2.W, rhs2.H, rhs2.Tw);
+                        else if (elem.Sec is Section_Rect rect2)
                             secText = string.Format("{0}x{1} mm", rect2.B, rect2.H);
                         else if (elem.Sec != null)
                             secText = elem.Sec.GetDims();
@@ -358,7 +360,11 @@ namespace ShapeGrammar3D.Components
                         if (ShowMesh)
                         {
                             double sw = 0, sh = 0;
-                            if (elem.Sec is Section_Rect rect)
+                            if (elem.Sec is Section_RHS rhs)
+                            {
+                                sw = rhs.W; sh = rhs.H;
+                            }
+                            else if (elem.Sec is Section_Rect rect)
                             {
                                 sw = rect.B; sh = rect.H;
                             }

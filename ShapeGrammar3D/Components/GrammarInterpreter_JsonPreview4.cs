@@ -309,11 +309,13 @@ namespace ShapeGrammar3D.Components
 
                         double secW = 0, secH = 0;
                         if (entry.Model != null && entry.Model.Elem1Ds != null
-                            && elemIdx < entry.Model.Elem1Ds.Count
-                            && entry.Model.Elem1Ds[elemIdx].Sec is Section_Rect rect)
+                            && elemIdx < entry.Model.Elem1Ds.Count)
                         {
-                            secW = rect.B;
-                            secH = rect.H;
+                            var tbSec4 = entry.Model.Elem1Ds[elemIdx].Sec;
+                            if (tbSec4 is Section_RHS rhs4)
+                            { secW = rhs4.W; secH = rhs4.H; }
+                            else if (tbSec4 is Section_Rect rect)
+                            { secW = rect.B; secH = rect.H; }
                         }
                         else if (elem1d.CrossSection is SH_CrossSection_Rectangle shRect)
                         {

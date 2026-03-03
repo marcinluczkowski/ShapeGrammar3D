@@ -43,8 +43,11 @@ namespace ShapeGrammar3D.Components
         // Self-weight
         private bool _useSelfWeight = false;
 
-        // Cross-section optimization
-        private bool _useCroSecOpt = false;
+        // Cross-section optimization: 0=off, 1=Rect, 2=SHS catalog
+        private int _croSecOptMode = 0;
+
+        // User-supplied normalization domains (one per metric dimension)
+        private List<Rhino.Geometry.Interval> _metricDomains = null;
 
         private SG_GA _ga;
         private SG_MOGA _moga;
@@ -135,10 +138,19 @@ namespace ShapeGrammar3D.Components
                 "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
                 "Uses element length, cross-section area [mm²], and material density [kN/m³].",
                 GH_ParamAccess.item, false);                                                                                            // 21
-            pManager.AddBooleanParameter("CroSec Opt", "CSOpt",
-                "Optimize cross-sections per element. Iteratively increases rectangular sections " +
-                "(50–1000 mm in 50 mm steps) until utilization ≤ 1.0 for each element.",
-                GH_ParamAccess.item, false);                                                                                            // 22
+            pManager.AddIntegerParameter("CroSec Opt", "CSOpt",
+                "Cross-section optimization mode:\n" +
+                "0 = off\n" +
+                "1 = solid Rect (50–1000 mm, 50 mm steps)\n" +
+                "2 = SHS catalog (standard square hollow sections, t ≥ 4 mm)",
+                GH_ParamAccess.item, 0);                                                                                                // 22
+            pManager.AddIntervalParameter("Metric Domains", "MDom",
+                "Expected [min, max] domain per metric dimension for clustering normalization.\n" +
+                "Order: topology metrics first, then shape metrics (same order as MetNm output).\n" +
+                "Each value is mapped to [0, 1] via (val - min) / (max - min).\n" +
+                "If not supplied, falls back to observed-max normalization.",
+                GH_ParamAccess.list);                                                                                                    // 23
+            pManager[23].Optional = true;
         }
 
         /// <summary>
@@ -177,6 +189,17 @@ namespace ShapeGrammar3D.Components
                 GH_ParamAccess.tree);                                                                                         // 18
             pManager.AddTextParameter("JSON Path", "JSON",
                 "Path to saved JSON file with full GA run data", GH_ParamAccess.item);                                        // 19
+            pManager.AddNumberParameter("All Metrics", "AllMet",
+                "All metric values per individual {generation;individual}(metric). " +
+                "Order: topo metrics first, then shape metrics.",
+                GH_ParamAccess.tree);                                                                                         // 20
+            pManager.AddTextParameter("Metric Names", "MetNm",
+                "Ordered metric axis labels (topology first, then shape)",
+                GH_ParamAccess.list);                                                                                         // 21
+            pManager.AddIntervalParameter("Metric Domains", "MDom",
+                "Pass-through of user-supplied normalization domains (one per metric axis).\n" +
+                "Connect to Radar Chart's MDom input for consistent normalization.",
+                GH_ParamAccess.list);                                                                                         // 22
 
             pManager[1].Optional = true;
         }
@@ -285,9 +308,22 @@ namespace ShapeGrammar3D.Components
             _useSelfWeight = useSelfWeight;
 
             // --- Cross-section optimization ---
-            bool useCroSecOpt = _useCroSecOpt;
-            DA.GetData(22, ref useCroSecOpt);
-            _useCroSecOpt = useCroSecOpt;
+            int croSecOptMode = _croSecOptMode;
+            DA.GetData(22, ref croSecOptMode);
+            _croSecOptMode = Math.Clamp(croSecOptMode, 0, 2);
+
+            // --- Metric normalization domains ---
+            var rawDomains = new List<Grasshopper.Kernel.Types.GH_Interval>();
+            if (DA.GetDataList(23, rawDomains) && rawDomains.Count > 0)
+            {
+                _metricDomains = rawDomains
+                    .Select(d => d.Value)
+                    .ToList();
+            }
+            else
+            {
+                _metricDomains = null;
+            }
 
             // --- init GA ---
             if (_ga == null || reset)
@@ -477,7 +513,8 @@ namespace ShapeGrammar3D.Components
                 ShapeWeight = _shapeWeight,
                 FitnessWeight = _fitnessWeight,
                 KMeansMaxIterations = _kmeansIterations,
-                ReclusterInterval = _reclusterInterval
+                ReclusterInterval = _reclusterInterval,
+                MetricDomains = _metricDomains
             };
 
             _moga = new SG_MOGA
@@ -509,7 +546,7 @@ namespace ShapeGrammar3D.Components
                 EliteProb = _eliteProbability,
                 NumObjectives = _numObjectives,
                 UseSelfWeight = _useSelfWeight,
-                UseCroSecOpt = _useCroSecOpt,
+                UseCroSecOpt = _croSecOptMode > 0,
                 TopoMetricTypes = new List<int>(_topoMetricTypes),
                 ShapeMetricTypes = new List<int>(_shapeMetricTypes)
             };
@@ -574,8 +611,10 @@ namespace ShapeGrammar3D.Components
                     SolveLS slv = new SolveLS(ref tb_mdl);
                     TB_Model finalModel = slv.Mdl;
 
-                    if (_useCroSecOpt)
+                    if (_croSecOptMode == 1)
                         finalModel = OptimizeCrossSections(finalModel);
+                    else if (_croSecOptMode == 2)
+                        finalModel = OptimizeCrossSections_SHS(finalModel);
 
                     double rawFitness = CalculateMaxNodalDisplacement(finalModel);
 
@@ -786,6 +825,7 @@ namespace ShapeGrammar3D.Components
             var rankTree = new GH_Structure<GH_Integer>();
             var objVolTree = new GH_Structure<GH_Number>();
             var objFeasTree = new GH_Structure<GH_Number>();
+            var allMetricsTree = new GH_Structure<GH_Number>();
 
             if (_allShapes != null && _allShapes.Count > 0)
             {
@@ -822,6 +862,14 @@ namespace ShapeGrammar3D.Components
                             double objFeas = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 2)
                                 ? ind.ObjectiveValues[2] : 0.0;
                             objFeasTree.Append(new GH_Number(objFeas), path);
+
+                            var metPath = new GH_Path(g, idx);
+                            if (ind.TopoValues != null)
+                                foreach (double tv in ind.TopoValues)
+                                    allMetricsTree.Append(new GH_Number(tv), metPath);
+                            if (ind.ShpeValues != null)
+                                foreach (double sv in ind.ShpeValues)
+                                    allMetricsTree.Append(new GH_Number(sv), metPath);
                         }
                     }
                 }
@@ -923,6 +971,17 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(16, rankTree);
             DA.SetDataTree(17, objVolTree);
             DA.SetDataTree(18, objFeasTree);
+
+            DA.SetDataTree(20, allMetricsTree);
+            var metricNames = new List<string>();
+            foreach (int t in _topoMetricTypes)
+                metricNames.Add("T:" + TopologyMetrics.GetLabel(t));
+            foreach (int s in _shapeMetricTypes)
+                metricNames.Add("S:" + ShapeMetrics.GetLabel(s));
+            DA.SetDataList(21, metricNames);
+
+            if (_metricDomains != null && _metricDomains.Count > 0)
+                DA.SetDataList(22, _metricDomains.Select(d => new GH_Interval(d)).ToList());
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
@@ -953,8 +1012,10 @@ namespace ShapeGrammar3D.Components
             model = new TB_Model(shape);
             SolveLS slv = new SolveLS(ref model);
 
-            if (_useCroSecOpt)
+            if (_croSecOptMode == 1)
                 model = OptimizeCrossSections(model);
+            else if (_croSecOptMode == 2)
+                model = OptimizeCrossSections_SHS(model);
         }
 
         protected override System.Drawing.Bitmap Icon
@@ -1061,6 +1122,84 @@ namespace ShapeGrammar3D.Components
             }
 
             return maxUtil;
+        }
+
+        /// <summary>
+        /// Optimizes cross-sections using the SHS catalog (square hollow sections).
+        /// Iterates through catalog entries ordered by ascending area until
+        /// every element's utilization is ≤ 1.0.
+        /// </summary>
+        private TB_Model OptimizeCrossSections_SHS(TB_Model solvedModel)
+        {
+            if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
+                return solvedModel;
+
+            var combos = SHS_Catalog.AllCombinations();
+            if (combos.Count == 0) return solvedModel;
+
+            var sorted = combos
+                .Select(c =>
+                {
+                    double s = c.Size, t = c.T;
+                    double bi = s - 2 * t;
+                    double area = s * s - bi * bi;
+                    return (c.Size, c.T, Area: area);
+                })
+                .OrderBy(x => x.Area)
+                .ToList();
+
+            int numOptions = sorted.Count;
+            int elemCount = solvedModel.Elem1Ds.Count;
+            int[] secIdx = new int[elemCount];
+
+            TB_Model currentModel = RebuildModelWithSHSSections(solvedModel, secIdx, sorted);
+            SolveLS slv = new SolveLS(ref currentModel);
+            currentModel = slv.Mdl;
+
+            for (int iter = 0; iter < numOptions; iter++)
+            {
+                bool anyChanged = false;
+
+                for (int e = 0; e < currentModel.Elem1Ds.Count; e++)
+                {
+                    if (secIdx[e] >= numOptions - 1) continue;
+
+                    double util = ComputeElementUtilization(currentModel, currentModel.Elem1Ds[e]);
+
+                    if (util > 1.0)
+                    {
+                        secIdx[e]++;
+                        anyChanged = true;
+                    }
+                }
+
+                if (!anyChanged) break;
+
+                currentModel = RebuildModelWithSHSSections(solvedModel, secIdx, sorted);
+                slv = new SolveLS(ref currentModel);
+                currentModel = slv.Mdl;
+            }
+
+            return currentModel;
+        }
+
+        private static TB_Model RebuildModelWithSHSSections(
+            TB_Model template, int[] secIdx,
+            List<(int Size, int T, double Area)> sortedCombos)
+        {
+            var newElems = new List<TB_Element_1D>();
+            for (int i = 0; i < template.Elem1Ds.Count; i++)
+            {
+                TB_Element_1D orig = template.Elem1Ds[i];
+                int idx = Math.Clamp(secIdx[i], 0, sortedCombos.Count - 1);
+                var combo = sortedCombos[idx];
+                double size = combo.Size;
+                double t = combo.T;
+                string tag = string.Format("SHS_{0}x{0}x{1}", size, t);
+                Section_RHS sec = new Section_RHS(orig.Sec.Mat, tag, size, size, t, t);
+                newElems.Add(new TB_Element_1D(orig.Line, orig.Tag, sec, orig.Vz, orig.Line.Length));
+            }
+            return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
         private static SG_Shape CloneShape(SG_Shape source)

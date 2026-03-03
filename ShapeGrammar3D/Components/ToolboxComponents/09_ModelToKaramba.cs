@@ -135,7 +135,13 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
 
                             double bDim = 0, hDim = 0;
                             string secName = "";
-                            if (e.Sec is Section_Rect rect)
+                            if (e.Sec is Section_RHS rhsSec)
+                            {
+                                bDim = rhsSec.W * secScale;
+                                hDim = rhsSec.H * secScale;
+                                secName = rhsSec.Tag ?? string.Format("RHS_{0}x{1}", rhsSec.W, rhsSec.H);
+                            }
+                            else if (e.Sec is Section_Rect rect)
                             {
                                 bDim = rect.B * secScale;
                                 hDim = rect.H * secScale;
