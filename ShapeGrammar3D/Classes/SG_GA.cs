@@ -219,6 +219,12 @@ namespace ShapeGrammar3D.Classes
         public int ReclusterInterval { get; set; } = 0; // 0 = only at generation 0
 
         /// <summary>
+        /// Minimum number of best individuals guaranteed to survive per cluster.
+        /// Prevents cluster extinction during evolution. 0 = disabled.
+        /// </summary>
+        public int ClusterEliteCount { get; set; } = 0;
+
+        /// <summary>
         /// User-supplied [min, max] domains for each clustering dimension.
         /// Order: topo metrics first, then shape metrics.
         /// When set, normalization uses (val - min) / (max - min) instead of val / observedMax.
@@ -622,7 +628,10 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Processes evaluated individuals and updates population
+        /// Processes evaluated individuals and updates population.
+        /// When ClusterEliteCount > 0 the N best individuals from each cluster
+        /// are guaranteed to survive into the next generation, preventing
+        /// cluster extinction.
         /// </summary>
         public List<GAIndividual> ProcessEvaluatedIndividuals(List<GAIndividual> evaluated)
         {
@@ -630,9 +639,29 @@ namespace ShapeGrammar3D.Classes
             _currentPopulation = evaluated;
             _allEvaluatedIndividuals.AddRange(evaluated);
 
-            List<GAIndividual> newGeneration = new List<GAIndividual>();
+            int totalPop = evaluated.Count;
+            int elitePerCluster = Math.Max(0, ClusterEliteCount);
 
-            // Process each cluster separately
+            var clusterElites = new List<GAIndividual>();
+            if (elitePerCluster > 0)
+            {
+                for (int c = 0; c < NumClusters; c++)
+                {
+                    var best = evaluated
+                        .Where(i => i.ClustGrp == c)
+                        .OrderBy(i => Maximize ? -i.Fitness : i.Fitness)
+                        .Take(elitePerCluster)
+                        .Select(i => i.Clone())
+                        .ToList();
+                    clusterElites.AddRange(best);
+                }
+            }
+
+            int reservedSlots = clusterElites.Count;
+            int slotsForEvolution = Math.Max(0, totalPop - reservedSlots);
+
+            List<GAIndividual> evolvedPart = new List<GAIndividual>();
+
             for (int clustIdx = 0; clustIdx < NumClusters; clustIdx++)
             {
                 List<GAIndividual> clusterIndividuals = evaluated
@@ -642,9 +671,18 @@ namespace ShapeGrammar3D.Classes
                 if (clusterIndividuals.Count > 0)
                 {
                     List<GAIndividual> newClusterGen = SolveOneGeneration(clusterIndividuals);
-                    newGeneration.AddRange(newClusterGen);
+                    evolvedPart.AddRange(newClusterGen);
                 }
             }
+
+            List<GAIndividual> newGeneration = new List<GAIndividual>(clusterElites);
+
+            var eliteIds = new HashSet<string>(clusterElites.Select(e => e.Id));
+            var nonDuplicateEvolved = evolvedPart.Where(e => !eliteIds.Contains(e.Id)).ToList();
+            newGeneration.AddRange(nonDuplicateEvolved);
+
+            if (newGeneration.Count > totalPop)
+                newGeneration = newGeneration.Take(totalPop).ToList();
 
             return newGeneration;
         }

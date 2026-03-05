@@ -37,6 +37,9 @@ namespace ShapeGrammar3D.Components
         private double _wAng = 0.0;
         private double _wLen = 0.0;
 
+        // Cluster elite: guaranteed survivors per cluster per generation
+        private int _clusterEliteCount = 0;
+
         // Multi-objective configuration
         private int _numObjectives = 1;
 
@@ -156,6 +159,11 @@ namespace ShapeGrammar3D.Components
                 "Direction of gravity for self-weight loads. " +
                 "The vector is unitized internally; only direction matters.",
                 GH_ParamAccess.item, new Vector3d(0, -1, 0));                                                                            // 24
+            pManager.AddIntegerParameter("Cluster Elite", "ClElite",
+                "Number of best individuals per cluster guaranteed to survive " +
+                "into the next generation. Prevents cluster extinction.\n" +
+                "0 = disabled (default). Typical value: 1–3.",
+                GH_ParamAccess.item, 0);                                                                                                  // 25
         }
 
         /// <summary>
@@ -190,7 +198,8 @@ namespace ShapeGrammar3D.Components
                 "Average utilization deviation from 90% target per individual {generation}(individual). Multi-objective only.",
                 GH_ParamAccess.tree);                                                                                         // 17
             pManager.AddNumberParameter("Obj Feasibility", "ObjFeas",
-                "Feasibility objective per individual {generation}(individual). Tri-objective only.",
+                "Raw feasibility score per individual {generation}(individual). " +
+                "Average of VDang + VAng + VLen (unweighted, [0..1]). Tri-objective only.",
                 GH_ParamAccess.tree);                                                                                         // 18
             pManager.AddTextParameter("JSON Path", "JSON",
                 "Path to saved JSON file with full GA run data", GH_ParamAccess.item);                                        // 19
@@ -338,6 +347,11 @@ namespace ShapeGrammar3D.Components
                 _metricDomains = null;
             }
 
+            // --- Cluster elite ---
+            int clusterElite = _clusterEliteCount;
+            DA.GetData(25, ref clusterElite);
+            _clusterEliteCount = Math.Max(0, clusterElite);
+
             // --- init GA ---
             if (_ga == null || reset)
             {
@@ -420,6 +434,15 @@ namespace ShapeGrammar3D.Components
 
                 if (isMultiObjective)
                     _ga.ClusterPopulation(evaluatedPop);
+
+                // Cluster-elite injection for multi-objective mode:
+                // after clustering, guarantee the best N individuals from
+                // each cluster survive into the next generation's offspring.
+                if (isMultiObjective && _clusterEliteCount > 0 && !isLastGeneration)
+                {
+                    _currentPopulation = InjectClusterElites(
+                        _currentPopulation, evaluatedPop, _numClusters, _clusterEliteCount);
+                }
 
                 List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
                 _allGenerations.Add(snapshot);
@@ -508,10 +531,15 @@ namespace ShapeGrammar3D.Components
                 ? validDisp.Min(ind => ind.ObjectiveValues[1]).ToString("F4")
                 : "N/A";
 
+            string bestFeas = validDisp.Count > 0 && validDisp[0].ObjectiveValues.Count > 2
+                ? validDisp.Min(ind => ind.ObjectiveValues[2]).ToString("F4")
+                : "N/A";
+
             return string.Format(
-                "Gen {0} [NSGA-II, {1} obj]: Pareto front size={2}, Max rank={3}, " +
-                "Best disp%SLS={4}, Best utilDev={5}",
-                generation, _numObjectives, frontZeroCount, maxRank, bestDisp, bestUtil);
+                "Gen {0} [NSGA-II, {1} obj]: Front0={2}, MaxRank={3}, " +
+                "BestDisp(log)={4}, BestUtilDev={5}, BestFeas={6}",
+                generation, _numObjectives, frontZeroCount, maxRank,
+                bestDisp, bestUtil, bestFeas);
         }
 
         /// <summary>
@@ -535,7 +563,8 @@ namespace ShapeGrammar3D.Components
                 FitnessWeight = _fitnessWeight,
                 KMeansMaxIterations = _kmeansIterations,
                 ReclusterInterval = _reclusterInterval,
-                MetricDomains = _metricDomains
+                MetricDomains = _metricDomains,
+                ClusterEliteCount = _clusterEliteCount
             };
 
             _moga = new SG_MOGA
@@ -573,6 +602,45 @@ namespace ShapeGrammar3D.Components
             };
 
             FixedGenotypes.Reset();
+        }
+
+        /// <summary>
+        /// Injects the best N individuals from each cluster (from the evaluated
+        /// population) into the offspring pool, replacing the tail. This
+        /// guarantees every cluster is represented in the next generation.
+        /// </summary>
+        private static List<GAIndividual> InjectClusterElites(
+            List<GAIndividual> offspring,
+            List<GAIndividual> evaluated,
+            int numClusters,
+            int elitesPerCluster)
+        {
+            var clusterElites = new List<GAIndividual>();
+            for (int c = 0; c < numClusters; c++)
+            {
+                var best = evaluated
+                    .Where(i => i.ClustGrp == c)
+                    .OrderBy(i => i.Fitness)
+                    .Take(elitesPerCluster)
+                    .Select(i => i.Clone())
+                    .ToList();
+                clusterElites.AddRange(best);
+            }
+
+            if (clusterElites.Count == 0)
+                return offspring;
+
+            int targetSize = offspring.Count;
+            var eliteIds = new HashSet<string>(clusterElites.Select(e => e.Id));
+            var filtered = offspring.Where(o => !eliteIds.Contains(o.Id)).ToList();
+
+            var result = new List<GAIndividual>(clusterElites);
+            result.AddRange(filtered);
+
+            if (result.Count > targetSize)
+                result = result.Take(targetSize).ToList();
+
+            return result;
         }
 
         /// <summary>
@@ -654,10 +722,23 @@ namespace ShapeGrammar3D.Components
 
                     if (_numObjectives > 1)
                     {
+                        // Log-transform displacement so its scale is comparable
+                        // to the [0,~1] range of the other objectives.
+                        // log(1 + 0) = 0  (perfect),  log(1 + 1) ≈ 0.69,
+                        // log(1 + 10) ≈ 2.4  (very bad).
+                        double dispObj = Math.Log(1.0 + Math.Max(0.0, dispRatio));
+
+                        // Raw feasibility: average of all three sub-penalties
+                        // WITHOUT the single-objective user weights, so the
+                        // score spans the full [0, 1] range and every aspect
+                        // of feasibility contributes equally.
+                        double rawFeas = (feasResult.VDang + feasResult.VAng + feasResult.VLen) / 3.0;
+                        rawFeas = Math.Clamp(rawFeas, 0.0, 1.0);
+
                         individual.Fitness = dispRatio;
-                        individual.ObjectiveValues = new List<double> { dispRatio, utilDev };
+                        individual.ObjectiveValues = new List<double> { dispObj, utilDev };
                         if (_numObjectives >= 3)
-                            individual.ObjectiveValues.Add(feasResult.TotalViolation);
+                            individual.ObjectiveValues.Add(rawFeas);
                     }
                     else
                     {
@@ -988,8 +1069,8 @@ namespace ShapeGrammar3D.Components
             {
                 int frontZero = evaluatedPop.Count(ind => ind.Rank == 0);
                 string objLabels = _numObjectives == 2
-                    ? "Disp%SLS, AvgUtil Dev"
-                    : "Disp%SLS, AvgUtil Dev, Feasibility";
+                    ? "log(1+Disp%SLS), AvgUtil Dev"
+                    : "log(1+Disp%SLS), AvgUtil Dev, RawFeas(avg VDang+VAng+VLen)";
                 info = string.Format(
                     "Mode: NSGA-II ({0} objectives: {1})\n" +
                     "Generation: {2}/{3}\n" +
