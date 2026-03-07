@@ -20,7 +20,7 @@ namespace ShapeGrammar3D.Components
         public GI_ConvergenceGraph()
           : base("GI_Convergence", "GI_Conv",
               "Plots fitness convergence curves per cluster on a 2D graph placed in a given plane",
-              UT.CAT, UT.GR_INT)
+              UT.CAT, UT.GR_DATA_PREVIEW)
         {
         }
 
@@ -51,14 +51,13 @@ namespace ShapeGrammar3D.Components
                 GH_ParamAccess.item, Plane.WorldXY);                                        // 2
             pManager.AddIntegerParameter("Fitness Index", "FitIdx",
                 "Which fitness to plot:\n" +
-                "0 = displacement (default, uses Fitness tree)\n" +
-                "1 = avg utilization deviation (uses ObjUtil tree)\n" +
-                "2 = feasibility (uses ObjFeas tree)\n" +
-                "-1 = all three on separate sub-graphs",
+                "0 = displacement, 1 = avg util dev, 2 = feasibility\n" +
+                "-1 = all 3 on separate sub-graphs\n" +
+                "-2 = 4 graphs: Disp, Util, Feas + Pareto front best (needs Rank tree)",
                 GH_ParamAccess.item, 0);                                                    // 3
             pManager.AddIntegerParameter("Clusters", "Cls",
-                "Which cluster(s) to display. Supply one or many indices.\n" +
-                "-1 = all clusters (default).",
+                "Which cluster(s) to display. List of cluster indices, e.g. 0 and 1 for only C0 and C1.\n" +
+                "Use -1 (or leave empty) to show all clusters.",
                 GH_ParamAccess.list);                                                       // 4
             pManager.AddNumberParameter("Width", "W",
                 "Graph width in model units", GH_ParamAccess.item, 10.0);                   // 5
@@ -76,6 +75,9 @@ namespace ShapeGrammar3D.Components
                 "Label text height in model units", GH_ParamAccess.item, 0.12);             // 9
             pManager.AddNumberParameter("Line Weight", "LnW",
                 "Curve thickness in pixels", GH_ParamAccess.item, 2.0);                     // 10
+            pManager.AddIntegerParameter("Pareto Rank", "Rank",
+                "NSGA-II rank tree {generation}(individual): 0=first front, 1=second, 2=third, etc. From GI_Auto4. Required for FitIdx = -2.",
+                GH_ParamAccess.tree);                                                       // 11
 
             pManager[1].Optional = true;
             pManager[4].Optional = true;
@@ -83,6 +85,7 @@ namespace ShapeGrammar3D.Components
             pManager[8].Optional = true;
             pManager[9].Optional = true;
             pManager[10].Optional = true;
+            pManager[11].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -114,7 +117,11 @@ namespace ShapeGrammar3D.Components
 
             int fitIdx = 0;
             DA.GetData(3, ref fitIdx);
-            fitIdx = Math.Clamp(fitIdx, -1, 2);
+            fitIdx = Math.Clamp(fitIdx, -2, 2);
+
+            DA.GetDataTree(11, out GH_Structure<GH_Integer> rankTree);
+            var rankData = rankTree != null ? ParseClusterTree(rankTree) : null;
+            bool hasRank = rankData != null && rankData.Count > 0;
 
             var clusterSelection = new List<int>();
             DA.GetDataList(4, clusterSelection);
@@ -151,12 +158,42 @@ namespace ShapeGrammar3D.Components
 
             // --- Determine which fitness sources to plot ---
             var fitSources = new List<(string Name, Dictionary<int, Dictionary<int, double>> Data)>();
-            if (fitIdx == 0 || fitIdx == -1)
+            if (fitIdx == 0 || fitIdx == -1 || fitIdx == -2)
                 fitSources.Add(("Displacement", fitData));
-            if ((fitIdx == 1 || fitIdx == -1) && utilData != null && utilData.Count > 0)
+            if ((fitIdx == 1 || fitIdx == -1 || fitIdx == -2) && utilData != null && utilData.Count > 0)
                 fitSources.Add(("Avg Util Dev", utilData));
-            if ((fitIdx == 2 || fitIdx == -1) && feasData != null && feasData.Count > 0)
+            if ((fitIdx == 2 || fitIdx == -1 || fitIdx == -2) && feasData != null && feasData.Count > 0)
                 fitSources.Add(("Feasibility", feasData));
+
+            // 4th graph: best displacement on Pareto front (rank-0) per generation
+            if (fitIdx == -2 && !hasRank)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "FitIdx = -2 (4 graphs) requires Pareto Rank tree from GI_Auto4.");
+
+            if (fitIdx == -2 && hasRank && fitData.Count > 0)
+            {
+                var paretoBestData = new Dictionary<int, Dictionary<int, double>>();
+                foreach (int gen in fitData.Keys)
+                {
+                    var genFit = fitData[gen];
+                    Dictionary<int, int> genRank = rankData != null && rankData.ContainsKey(gen) ? rankData[gen] : null;
+                    if (genRank == null) continue;
+                    double best = double.MaxValue;
+                    foreach (var kvp in genFit)
+                    {
+                        if (double.IsInfinity(kvp.Value) || kvp.Value >= double.MaxValue * 0.5) continue;
+                        int r = genRank.ContainsKey(kvp.Key) ? genRank[kvp.Key] : -1;
+                        if (r != 0) continue;
+                        if (kvp.Value < best) best = kvp.Value;
+                    }
+                    if (best < double.MaxValue * 0.5)
+                    {
+                        var single = new Dictionary<int, double> { { 0, best } };
+                        paretoBestData[gen] = single;
+                    }
+                }
+                if (paretoBestData.Count > 0)
+                    fitSources.Add(("Pareto Best (Disp)", paretoBestData));
+            }
 
             if (fitSources.Count == 0)
             {
@@ -214,10 +251,12 @@ namespace ShapeGrammar3D.Components
                     + plane.XAxis * 0
                     + plane.YAxis * (graphH - yOffset - subGraphHeight);
 
-                // --- Compute best fitness per generation per cluster ---
+                // --- Compute best per cluster, average, and top (best) per generation ---
                 var clusterCurves = new Dictionary<int, List<double>>();
                 foreach (int cl in selectedClusters)
                     clusterCurves[cl] = new List<double>();
+                var avgCurve = new List<double>();
+                var topCurve = new List<double>();
 
                 double globalMin = double.MaxValue;
                 double globalMax = double.MinValue;
@@ -228,6 +267,8 @@ namespace ShapeGrammar3D.Components
                     {
                         foreach (int cl in selectedClusters)
                             clusterCurves[cl].Add(double.NaN);
+                        avgCurve.Add(double.NaN);
+                        topCurve.Add(double.NaN);
                         continue;
                     }
 
@@ -235,6 +276,10 @@ namespace ShapeGrammar3D.Components
                     Dictionary<int, int> genClust = null;
                     if (hasCluster && clustData.ContainsKey(gen))
                         genClust = clustData[gen];
+
+                    double sum = 0;
+                    int count = 0;
+                    double topVal = double.MaxValue;
 
                     foreach (int cl in selectedClusters)
                     {
@@ -264,6 +309,20 @@ namespace ShapeGrammar3D.Components
                             if (bestFit > globalMax) globalMax = bestFit;
                         }
                     }
+
+                    foreach (var kvp in genFit)
+                    {
+                        double val = kvp.Value;
+                        if (double.IsInfinity(val) || val >= double.MaxValue * 0.5) continue;
+                        sum += val;
+                        count++;
+                        if (val < topVal) topVal = val;
+                    }
+                    double avgVal = count > 0 ? sum / count : double.NaN;
+                    avgCurve.Add(avgVal);
+                    topCurve.Add(topVal < double.MaxValue * 0.5 ? topVal : double.NaN);
+                    if (!double.IsNaN(avgVal)) { if (avgVal < globalMin) globalMin = avgVal; if (avgVal > globalMax) globalMax = avgVal; }
+                    if (!double.IsNaN(topCurve[topCurve.Count - 1])) { double t = topCurve[topCurve.Count - 1]; if (t < globalMin) globalMin = t; if (t > globalMax) globalMax = t; }
                 }
 
                 if (globalMin >= globalMax)
@@ -277,33 +336,33 @@ namespace ShapeGrammar3D.Components
                 double yMax = globalMax + yPadding;
                 double yRangeTotal = yMax - yMin;
 
-                GH_Path axisPath = new GH_Path(fi, 0);
-                Color axisColor = Color.FromArgb(120, 120, 120);
+                Color mainGridColor = Color.Black;
+                Color supportGridColor = Color.FromArgb(180, 180, 180);
+                GH_Path axisPath = new GH_Path(fi, 0);   // axes and frame only
+                GH_Path gridPath = new GH_Path(fi, 1);   // supporting grid lines (grey)
 
-                // X axis (bottom)
+                // X axis (bottom) - main, black
                 Point3d xStart = graphOrigin;
                 Point3d xEnd = graphOrigin + plane.XAxis * graphW;
                 linesTree.Append(new GH_Line(new Line(xStart, xEnd)), axisPath);
-                colorsTree.Append(new GH_Colour(axisColor), axisPath);
+                colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
-                // Y axis (left)
+                // Y axis (left) - main, black
                 Point3d yStart = graphOrigin;
                 Point3d yEnd = graphOrigin + plane.YAxis * subGraphHeight;
                 linesTree.Append(new GH_Line(new Line(yStart, yEnd)), axisPath);
-                colorsTree.Append(new GH_Colour(axisColor), axisPath);
+                colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
-                // Top border
+                // Top and right border - main, black
                 Point3d topLeft = graphOrigin + plane.YAxis * subGraphHeight;
                 Point3d topRight = topLeft + plane.XAxis * graphW;
                 linesTree.Append(new GH_Line(new Line(topLeft, topRight)), axisPath);
-                colorsTree.Append(new GH_Colour(Color.FromArgb(200, 200, 200)), axisPath);
-
-                // Right border
+                colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
                 Point3d botRight = graphOrigin + plane.XAxis * graphW;
                 linesTree.Append(new GH_Line(new Line(botRight, topRight)), axisPath);
-                colorsTree.Append(new GH_Colour(Color.FromArgb(200, 200, 200)), axisPath);
+                colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
-                // --- Y-axis tick marks and grid ---
+                // --- Y-axis tick marks and horizontal grid ---
                 int numYTicks = 5;
                 for (int t = 0; t <= numYTicks; t++)
                 {
@@ -313,14 +372,13 @@ namespace ShapeGrammar3D.Components
                     Point3d tickEnd = tickBase - plane.XAxis * (_textHeight * 0.3);
 
                     linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
-                    colorsTree.Append(new GH_Colour(axisColor), axisPath);
+                    colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
-                    // Horizontal grid line
                     if (t > 0 && t < numYTicks)
                     {
                         Point3d gridEnd = tickBase + plane.XAxis * graphW;
-                        linesTree.Append(new GH_Line(new Line(tickBase, gridEnd)), axisPath);
-                        colorsTree.Append(new GH_Colour(Color.FromArgb(230, 230, 230)), axisPath);
+                        linesTree.Append(new GH_Line(new Line(tickBase, gridEnd)), gridPath);
+                        colorsTree.Append(new GH_Colour(supportGridColor), gridPath);
                     }
 
                     _labels.Add(new GraphLabel
@@ -334,7 +392,7 @@ namespace ShapeGrammar3D.Components
                     });
                 }
 
-                // --- X-axis tick marks ---
+                // --- X-axis tick marks and vertical grid ---
                 int tickInterval = Math.Max(1, numGens / 10);
                 for (int gi = 0; gi < numGens; gi++)
                 {
@@ -345,14 +403,13 @@ namespace ShapeGrammar3D.Components
                     Point3d tickEnd = tickBase - plane.YAxis * (_textHeight * 0.3);
 
                     linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
-                    colorsTree.Append(new GH_Colour(axisColor), axisPath);
+                    colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
-                    // Vertical grid line
                     if (gi > 0 && gi < numGens - 1)
                     {
                         Point3d gridTop = tickBase + plane.YAxis * subGraphHeight;
-                        linesTree.Append(new GH_Line(new Line(tickBase, gridTop)), axisPath);
-                        colorsTree.Append(new GH_Colour(Color.FromArgb(235, 235, 235)), axisPath);
+                        linesTree.Append(new GH_Line(new Line(tickBase, gridTop)), gridPath);
+                        colorsTree.Append(new GH_Colour(supportGridColor), gridPath);
                     }
 
                     _labels.Add(new GraphLabel
@@ -387,12 +444,13 @@ namespace ShapeGrammar3D.Components
                     Color = _textColor
                 });
 
-                // --- Plot convergence curves ---
+                // --- Plot convergence curves (one path per curve so preview colours match) ---
+                int curveIndex = 0;
                 foreach (int cl in selectedClusters)
                 {
                     Color clColor = GetClusterColour(cl, totalClusters);
                     var curvePoints = new List<Point3d>();
-                    GH_Path curvePath = new GH_Path(fi, cl);
+                    GH_Path curvePath = new GH_Path(fi, 100 + cl);
 
                     for (int gi = 0; gi < numGens; gi++)
                     {
@@ -408,7 +466,6 @@ namespace ShapeGrammar3D.Components
                             + plane.YAxis * (yFrac * subGraphHeight);
                         curvePoints.Add(pt);
 
-                        // Segment line from previous point
                         if (curvePoints.Count >= 2)
                         {
                             var p1 = curvePoints[curvePoints.Count - 2];
@@ -421,22 +478,22 @@ namespace ShapeGrammar3D.Components
                     if (curvePoints.Count >= 2)
                     {
                         var polyline = new Polyline(curvePoints);
-                        curvesTree.Append(new GH_Curve(polyline.ToNurbsCurve()), new GH_Path(fi));
-                        curveColorsTree.Append(new GH_Colour(clColor), new GH_Path(fi));
+                        GH_Path crvPath = new GH_Path(fi, curveIndex);
+                        curvesTree.Append(new GH_Curve(polyline.ToNurbsCurve()), crvPath);
+                        curveColorsTree.Append(new GH_Colour(clColor), crvPath);
                         totalCurves++;
+                        curveIndex++;
                     }
 
-                    // Legend entry
                     double legendX = graphW + _textHeight * 1.5;
                     double legendY = subGraphHeight - (selectedClusters.IndexOf(cl)) * _textHeight * 1.8;
                     Point3d legendPt = graphOrigin
                         + plane.XAxis * legendX
                         + plane.YAxis * legendY;
-
                     Point3d legendLineStart = legendPt - plane.XAxis * (_textHeight * 1.2);
                     Point3d legendLineEnd = legendPt - plane.XAxis * (_textHeight * 0.2);
-                    linesTree.Append(new GH_Line(new Line(legendLineStart, legendLineEnd)), axisPath);
-                    colorsTree.Append(new GH_Colour(clColor), axisPath);
+                    linesTree.Append(new GH_Line(new Line(legendLineStart, legendLineEnd)), curvePath);
+                    colorsTree.Append(new GH_Colour(clColor), curvePath);
 
                     _labels.Add(new GraphLabel
                     {
@@ -448,6 +505,74 @@ namespace ShapeGrammar3D.Components
                         Color = clColor
                     });
                 }
+
+                Color avgColor = Color.FromArgb(140, 140, 140);
+                Color bestColor = Color.FromArgb(40, 40, 40);
+                GH_Path avgPath = new GH_Path(fi, 200);
+                GH_Path bestPath = new GH_Path(fi, 201);
+
+                // --- Average curve (gray) ---
+                var avgPoints = new List<Point3d>();
+                for (int gi = 0; gi < numGens; gi++)
+                {
+                    double val = avgCurve[gi];
+                    if (double.IsNaN(val)) continue;
+                    double xFrac = numGens > 1 ? (double)gi / (numGens - 1) : 0.5;
+                    double yFrac = yRangeTotal > 0 ? (val - yMin) / yRangeTotal : 0.5;
+                    yFrac = Math.Clamp(yFrac, 0.0, 1.0);
+                    Point3d pt = graphOrigin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphHeight);
+                    avgPoints.Add(pt);
+                    if (avgPoints.Count >= 2)
+                    {
+                        var p1 = avgPoints[avgPoints.Count - 2];
+                        var p2 = avgPoints[avgPoints.Count - 1];
+                        linesTree.Append(new GH_Line(new Line(p1, p2)), avgPath);
+                        colorsTree.Append(new GH_Colour(avgColor), avgPath);
+                    }
+                }
+                if (avgPoints.Count >= 2)
+                {
+                    curvesTree.Append(new GH_Curve(new Polyline(avgPoints).ToNurbsCurve()), new GH_Path(fi, curveIndex));
+                    curveColorsTree.Append(new GH_Colour(avgColor), new GH_Path(fi, curveIndex));
+                    totalCurves++;
+                    curveIndex++;
+                }
+                double legendYAvg = subGraphHeight - selectedClusters.Count * _textHeight * 1.8;
+                Point3d legendPtAvg = graphOrigin + plane.XAxis * (graphW + _textHeight * 1.5) + plane.YAxis * legendYAvg;
+                linesTree.Append(new GH_Line(new Line(legendPtAvg - plane.XAxis * (_textHeight * 1.2), legendPtAvg - plane.XAxis * (_textHeight * 0.2))), avgPath);
+                colorsTree.Append(new GH_Colour(avgColor), avgPath);
+                _labels.Add(new GraphLabel { Position = legendPtAvg, Text = "Avg", XDir = plane.XAxis, YDir = plane.YAxis, Height = _textHeight * 0.9, Color = Color.FromArgb(100, 100, 100) });
+
+                // --- Top (best) curve (dark) ---
+                var topPoints = new List<Point3d>();
+                for (int gi = 0; gi < numGens; gi++)
+                {
+                    double val = topCurve[gi];
+                    if (double.IsNaN(val)) continue;
+                    double xFrac = numGens > 1 ? (double)gi / (numGens - 1) : 0.5;
+                    double yFrac = yRangeTotal > 0 ? (val - yMin) / yRangeTotal : 0.5;
+                    yFrac = Math.Clamp(yFrac, 0.0, 1.0);
+                    Point3d pt = graphOrigin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphHeight);
+                    topPoints.Add(pt);
+                    if (topPoints.Count >= 2)
+                    {
+                        var p1 = topPoints[topPoints.Count - 2];
+                        var p2 = topPoints[topPoints.Count - 1];
+                        linesTree.Append(new GH_Line(new Line(p1, p2)), bestPath);
+                        colorsTree.Append(new GH_Colour(bestColor), bestPath);
+                    }
+                }
+                if (topPoints.Count >= 2)
+                {
+                    curvesTree.Append(new GH_Curve(new Polyline(topPoints).ToNurbsCurve()), new GH_Path(fi, curveIndex));
+                    curveColorsTree.Append(new GH_Colour(bestColor), new GH_Path(fi, curveIndex));
+                    totalCurves++;
+                }
+                double legendYTop = legendYAvg - _textHeight * 1.8;
+                Point3d legendPtTop = graphOrigin + plane.XAxis * (graphW + _textHeight * 1.5) + plane.YAxis * legendYTop;
+                linesTree.Append(new GH_Line(new Line(legendPtTop - plane.XAxis * (_textHeight * 1.2), legendPtTop - plane.XAxis * (_textHeight * 0.2))), bestPath);
+                colorsTree.Append(new GH_Colour(bestColor), bestPath);
+                _labels.Add(new GraphLabel { Position = legendPtTop, Text = "Best", XDir = plane.XAxis, YDir = plane.YAxis, Height = _textHeight * 0.9, Color = Color.FromArgb(20, 20, 20) });
 
                 // Title
                 _labels.Add(new GraphLabel

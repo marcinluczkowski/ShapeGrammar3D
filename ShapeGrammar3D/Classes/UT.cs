@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -61,6 +61,7 @@ namespace ShapeGrammar3D.Classes
         public static string GR_ASSEM = "06. Assembly";
         public static string GR_RLS = "07. Rules";
         public static string GR_INT = "08. Interpreter";
+        public static string GR_DATA_PREVIEW = "09. Data Preview";
         public static string GR_UTIL = "89. Utilities";
         public static string GR_MISC = "99. Misc";
 

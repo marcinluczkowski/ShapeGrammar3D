@@ -174,7 +174,7 @@ namespace ShapeGrammar3D.Components
         public GrammarInterpreter_DeformPreview()
           : base("GI_DeformPreview", "GI_DeformPreview",
               "Preview deformed structures from FEM results with utilization-coloured meshes",
-              UT.CAT, UT.GR_INT)
+              UT.CAT, UT.GR_DATA_PREVIEW)
         {
         }
 

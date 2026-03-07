@@ -1,4 +1,7 @@
+using Grasshopper.GUI;
+using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Display;
@@ -7,15 +10,150 @@ using ShapeGrammar3D.Classes;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
+    #region Custom Attributes
+
+    public class ParetoFrontAttributes : GH_ComponentAttributes
+    {
+        private RectangleF _panelBounds;
+        private RectangleF _btnHighlight;
+
+        private const float BTN_H = 22f;
+        private const float PAD = 4f;
+        private const float MIN_W = 180f;
+
+        private GI_ParetoFront Comp => (GI_ParetoFront)Owner;
+
+        public ParetoFrontAttributes(GI_ParetoFront owner) : base(owner) { }
+
+        protected override void Layout()
+        {
+            base.Layout();
+            RectangleF std = Bounds;
+            float w = Math.Max(std.Width, MIN_W);
+            float xShift = (w - std.Width) * 0.5f;
+            float x = std.X - xShift;
+
+            float y = std.Bottom + PAD * 2;
+            float cx = x + PAD;
+            float cw = w - PAD * 2;
+
+            _btnHighlight = new RectangleF(cx, y, cw, BTN_H);
+            y += BTN_H + PAD;
+
+            _panelBounds = new RectangleF(x, std.Bottom + PAD, w, y - std.Bottom - PAD);
+            Bounds = new RectangleF(x, std.Y, w, y - std.Y);
+        }
+
+        protected override void Render(GH_Canvas canvas, Graphics g, GH_CanvasChannel channel)
+        {
+            base.Render(canvas, g, channel);
+            if (channel != GH_CanvasChannel.Objects) return;
+
+            var prev = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.HighQuality;
+
+            using (var path = RoundRect(_panelBounds, 5))
+            {
+                using (var fill = new SolidBrush(Color.FromArgb(220, 245, 245, 245)))
+                    g.FillPath(fill, path);
+                using (var pen = new Pen(Color.FromArgb(140, 160, 160, 160), 0.8f))
+                    g.DrawPath(pen, path);
+            }
+
+            string label = Comp.HighlightElite
+                ? string.Format("Highlight Top {0}%", (Comp.CachedTopPercent * 100).ToString("F0"))
+                : "Highlight Top %";
+            DrawToggle(g, _btnHighlight, label, Comp.HighlightElite);
+            g.SmoothingMode = prev;
+        }
+
+        private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
+        {
+            Color bg = on ? Color.FromArgb(230, 76, 175, 80) : Color.FromArgb(210, 200, 200, 200);
+            Color border = on ? Color.FromArgb(56, 142, 60) : Color.FromArgb(165, 165, 165);
+            Color fg = on ? Color.White : Color.FromArgb(70, 70, 70);
+
+            using (var path = RoundRect(r, 4))
+            {
+                using (var fill = new SolidBrush(bg)) g.FillPath(fill, path);
+                using (var pen = new Pen(border, 0.8f)) g.DrawPath(pen, path);
+            }
+
+            float chk = 13f;
+            RectangleF box = new RectangleF(r.X + 6, r.Y + (r.Height - chk) / 2f, chk, chk);
+            using (var fill = new SolidBrush(on ? Color.White : Color.FromArgb(230, 230, 230)))
+                g.FillRectangle(fill, box);
+            using (var pen = new Pen(border, 0.8f))
+                g.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
+
+            if (on)
+            {
+                using (var pen = new Pen(Color.FromArgb(46, 125, 50), 2f))
+                {
+                    g.DrawLine(pen, box.X + 2, box.Y + chk * 0.5f,
+                        box.X + chk * 0.35f, box.Bottom - 2);
+                    g.DrawLine(pen, box.X + chk * 0.35f, box.Bottom - 2,
+                        box.Right - 2, box.Y + 2);
+                }
+            }
+
+            RectangleF txt = new RectangleF(box.Right + 6, r.Y, r.Width - chk - 18, r.Height);
+            using (var brush = new SolidBrush(fg))
+            {
+                var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Near,
+                    LineAlignment = StringAlignment.Center
+                };
+                g.DrawString(text, GH_FontServer.Standard, brush, txt, sf);
+            }
+        }
+
+        public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
+        {
+            if (e.Button == System.Windows.Forms.MouseButtons.Left)
+            {
+                if (_btnHighlight.Contains(e.CanvasLocation))
+                {
+                    Owner.RecordUndoEvent("Toggle Highlight Elite");
+                    Comp.HighlightElite = !Comp.HighlightElite;
+                    Owner.ExpireSolution(true);
+                    return GH_ObjectResponse.Handled;
+                }
+            }
+            return base.RespondToMouseDown(sender, e);
+        }
+
+        private static GraphicsPath RoundRect(RectangleF r, float rad)
+        {
+            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            var p = new GraphicsPath();
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+    }
+
+    #endregion
+
+    #region Component
+
     public class GI_ParetoFront : GH_Component
     {
         internal List<GraphLabel> _labels = new List<GraphLabel>();
         internal double _textHeight = 0.12;
         internal Color _textColor = Color.FromArgb(60, 60, 60);
+
+        public bool HighlightElite { get; set; } = false;
+        internal double CachedTopPercent { get; set; } = 0.05;
 
         public GI_ParetoFront()
           : base("GI_ParetoFront", "GI_Pareto",
@@ -23,8 +161,26 @@ namespace ShapeGrammar3D.Components
               "1 objective: displacement vs generation scatter.\n" +
               "2 objectives: displacement vs avg utilisation scatter.\n" +
               "3 objectives: displacement x utilisation x feasibility 3D scatter.",
-              UT.CAT, UT.GR_INT)
+              UT.CAT, UT.GR_DATA_PREVIEW)
         {
+        }
+
+        public override void CreateAttributes()
+        {
+            m_attributes = new ParetoFrontAttributes(this);
+        }
+
+        public override bool Write(GH_IO.Serialization.GH_IWriter writer)
+        {
+            writer.SetBoolean("HighlightElite", HighlightElite);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IO.Serialization.GH_IReader reader)
+        {
+            if (reader.ItemExists("HighlightElite"))
+                HighlightElite = reader.GetBoolean("HighlightElite");
+            return base.Read(reader);
         }
 
         public override bool IsPreviewCapable => true;
@@ -88,6 +244,11 @@ namespace ShapeGrammar3D.Components
                 "Label text height in model units", GH_ParamAccess.item, 0.12);             // 12
             pManager.AddNumberParameter("Point Size", "PtSz",
                 "Base point radius in model units", GH_ParamAccess.item, 0.08);             // 13
+            pManager.AddNumberParameter("Top %", "Top%",
+                "Percentage of best individuals per cluster to highlight (0.0–1.0).\n" +
+                "Active only when the 'Highlight Top %' button is toggled ON.\n" +
+                "0.05 = top 5% (default).",
+                GH_ParamAccess.item, 0.05);                                                 // 14
 
             pManager[1].Optional = true;
             pManager[4].Optional = true;
@@ -98,6 +259,7 @@ namespace ShapeGrammar3D.Components
             pManager[11].Optional = true;
             pManager[12].Optional = true;
             pManager[13].Optional = true;
+            pManager[14].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -113,7 +275,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddColourParameter("PointColours", "PCol",
                 "Cluster colour per point matching Pts tree", GH_ParamAccess.tree);         // 4
             pManager.AddNumberParameter("PointSizes", "PSz",
-                "Radius per point (larger for rank-0)", GH_ParamAccess.tree);               // 5
+                "Radius per point (larger for elite / rank-0)", GH_ParamAccess.tree);       // 5
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -160,6 +322,11 @@ namespace ShapeGrammar3D.Components
             double ptSize = 0.08;
             DA.GetData(13, ref ptSize);
             ptSize = Math.Max(0.01, ptSize);
+
+            double topPercent = 0.05;
+            DA.GetData(14, ref topPercent);
+            topPercent = Math.Clamp(topPercent, 0.001, 1.0);
+            CachedTopPercent = topPercent;
 
             // --- Parse trees ---
             var fitData = ParseNumberTree(fitnessTree);
@@ -215,7 +382,7 @@ namespace ShapeGrammar3D.Components
                 : clusterSelection.Where(c => allClusterIds.Contains(c)).ToList();
             var clusterSet = new HashSet<int>(selectedClusters);
 
-            // --- Collect individual records for selected gens/clusters ---
+            // --- Collect individual records ---
             var records = new List<IndRecord>();
             foreach (int gen in selectedGens)
             {
@@ -262,6 +429,51 @@ namespace ShapeGrammar3D.Components
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "No valid individuals for selected filters.");
                 return;
+            }
+
+            // --- Build elite set: top N% closest to ideal point (0,0,0) ---
+            // In multi-objective space the "best" individuals are those with
+            // the shortest Euclidean distance to the utopia point, computed
+            // in normalised [0,1] objective space so all axes are comparable.
+            var eliteSet = new HashSet<(int gen, int ind)>();
+            int eliteHighlightCount = 0;
+            if (HighlightElite)
+            {
+                double fitMinE  = records.Min(r => r.Fitness);
+                double fitRngE  = records.Max(r => r.Fitness) - fitMinE;
+                double utilMinE = records.Min(r => r.Util);
+                double utilRngE = records.Max(r => r.Util) - utilMinE;
+                double feasMinE = records.Min(r => r.Feas);
+                double feasRngE = records.Max(r => r.Feas) - feasMinE;
+
+                foreach (var grp in records.GroupBy(r => r.Cluster))
+                {
+                    var withDist = grp.Select(r =>
+                    {
+                        double dFit  = fitRngE  > 1e-12 ? (r.Fitness - fitMinE) / fitRngE  : 0;
+                        double dUtil = utilRngE > 1e-12 ? (r.Util - utilMinE) / utilRngE : 0;
+                        double dFeas = feasRngE > 1e-12 ? (r.Feas - feasMinE) / feasRngE : 0;
+
+                        double dist;
+                        if (numObj == 1)
+                            dist = dFit;
+                        else if (numObj == 2)
+                            dist = Math.Sqrt(dFit * dFit + dUtil * dUtil);
+                        else
+                            dist = Math.Sqrt(dFit * dFit + dUtil * dUtil + dFeas * dFeas);
+
+                        return (Rec: r, Dist: dist);
+                    })
+                    .OrderBy(x => x.Dist)
+                    .ToList();
+
+                    int keepCount = Math.Max(1, (int)Math.Ceiling(withDist.Count * topPercent));
+                    for (int i = 0; i < keepCount && i < withDist.Count; i++)
+                    {
+                        eliteSet.Add((withDist[i].Rec.Gen, withDist[i].Rec.Ind));
+                        eliteHighlightCount++;
+                    }
+                }
             }
 
             // --- Compute axis ranges ---
@@ -327,15 +539,12 @@ namespace ShapeGrammar3D.Components
 
             // ===================== DRAW AXES =====================
 
-            // X axis
             linesTree.Append(new GH_Line(new Line(origin, origin + xDir * graphW)), axisPath);
             colorsTree.Append(new GH_Colour(axisColor), axisPath);
 
-            // Y axis
             linesTree.Append(new GH_Line(new Line(origin, origin + yDir * graphH)), axisPath);
             colorsTree.Append(new GH_Colour(axisColor), axisPath);
 
-            // Top and right borders
             Point3d topLeft = origin + yDir * graphH;
             Point3d topRight = topLeft + xDir * graphW;
             Point3d botRight = origin + xDir * graphW;
@@ -347,18 +556,15 @@ namespace ShapeGrammar3D.Components
 
             if (numObj == 3)
             {
-                // Z axis
                 linesTree.Append(new GH_Line(new Line(origin, origin + zDir * graphD)), axisPath);
                 colorsTree.Append(new GH_Colour(axisColor), axisPath);
 
-                // Z edge lines to close the box
                 Point3d topZ = origin + zDir * graphD;
                 linesTree.Append(new GH_Line(new Line(topZ, topZ + xDir * graphW)), axisPath);
                 colorsTree.Append(new GH_Colour(borderColor), axisPath);
                 linesTree.Append(new GH_Line(new Line(topZ, topZ + yDir * graphH)), axisPath);
                 colorsTree.Append(new GH_Colour(borderColor), axisPath);
 
-                // Z-axis label
                 _labels.Add(new GraphLabel
                 {
                     Position = origin + zDir * (graphD * 0.5) - xDir * (_textHeight * 2) - yDir * (_textHeight * 2),
@@ -374,15 +580,12 @@ namespace ShapeGrammar3D.Components
 
             int numTicks = 5;
 
-            // X-axis ticks
             for (int t = 0; t <= numTicks; t++)
             {
                 double frac = (double)t / numTicks;
-                double xVal;
-                if (numObj == 1)
-                    xVal = genMin + frac * (genMax - genMin);
-                else
-                    xVal = fitMin + frac * (fitMax - fitMin);
+                double xVal = numObj == 1
+                    ? genMin + frac * (genMax - genMin)
+                    : fitMin + frac * (fitMax - fitMin);
 
                 Point3d tickBase = origin + xDir * (frac * graphW);
                 Point3d tickEnd = tickBase - yDir * (_textHeight * 0.3);
@@ -400,22 +603,17 @@ namespace ShapeGrammar3D.Components
                 {
                     Position = tickEnd - yDir * (_textHeight * 1.2),
                     Text = numObj == 1 ? ((int)Math.Round(xVal)).ToString() : FormatValue(xVal),
-                    XDir = xDir,
-                    YDir = yDir,
-                    Height = _textHeight * 0.8,
-                    Color = _textColor
+                    XDir = xDir, YDir = yDir,
+                    Height = _textHeight * 0.8, Color = _textColor
                 });
             }
 
-            // Y-axis ticks
             for (int t = 0; t <= numTicks; t++)
             {
                 double frac = (double)t / numTicks;
-                double yVal;
-                if (numObj == 1)
-                    yVal = fitMin + frac * (fitMax - fitMin);
-                else
-                    yVal = utilMin + frac * (utilMax - utilMin);
+                double yVal = numObj == 1
+                    ? fitMin + frac * (fitMax - fitMin)
+                    : utilMin + frac * (utilMax - utilMin);
 
                 Point3d tickBase = origin + yDir * (frac * graphH);
                 Point3d tickEnd = tickBase - xDir * (_textHeight * 0.3);
@@ -433,14 +631,11 @@ namespace ShapeGrammar3D.Components
                 {
                     Position = tickEnd - xDir * (_textHeight * 0.5),
                     Text = FormatValue(yVal),
-                    XDir = xDir,
-                    YDir = yDir,
-                    Height = _textHeight * 0.8,
-                    Color = _textColor
+                    XDir = xDir, YDir = yDir,
+                    Height = _textHeight * 0.8, Color = _textColor
                 });
             }
 
-            // Z-axis ticks (3-obj only)
             if (numObj == 3)
             {
                 for (int t = 0; t <= numTicks; t++)
@@ -464,10 +659,8 @@ namespace ShapeGrammar3D.Components
                     {
                         Position = tickEnd - xDir * (_textHeight * 0.5),
                         Text = FormatValue(zVal),
-                        XDir = zDir,
-                        YDir = xDir,
-                        Height = _textHeight * 0.8,
-                        Color = _textColor
+                        XDir = zDir, YDir = xDir,
+                        Height = _textHeight * 0.8, Color = _textColor
                     });
                 }
             }
@@ -477,21 +670,15 @@ namespace ShapeGrammar3D.Components
             _labels.Add(new GraphLabel
             {
                 Position = origin + xDir * (graphW * 0.5) - yDir * (_textHeight * 3.5),
-                Text = xLabel,
-                XDir = xDir,
-                YDir = yDir,
-                Height = _textHeight,
-                Color = _textColor
+                Text = xLabel, XDir = xDir, YDir = yDir,
+                Height = _textHeight, Color = _textColor
             });
 
             _labels.Add(new GraphLabel
             {
                 Position = origin - xDir * (_textHeight * 6) + yDir * (graphH * 0.5),
-                Text = yLabel,
-                XDir = yDir,
-                YDir = -xDir,
-                Height = _textHeight,
-                Color = _textColor
+                Text = yLabel, XDir = yDir, YDir = -xDir,
+                Height = _textHeight, Color = _textColor
             });
 
             // ===================== PLOT POINTS =====================
@@ -530,25 +717,37 @@ namespace ShapeGrammar3D.Components
                 Color clColor = GetClusterColour(rec.Cluster, totalClusters);
 
                 bool isRankZero = hasRank && rec.Rank == 0;
-                double size = isRankZero ? ptSize * 1.8 : ptSize;
+                bool isElite = eliteSet.Contains((rec.Gen, rec.Ind));
                 if (isRankZero) rank0Count++;
 
+                double size;
+                if (isElite)
+                    size = ptSize * 2.5;
+                else if (isRankZero)
+                    size = ptSize * 1.5;
+                else
+                    size = ptSize;
+
+                // Non-elite individuals get a faded colour when highlighting is active
+                Color drawColor = clColor;
+                if (HighlightElite && !isElite)
+                    drawColor = Color.FromArgb(80, clColor.R, clColor.G, clColor.B);
+
                 pointsTree.Append(new GH_Point(pt), ptPath);
-                ptColorsTree.Append(new GH_Colour(clColor), ptPath);
+                ptColorsTree.Append(new GH_Colour(drawColor), ptPath);
                 ptSizesTree.Append(new GH_Number(size), ptPath);
 
-                // Draw small cross-hair at each point for visibility
                 double half = size * 0.5;
                 GH_Path crossPath = new GH_Path(1, rec.Gen);
                 linesTree.Append(new GH_Line(new Line(pt - xDir * half, pt + xDir * half)), crossPath);
-                colorsTree.Append(new GH_Colour(clColor), crossPath);
+                colorsTree.Append(new GH_Colour(drawColor), crossPath);
                 linesTree.Append(new GH_Line(new Line(pt - yDir * half, pt + yDir * half)), crossPath);
-                colorsTree.Append(new GH_Colour(clColor), crossPath);
+                colorsTree.Append(new GH_Colour(drawColor), crossPath);
 
                 if (numObj == 3)
                 {
                     linesTree.Append(new GH_Line(new Line(pt - zDir * half, pt + zDir * half)), crossPath);
-                    colorsTree.Append(new GH_Colour(clColor), crossPath);
+                    colorsTree.Append(new GH_Colour(drawColor), crossPath);
                 }
             }
 
@@ -569,10 +768,8 @@ namespace ShapeGrammar3D.Components
                 {
                     Position = legendPt,
                     Text = string.Format("C{0}", cl),
-                    XDir = xDir,
-                    YDir = yDir,
-                    Height = _textHeight * 0.9,
-                    Color = clColor
+                    XDir = xDir, YDir = yDir,
+                    Height = _textHeight * 0.9, Color = clColor
                 });
             }
 
@@ -594,11 +791,8 @@ namespace ShapeGrammar3D.Components
             _labels.Add(new GraphLabel
             {
                 Position = origin + yDir * (graphH + _textHeight * 0.5),
-                Text = titleText,
-                XDir = xDir,
-                YDir = yDir,
-                Height = _textHeight * 1.2,
-                Color = Color.FromArgb(40, 40, 40)
+                Text = titleText, XDir = xDir, YDir = yDir,
+                Height = _textHeight * 1.2, Color = Color.FromArgb(40, 40, 40)
             });
 
             // ===================== OUTPUTS =====================
@@ -610,16 +804,21 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(5, ptSizesTree);
 
             string clusterStr = allClusters ? "All" : string.Join(", ", selectedClusters);
+            string highlightInfo = HighlightElite
+                ? string.Format("Highlighted: {0} ({1}% per cluster)", eliteHighlightCount, (topPercent * 100).ToString("F0"))
+                : "OFF";
             string info = string.Format(
                 "Pareto Front ({0} objective{1})\n" +
                 "Generations: {2}\n" +
                 "Clusters: {3}\n" +
                 "Total individuals: {4}\n" +
                 "Rank-0 (front): {5}\n" +
-                "Graph size: {6:F1} x {7:F1}{8}",
+                "Elite highlight: {6}\n" +
+                "Graph size: {7:F1} x {8:F1}{9}",
                 numObj, numObj > 1 ? "s" : "",
                 genLabel, clusterStr, records.Count,
                 hasRank ? rank0Count.ToString() : "N/A",
+                highlightInfo,
                 graphW, graphH,
                 numObj == 3 ? string.Format(" x {0:F1}", graphD) : "");
             DA.SetData(2, info);
@@ -734,4 +933,6 @@ namespace ShapeGrammar3D.Components
         public override Guid ComponentGuid
             => new Guid("D8F0A3B2-4C6E-5D7F-9B1A-2E3F4A5B6C7D");
     }
+
+    #endregion
 }

@@ -12,7 +12,7 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto4 : GH_Component
+    public class GrammarInterpreter_Auto5 : GH_Component
     {
         // Genetic Algorithm configuration (overridable from GH inputs)
         private int _populationSize = 5;
@@ -65,11 +65,11 @@ namespace ShapeGrammar3D.Components
         private GARunStore _runStore;
 
         /// <summary>
-        /// Initializes a new instance of the GrammarInterpreter_Auto4 class.
+        /// Initializes a new instance of the GrammarInterpreter_Auto5 class.
         /// </summary>
-        public GrammarInterpreter_Auto4()
-          : base("GrammerInterpreter_Auto4", "GI_Auto4",
-              "Automatic Grammar Interpreter with GA Optimization and Clustering Control",
+        public GrammarInterpreter_Auto5()
+          : base("Grammar Interpreter Auto5", "GI_Auto5",
+              "Large-scale GA (e.g. 10k pop, 100 gen). Same as Auto4; use for DB/JSON storage experiments.",
               UT.CAT, UT.GR_INT)
         {
         }
@@ -201,7 +201,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("All VLen", "AllVLen",
                 "Raw length penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                    // 15
             pManager.AddIntegerParameter("Pareto Rank", "Rank",
-                "NSGA-II non-domination rank: 0=first Pareto front, 1=second, 2=third, etc. {generation}(individual). Multi-objective only.",
+                "NSGA-II Pareto rank per individual {generation}(individual). Only set in multi-objective mode.",
                 GH_ParamAccess.tree);                                                                                         // 16
             pManager.AddNumberParameter("Obj Avg Util", "ObjUtil",
                 "Average utilization deviation from 90% target per individual {generation}(individual). Multi-objective only.",
@@ -223,9 +223,6 @@ namespace ShapeGrammar3D.Components
                 "Pass-through of user-supplied normalization domains (one per metric axis).\n" +
                 "Connect to Radar Chart's MDom input for consistent normalization.",
                 GH_ParamAccess.list);                                                                                         // 22
-            pManager.AddNumberParameter("Crowding", "Crowd",
-                "NSGA-II crowding distance per individual {generation}(individual). Selection: lower rank wins; same rank then higher crowding. Multi-objective only.",
-                GH_ParamAccess.tree);                                                                                         // 23
 
             pManager[1].Optional = true;
         }
@@ -1014,7 +1011,6 @@ namespace ShapeGrammar3D.Components
             var vAngTree = new GH_Structure<GH_Number>();
             var vLenTree = new GH_Structure<GH_Number>();
             var rankTree = new GH_Structure<GH_Integer>();
-            var crowdingTree = new GH_Structure<GH_Number>();
             var objVolTree = new GH_Structure<GH_Number>();
             var objFeasTree = new GH_Structure<GH_Number>();
             var allMetricsTree = new GH_Structure<GH_Number>();
@@ -1063,7 +1059,6 @@ namespace ShapeGrammar3D.Components
                             vLenTree.Append(new GH_Number(ind.VLen), path);
 
                             rankTree.Append(new GH_Integer(ind.Rank), path);
-                            crowdingTree.Append(new GH_Number(ind.CrowdingDistance), path);
                             double objVol = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 1)
                                 ? ind.ObjectiveValues[1] : 0.0;
                             objVolTree.Append(new GH_Number(objVol), path);
@@ -1179,7 +1174,6 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(16, rankTree);
             DA.SetDataTree(17, objVolTree);
             DA.SetDataTree(18, objFeasTree);
-            DA.SetDataTree(23, crowdingTree);
 
             DA.SetDataTree(20, allMetricsTree);
             var metricNames = new List<string>();
@@ -1238,7 +1232,7 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("B4D6E8F1-2A3C-4D5E-9F1A-8B7C6D5E4F3A"); }
+            get { return new Guid("C5E7F9A1-3B4C-5D6E-0F2A-9C8D7E6F5B4A"); }
         }
 
         /// <summary>

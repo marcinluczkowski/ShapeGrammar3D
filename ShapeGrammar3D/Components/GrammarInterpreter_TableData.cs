@@ -2,6 +2,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
+using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
@@ -25,7 +26,7 @@ namespace ShapeGrammar3D.Components
             : base("GI_TableData", "GI_Table",
                   "Displays a text-based data table per individual: " +
                   "displacement, optimization objectives, and clustering metrics.",
-                  Common.category, Common.sub_post)
+                  UT.CAT, UT.GR_DATA_PREVIEW)
         { }
 
         public override bool IsPreviewCapable => true;
@@ -81,6 +82,12 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Obj Feasibility", "ObjFeas",
                 "Feasibility objective {generation}(individual) from Auto4",
                 GH_ParamAccess.tree);                                                                  // 14
+            pManager.AddIntegerParameter("Pareto Rank", "Rank",
+                "NSGA-II rank per individual {generation}(individual): 0=first front, 1=second, etc. From Auto4. When set, table shows Rank, Crowding (selection), and Pareto front (Disp) for rank-0.",
+                GH_ParamAccess.tree);                                                                  // 15
+            pManager.AddNumberParameter("Crowding", "Crowd",
+                "NSGA-II crowding distance {generation}(individual) from Auto4. With Rank, shows selection order: lower rank then higher crowding.",
+                GH_ParamAccess.tree);                                                                  // 16
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
@@ -92,6 +99,8 @@ namespace ShapeGrammar3D.Components
             pManager[12].Optional = true;
             pManager[13].Optional = true;
             pManager[14].Optional = true;
+            pManager[15].Optional = true;
+            pManager[16].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -146,8 +155,11 @@ namespace ShapeGrammar3D.Components
             DA.GetDataTree(12, out GH_Structure<GH_Number> fitnessTree);
             DA.GetDataTree(13, out GH_Structure<GH_Number> objVolTree);
             DA.GetDataTree(14, out GH_Structure<GH_Number> objFeasTree);
+            DA.GetDataTree(15, out GH_Structure<GH_Integer> rankTree);
+            DA.GetDataTree(16, out GH_Structure<GH_Number> crowdingTree);
 
             var fitByGenInd = ParseFlatTree(fitnessTree);
+            var crowdingByGenInd = ParseFlatTree(crowdingTree);
             var volByGenInd = ParseFlatTree(objVolTree);
             var feasByGenInd = ParseFlatTree(objFeasTree);
 
@@ -198,6 +210,24 @@ namespace ShapeGrammar3D.Components
                     if (!metricsByGenInd.ContainsKey(gen))
                         metricsByGenInd[gen] = new Dictionary<int, double[]>();
                     metricsByGenInd[gen][ind] = vals;
+                }
+            }
+
+            var rankByGenInd = new Dictionary<int, Dictionary<int, int>>();
+            if (rankTree != null)
+            {
+                foreach (GH_Path rp in rankTree.Paths)
+                {
+                    if (rp.Length < 1) continue;
+                    int gen = rp.Indices[0];
+                    var branch = rankTree.get_Branch(rp);
+                    if (!rankByGenInd.ContainsKey(gen))
+                        rankByGenInd[gen] = new Dictionary<int, int>();
+                    for (int ri = 0; ri < branch.Count; ri++)
+                    {
+                        if (branch[ri] is GH_Integer ghInt)
+                            rankByGenInd[gen][ri] = ghInt.Value;
+                    }
                 }
             }
 
@@ -291,6 +321,20 @@ namespace ShapeGrammar3D.Components
                     {
                         AddLabel(anchor, lineH, ref lineIdx,
                             string.Format("Cluster: {0}", clustId));
+                    }
+
+                    if (rankByGenInd.TryGetValue(genIdx, out var genRank)
+                        && genRank.TryGetValue(i, out int rank))
+                    {
+                        AddLabel(anchor, lineH, ref lineIdx,
+                            string.Format("Pareto Rank: {0}", rank));
+                        if (crowdingByGenInd.TryGetValue(genIdx, out var genCrowd)
+                            && genCrowd.TryGetValue(i, out double crowd))
+                            AddLabel(anchor, lineH, ref lineIdx,
+                                string.Format("Crowding (selection): {0:F4}", crowd));
+                        if (rank == 0)
+                            AddLabel(anchor, lineH, ref lineIdx,
+                                string.Format("Pareto front (Disp): {0:F4}", maxDisp));
                     }
 
                     row++;

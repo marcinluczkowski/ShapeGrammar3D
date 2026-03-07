@@ -40,7 +40,13 @@ namespace ShapeGrammar3D.Classes
         MaxNodeSpan = 8,
 
         /// <summary>9 – Total length / bounding-box diagonal (compactness).</summary>
-        Compactness = 9
+        Compactness = 9,
+
+        /// <summary>10 – Convex hull area in XY plane (footprint/envelope).</summary>
+        ConvexHullAreaXY = 10,
+
+        /// <summary>11 – Hull aspect ratio in XY (width/length, 1=square, &lt;1=elongated).</summary>
+        HullAspectRatioXY = 11
     }
 
     /// <summary>
@@ -74,6 +80,8 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.TotalStructuralVolume => TotalStructuralVolume(shape),
                 ShapeMetricType.MaxNodeSpan           => MaxNodeSpan(shape),
                 ShapeMetricType.Compactness           => Compactness(shape),
+                ShapeMetricType.ConvexHullAreaXY      => ConvexHullAreaXY(shape),
+                ShapeMetricType.HullAspectRatioXY     => HullAspectRatioXY(shape),
                 _ => TotalLength(shape)
             };
         }
@@ -95,6 +103,8 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.TotalStructuralVolume => "Total Structural Volume",
                 ShapeMetricType.MaxNodeSpan           => "Max Node Span",
                 ShapeMetricType.Compactness           => "Compactness (L/diag)",
+                ShapeMetricType.ConvexHullAreaXY      => "Hull Area XY",
+                ShapeMetricType.HullAspectRatioXY     => "Hull Aspect XY",
                 _ => "Unknown"
             };
         }
@@ -226,6 +236,110 @@ namespace ShapeGrammar3D.Classes
         {
             double diag = BoundingBoxDiagonal(shape);
             return diag > 0.0 ? TotalLength(shape) / diag : 0.0;
+        }
+
+        /// <summary>10 – Convex hull area in XY plane (footprint/envelope).</summary>
+        public static double ConvexHullAreaXY(SG_Shape shape)
+        {
+            var pts = GetXYPoints(shape);
+            if (pts.Count < 3)
+                return 0.0;
+
+            var hull = ConvexHull2D(pts);
+            if (hull.Count < 3)
+                return 0.0;
+
+            return PolygonArea2D(hull);
+        }
+
+        /// <summary>11 – Hull aspect ratio in XY (width/length, 1=square, &lt;1=elongated).</summary>
+        public static double HullAspectRatioXY(SG_Shape shape)
+        {
+            var pts = GetXYPoints(shape);
+            if (pts.Count < 3)
+                return 0.0;
+
+            var hull = ConvexHull2D(pts);
+            if (hull.Count < 2)
+                return 0.0;
+
+            double minX = hull.Min(p => p.X);
+            double maxX = hull.Max(p => p.X);
+            double minY = hull.Min(p => p.Y);
+            double maxY = hull.Max(p => p.Y);
+            double w = maxX - minX;
+            double h = maxY - minY;
+            if (w <= 0 && h <= 0)
+                return 0.0;
+            double major = Math.Max(w, h);
+            double minor = Math.Min(w, h);
+            return major > 0 ? minor / major : 0.0;
+        }
+
+        private static List<Point2d> GetXYPoints(SG_Shape shape)
+        {
+            if (shape.Nodes == null || shape.Nodes.Count == 0)
+                return new List<Point2d>();
+
+            var pts = new List<Point2d>();
+            foreach (var node in shape.Nodes)
+            {
+                if (node?.Pt != null)
+                    pts.Add(new Point2d(node.Pt.X, node.Pt.Y));
+            }
+            return pts;
+        }
+
+        /// <summary>Graham scan 2D convex hull. Returns vertices in CCW order.</summary>
+        private static List<Point2d> ConvexHull2D(List<Point2d> pts)
+        {
+            if (pts == null || pts.Count < 3)
+                return new List<Point2d>();
+
+            var sorted = pts.Distinct().OrderBy(p => p.Y).ThenBy(p => p.X).ToList();
+            if (sorted.Count < 3)
+                return sorted;
+
+            Point2d pivot = sorted[0];
+
+            var byAngle = sorted.Skip(1)
+                .OrderBy(p => Math.Atan2(p.Y - pivot.Y, p.X - pivot.X))
+                .ThenBy(p => pivot.DistanceTo(p))
+                .ToList();
+
+            var hull = new List<Point2d> { pivot, byAngle[0] };
+
+            for (int i = 1; i < byAngle.Count; i++)
+            {
+                Point2d next = byAngle[i];
+                while (hull.Count >= 2 && Cross2D(hull[hull.Count - 2], hull[hull.Count - 1], next) <= 0)
+                    hull.RemoveAt(hull.Count - 1);
+                hull.Add(next);
+            }
+
+            return hull;
+        }
+
+        private static double Cross2D(Point2d o, Point2d a, Point2d b)
+        {
+            return (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+        }
+
+        /// <summary>Shoelace formula for polygon area.</summary>
+        private static double PolygonArea2D(List<Point2d> pts)
+        {
+            if (pts == null || pts.Count < 3)
+                return 0.0;
+
+            double area = 0.0;
+            int n = pts.Count;
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                area += pts[i].X * pts[j].Y;
+                area -= pts[j].X * pts[i].Y;
+            }
+            return Math.Abs(area) * 0.5;
         }
     }
 }

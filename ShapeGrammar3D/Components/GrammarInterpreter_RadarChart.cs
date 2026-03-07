@@ -6,6 +6,7 @@ using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Display;
 using Rhino.Geometry;
+using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
@@ -181,7 +182,7 @@ namespace ShapeGrammar3D.Components
             : base("Radar Chart", "Radar",
                   "Visualises n-dimensional metric fingerprints as radar / spider charts " +
                   "arranged in a generation x individual grid.",
-                  Common.category, Common.sub_post)
+                  UT.CAT, UT.GR_DATA_PREVIEW)
         { }
 
         public override void CreateAttributes()

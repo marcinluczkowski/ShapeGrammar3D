@@ -1,15 +1,14 @@
-﻿using Grasshopper.Kernel;
+using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
 using ShapeGrammar3D.Classes;
-
 using System.Linq;
-
 using ShapeGrammar3D.Classes.Elements;
+
 namespace ShapeGrammar3D.Components
 {
-    // This assembly component is not yet compatibel with other geometries than lines as for the simple bridge and truss roof grammar. 
+    // This assembly component is not yet compatibel with other geometries than lines as for the simple bridge and truss roof grammar.
     [Serializable]
     public class Assembly : GH_Component
     {

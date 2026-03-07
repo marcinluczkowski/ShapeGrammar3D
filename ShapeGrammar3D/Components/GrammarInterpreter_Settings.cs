@@ -1,0 +1,213 @@
+using Grasshopper.Kernel;
+using Grasshopper.Kernel.Types;
+using Rhino.Geometry;
+using ShapeGrammar3D.Classes;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace ShapeGrammar3D.Components
+{
+    public class GrammarInterpreter_Settings : GH_Component
+    {
+        public GrammarInterpreter_Settings()
+          : base("GrammarInterpreter_Settings", "GI_Settings",
+              "Collects all GA/interpreter analysis settings into one object for GI_Auto6.",
+              UT.CAT, UT.GR_INT)
+        {
+        }
+
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
+        {
+            pManager.AddIntegerParameter("Population Size", "Pop",
+                "GA population size. Number of individuals per generation.", GH_ParamAccess.item, 5);                              // 0
+            pManager.AddIntegerParameter("Generations", "Gen",
+                "Number of GA generations to run.", GH_ParamAccess.item, 3);                                                      // 1
+            pManager.AddIntegerParameter("Clusters", "Clusters",
+                "Number of clusters for KMeans diversity preservation.", GH_ParamAccess.item, 1);                                 // 2
+            pManager.AddNumberParameter("Mutation Prob.", "Mut",
+                "Mutation probability (0–1). Probability of mutating each gene.", GH_ParamAccess.item, 0.10);                    // 3
+            pManager.AddNumberParameter("Crossover Prob.", "Cross",
+                "Crossover probability (0–1). Probability of crossing two parents.", GH_ParamAccess.item, 0.9);                   // 4
+            pManager.AddNumberParameter("Elite Prob.", "Elite",
+                "Elite probability (0–1). Fraction of best individuals preserved each generation.", GH_ParamAccess.item, 0.1);    // 5
+
+            pManager.AddNumberParameter("Topology Weight", "wTopo",
+                "Weight for topology metrics in clustering. 0 = ignore topology in KMeans. KMeans uses NORMALIZED metrics.", GH_ParamAccess.item, 1.0);   // 6
+            pManager.AddNumberParameter("Shape Weight", "wShpe",
+                "Weight for shape metrics in clustering. 0 = ignore shape in KMeans. KMeans uses NORMALIZED metrics.", GH_ParamAccess.item, 1.0);         // 7
+            pManager.AddNumberParameter("Fitness Weight", "wFit",
+                "Weight for fitness (displacement) in clustering. 0 = ignore (default).", GH_ParamAccess.item, 0.0);              // 8
+            pManager.AddIntegerParameter("KMeans Iterations", "KIter",
+                "Max iterations for KMeans centroid updates per generation. Higher = more stable clusters.", GH_ParamAccess.item, 10);  // 9
+            pManager.AddIntegerParameter("Recluster Interval", "ReClust",
+                "Re-initialize KMeans centroids every N generations. 0 = only at generation 0.", GH_ParamAccess.item, 5);          // 10
+            pManager.AddIntegerParameter("Topology Metrics", "TopoMet",
+                "Topology metric selectors (supply one or many for n-dimensional clustering):\n" +
+                "0=ElemCount, 1=NodeCount, 2=Elem/Node ratio, 3=AvgValence, 4=MaxValence, 5=LeafNodes, 6=BranchNodes, " +
+                "7=Euler(V-E), 8=DistinctNames, 9=SupportCount, 10=ConnectedComponents(b₀), 11=CycleRank(b₁), " +
+                "12=MaxPipeIntersections, 13=AvgPipeIntersections",
+                GH_ParamAccess.list);                                                                                              // 11
+            pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
+                "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
+                "0=TotalLength, 1=AvgLength, 2=MaxLength, 3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
+                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=Hull Area XY, 11=Hull Aspect XY",
+                GH_ParamAccess.list);                                                                                              // 12
+            pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
+                "Use a deterministic pre-generated population (same genotypes every run) for controlled metric comparison experiments.",
+                GH_ParamAccess.item, false);                                                                                       // 13
+
+            pManager.AddNumberParameter("Dangling Weight", "wDang",
+                "Weight for dangling-bar feasibility penalty (0..1). Penalizes edges whose endpoint node has degree ≤ 1. " +
+                "Applied as multiplicative fitness penalty: fit*(1+wDang*vDang). Set 0 to disable.",
+                GH_ParamAccess.item, 0.20);                                                                                        // 14
+            pManager.AddNumberParameter("Angle Weight", "wAng",
+                "Weight for angle-based feasibility penalty (0..1). Penalizes very small angles (<10°), optimal >=30°.",
+                GH_ParamAccess.item, 0.0);                                                                                         // 15
+            pManager.AddNumberParameter("Length Weight", "wLen",
+                "Weight for element length penalty (0..1). Penalizes elements <0.5m or >10m (gentle).",
+                GH_ParamAccess.item, 0.0);                                                                                         // 16
+            pManager.AddIntegerParameter("Num Objectives", "nObj",
+                "Number of objectives: 1 = single-objective GA, " +
+                "2 = bi-objective (displacement + avg utilization deviation), " +
+                "3 = tri-objective (+ feasibility). Multi-objective uses NSGA-II.",
+                GH_ParamAccess.item, 1);                                                                                           // 17
+            pManager.AddBooleanParameter("Self Weight", "SW",
+                "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
+                "Uses element length, cross-section area [mm²], and material density [kN/m³].",
+                GH_ParamAccess.item, false);                                                                                       // 18
+            pManager.AddIntegerParameter("CroSec Opt", "CSOpt",
+                "Cross-section optimization mode:\n" +
+                "0 = off\n" +
+                "1 = solid Rect (50–1000 mm, 50 mm steps)\n" +
+                "2 = SHS catalog (standard square hollow sections)\n" +
+                "3 = HEA/HEB catalog (standard European I-sections)\n" +
+                "4 = Combined SHS + HEA/HEB (best per element)",
+                GH_ParamAccess.item, 0);                                                                                           // 19
+            pManager.AddIntervalParameter("Metric Domains", "MDom",
+                "Expected [min, max] domain per metric dimension for clustering normalization.\n" +
+                "Order: topology metrics first, then shape metrics (same order as MetNm output).\n" +
+                "Each value is mapped to [0, 1] via (val - min) / (max - min).\n" +
+                "If not supplied, falls back to observed-max normalization. KMeans uses NORMALIZED data.",
+                GH_ParamAccess.list);                                                                                              // 20
+            pManager.AddVectorParameter("Gravity Dir", "GDir",
+                "Direction of gravity for self-weight loads. The vector is unitized internally; only direction matters.",
+                GH_ParamAccess.item, new Vector3d(0, -1, 0));                                                                      // 21
+            pManager.AddIntegerParameter("Cluster Elite", "ClElite",
+                "Number of best individuals per cluster guaranteed to survive into the next generation. Prevents cluster extinction.\n" +
+                "0 = disabled (default). Typical value: 1–3.",
+                GH_ParamAccess.item, 0);                                                                                           // 22
+            pManager.AddIntegerParameter("CSOpt Iterations", "CSIter",
+                "Maximum FSD iterations for cross-section optimization. Higher = better convergence to 90% utilization but slower.\n" +
+                "Default: 40. Typical range: 10–100.",
+                GH_ParamAccess.item, 40);                                                                                          // 23
+
+            pManager[11].Optional = true;
+            pManager[12].Optional = true;
+            pManager[20].Optional = true;
+        }
+
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
+        {
+            pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
+                "Interpreter settings object for GI_Auto6", GH_ParamAccess.item);                                                 // 0
+            pManager.AddTextParameter("Info", "Info", "Settings summary", GH_ParamAccess.item);                                   // 1
+        }
+
+        protected override void SolveInstance(IGH_DataAccess DA)
+        {
+            var settings = new GrammarInterpreterSettings();
+
+            int populationSize = settings.PopulationSize;
+            int generations = settings.Generations;
+            int clusters = settings.Clusters;
+            double mutationProb = settings.MutationProb;
+            double crossoverProb = settings.CrossoverProb;
+            double eliteProb = settings.EliteProb;
+            double topologyWeight = settings.TopologyWeight;
+            double shapeWeight = settings.ShapeWeight;
+            double fitnessWeight = settings.FitnessWeight;
+            int kmeansIterations = settings.KMeansIterations;
+            int reclusterInterval = settings.ReclusterInterval;
+            bool fixedSeed = settings.FixedSeed;
+            double danglingWeight = settings.DanglingWeight;
+            double angleWeight = settings.AngleWeight;
+            double lengthWeight = settings.LengthWeight;
+            int numObjectives = settings.NumObjectives;
+            bool selfWeight = settings.SelfWeight;
+            int croSecOpt = settings.CroSecOpt;
+            Vector3d gravityDir = settings.GravityDir;
+            int clusterElite = settings.ClusterElite;
+            int csOptIterations = settings.CSOptIterations;
+
+            DA.GetData(0, ref populationSize);
+            DA.GetData(1, ref generations);
+            DA.GetData(2, ref clusters);
+            DA.GetData(3, ref mutationProb);
+            DA.GetData(4, ref crossoverProb);
+            DA.GetData(5, ref eliteProb);
+
+            DA.GetData(6, ref topologyWeight);
+            DA.GetData(7, ref shapeWeight);
+            DA.GetData(8, ref fitnessWeight);
+            DA.GetData(9, ref kmeansIterations);
+            DA.GetData(10, ref reclusterInterval);
+
+            var topo = new List<int>();
+            if (DA.GetDataList(11, topo) && topo.Count > 0)
+                settings.TopologyMetrics = topo;
+            var shpe = new List<int>();
+            if (DA.GetDataList(12, shpe) && shpe.Count > 0)
+                settings.ShapeMetrics = shpe;
+            DA.GetData(13, ref fixedSeed);
+
+            DA.GetData(14, ref danglingWeight);
+            DA.GetData(15, ref angleWeight);
+            DA.GetData(16, ref lengthWeight);
+            DA.GetData(17, ref numObjectives);
+            DA.GetData(18, ref selfWeight);
+            DA.GetData(19, ref croSecOpt);
+
+            var rawDomains = new List<GH_Interval>();
+            if (DA.GetDataList(20, rawDomains) && rawDomains.Count > 0)
+                settings.MetricDomains = rawDomains.Select(d => d.Value).ToList();
+            DA.GetData(21, ref gravityDir);
+            DA.GetData(22, ref clusterElite);
+            DA.GetData(23, ref csOptIterations);
+
+            settings.PopulationSize = populationSize;
+            settings.Generations = generations;
+            settings.Clusters = clusters;
+            settings.MutationProb = mutationProb;
+            settings.CrossoverProb = crossoverProb;
+            settings.EliteProb = eliteProb;
+            settings.TopologyWeight = topologyWeight;
+            settings.ShapeWeight = shapeWeight;
+            settings.FitnessWeight = fitnessWeight;
+            settings.KMeansIterations = kmeansIterations;
+            settings.ReclusterInterval = reclusterInterval;
+            settings.FixedSeed = fixedSeed;
+            settings.DanglingWeight = danglingWeight;
+            settings.AngleWeight = angleWeight;
+            settings.LengthWeight = lengthWeight;
+            settings.NumObjectives = numObjectives;
+            settings.SelfWeight = selfWeight;
+            settings.CroSecOpt = croSecOpt;
+            settings.GravityDir = gravityDir;
+            settings.ClusterElite = clusterElite;
+            settings.CSOptIterations = csOptIterations;
+
+            settings.Sanitize();
+
+            DA.SetData(0, new GH_GrammarInterpreterSettings(settings));
+            DA.SetData(1,
+                $"Settings: Pop={settings.PopulationSize}, Gen={settings.Generations}, Clusters={settings.Clusters}, " +
+                $"Obj={settings.NumObjectives}, CSOpt={settings.CroSecOpt}, KIter={settings.KMeansIterations}");
+        }
+
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+
+        public override Guid ComponentGuid => new Guid("7A6B5C4D-3E2F-4A1B-9C8D-7E6F5A4B3C2D");
+    }
+}
+

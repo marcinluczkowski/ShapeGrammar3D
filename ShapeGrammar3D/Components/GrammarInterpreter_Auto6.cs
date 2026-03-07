@@ -12,7 +12,7 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto4 : GH_Component
+    public class GrammarInterpreter_Auto6 : GH_Component
     {
         // Genetic Algorithm configuration (overridable from GH inputs)
         private int _populationSize = 5;
@@ -67,9 +67,9 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// Initializes a new instance of the GrammarInterpreter_Auto4 class.
         /// </summary>
-        public GrammarInterpreter_Auto4()
-          : base("GrammerInterpreter_Auto4", "GI_Auto4",
-              "Automatic Grammar Interpreter with GA Optimization and Clustering Control",
+        public GrammarInterpreter_Auto6()
+          : base("GrammarInterpreter_Auto6", "GI_Auto6",
+              "GA Interpreter with in-memory Assembly output (genotypes, results, models). Use with Data Preview components.",
               UT.CAT, UT.GR_INT)
         {
         }
@@ -79,100 +79,13 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            // --- Original Auto2 inputs (0-8) ---
             pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);                          // 0
             pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list); // 1
             pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 2
-            pManager.AddIntegerParameter("Population Size", "Pop", "GA population size", GH_ParamAccess.item, 5);                // 3
-            pManager.AddIntegerParameter("Generations", "Gen", "Number of GA generations", GH_ParamAccess.item, 3);              // 4
-            pManager.AddIntegerParameter("Clusters", "Clusters", "Number of clusters", GH_ParamAccess.item, 1);                 // 5
-            pManager.AddNumberParameter("Mutation Prob.", "Mut", "Mutation probability (0–1)", GH_ParamAccess.item, 0.10);       // 6
-            pManager.AddNumberParameter("Crossover Prob.", "Cross", "Crossover probability (0–1)", GH_ParamAccess.item, 0.9);   // 7
-            pManager.AddNumberParameter("Elite Prob.", "Elite", "Elite probability (0–1)", GH_ParamAccess.item, 0.1);            // 8
-
-            // --- Clustering control inputs (9-13) ---
-            pManager.AddNumberParameter("Topology Weight", "wTopo",
-                "Weight for topology metric (element count) in clustering. 0 = ignore.", GH_ParamAccess.item, 1.0);               // 9
-            pManager.AddNumberParameter("Shape Weight", "wShpe",
-                "Weight for shape metric (total element length) in clustering. 0 = ignore.", GH_ParamAccess.item, 1.0);           // 10
-            pManager.AddNumberParameter("Fitness Weight", "wFit",
-                "Weight for fitness metric in clustering. 0 = ignore (default).", GH_ParamAccess.item, 0.0);                      // 11
-            pManager.AddIntegerParameter("KMeans Iterations", "KIter",
-                "Max iterations for KMeans centroid updates per generation.", GH_ParamAccess.item, 10);                            // 12
-            pManager.AddIntegerParameter("Recluster Interval", "ReClust",
-                "Re-initialize centroids every N generations. 0 = only at generation 0.", GH_ParamAccess.item, 5);                // 13
-            pManager.AddIntegerParameter("Topology Metrics", "TopoMet",
-                "Topology metric selectors (supply one or many for n-dimensional clustering):\n" +
-                "0=ElemCount, 1=NodeCount, 2=Elem/Node ratio, " +
-                "3=AvgValence, 4=MaxValence, 5=LeafNodes, 6=BranchNodes, " +
-                "7=Euler(V-E), 8=DistinctNames, 9=SupportCount, " +
-                "10=ConnectedComponents(b₀), 11=CycleRank(b₁), " +
-                "12=MaxPipeIntersections, 13=AvgPipeIntersections",
-                GH_ParamAccess.list);                                                                                              // 14
-            pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
-                "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
-                "0=TotalLength, 1=AvgLength, 2=MaxLength, " +
-                "3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
-                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness",
-                GH_ParamAccess.list);                                                                                              // 15
-            pManager[14].Optional = true;
-            pManager[15].Optional = true;
-            pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
-                "Use a deterministic pre-generated population (same genotypes every run) " +
-                "for controlled metric comparison experiments.",
-                GH_ParamAccess.item, false);                                                                                        // 16
-            pManager.AddNumberParameter("Dangling Weight", "wDang",
-                "Weight for dangling-bar feasibility penalty (0..1). " +
-                "Penalizes edges whose endpoint node has degree ≤ 1. " +
-                "Applied as multiplicative fitness penalty: fit*(1+wDang*vDang). " +
-                "Set 0 to disable.",
-                GH_ParamAccess.item, 0.20);                                                                                         // 17
-            pManager.AddNumberParameter("Angle Weight", "wAng",
-                "Weight for angle-based feasibility penalty (0..1). Penalizes very small angles (<10°), optimal >=30°.",
-                GH_ParamAccess.item, 0.0);                                                                                            // 18
-            pManager.AddNumberParameter("Length Weight", "wLen",
-                "Weight for element length penalty (0..1). Penalizes elements <0.5m or >10m (gentle).",
-                GH_ParamAccess.item, 0.0);                                                                                            // 19
-            pManager.AddIntegerParameter("Num Objectives", "nObj",
-                "Number of objectives: 1 = single-objective (existing GA), " +
-                "2 = bi-objective (displacement%SLS + avg utilization deviation), " +
-                "3 = tri-objective (displacement%SLS + avg utilization deviation + feasibility). " +
-                "Multi-objective uses NSGA-II.",
-                GH_ParamAccess.item, 1);                                                                                               // 20
-            pManager.AddBooleanParameter("Self Weight", "SW",
-                "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
-                "Uses element length, cross-section area [mm²], and material density [kN/m³].",
-                GH_ParamAccess.item, false);                                                                                            // 21
-            pManager.AddIntegerParameter("CroSec Opt", "CSOpt",
-                "Cross-section optimization mode:\n" +
-                "0 = off\n" +
-                "1 = solid Rect (50–1000 mm, 50 mm steps)\n" +
-                "2 = SHS catalog (standard square hollow sections)\n" +
-                "3 = HEA/HEB catalog (standard European I-sections)\n" +
-                "4 = Combined SHS + HEA/HEB (best per element)",
-                GH_ParamAccess.item, 0);                                                                                                // 22
-            pManager.AddIntervalParameter("Metric Domains", "MDom",
-                "Expected [min, max] domain per metric dimension for clustering normalization.\n" +
-                "Order: topology metrics first, then shape metrics (same order as MetNm output).\n" +
-                "Each value is mapped to [0, 1] via (val - min) / (max - min).\n" +
-                "If not supplied, falls back to observed-max normalization.",
-                GH_ParamAccess.list);                                                                                                    // 23
-            pManager[23].Optional = true;
-            pManager.AddVectorParameter("Gravity Dir", "GDir",
-                "Direction of gravity for self-weight loads. " +
-                "The vector is unitized internally; only direction matters.",
-                GH_ParamAccess.item, new Vector3d(0, -1, 0));                                                                            // 24
-            pManager.AddIntegerParameter("Cluster Elite", "ClElite",
-                "Number of best individuals per cluster guaranteed to survive " +
-                "into the next generation. Prevents cluster extinction.\n" +
-                "0 = disabled (default). Typical value: 1–3.",
-                GH_ParamAccess.item, 0);                                                                                                  // 25
-            pManager.AddIntegerParameter("CSOpt Iterations", "CSIter",
-                "Maximum FSD iterations for cross-section optimization.\n" +
-                "Higher = better convergence to 90% utilization but slower.\n" +
-                "Default: 40. Typical range: 10–100.",
-                GH_ParamAccess.item, 40);                                                                                                  // 26
-            pManager[26].Optional = true;
+            pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
+                "All GA/interpreter analysis settings packed in one object from GI_Settings component",
+                GH_ParamAccess.item);                                                                                                     // 3
+            pManager[3].Optional = true;
         }
 
         /// <summary>
@@ -180,54 +93,10 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "Best SG Assembly", GH_ParamAccess.item);                      // 0
-            pManager.AddParameter(new Param_TB_Model(), "TBModel", "TBModel", "Best TBModel", GH_ParamAccess.item);             // 1
-            pManager.AddNumberParameter("Fitness", "Fitness", "Best fitness value (maximal nodal displacement)", GH_ParamAccess.item); // 2
-            pManager.AddGenericParameter("All Shapes", "All Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);        // 3
-            pManager.AddParameter(new Param_TB_Model(), "All Models", "All Models", "All evaluated TB Models", GH_ParamAccess.list); // 4
-            pManager.AddNumberParameter("All Fitness", "All Fitness", "All fitness values", GH_ParamAccess.list);                // 5
-            pManager.AddIntegerParameter("Generation", "Gen", "Current generation number", GH_ParamAccess.item);                 // 6
-            pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);                                    // 7
-            pManager.AddTextParameter("Cluster Info", "ClustInfo", "Per-cluster statistics per generation", GH_ParamAccess.item); // 8
-            pManager.AddIntegerParameter("ClustGrp", "Clust", "Cluster group per individual {generation}(individual)", GH_ParamAccess.tree); // 9
-            pManager.AddNumberParameter("All Topology", "AllTopo", "First topology metric value per individual {generation}(individual)", GH_ParamAccess.tree); // 10
-            pManager.AddNumberParameter("All Shape", "AllShpe", "First shape metric value per individual {generation}(individual)", GH_ParamAccess.tree); // 11
-            pManager.AddNumberParameter("All Feasibility", "AllFeas",
-                "Total feasibility violation per individual {generation}(individual)", GH_ParamAccess.tree);                          // 12
-            pManager.AddNumberParameter("All VDang", "AllVDang",
-                "Raw dangling bar penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                     // 13
-            pManager.AddNumberParameter("All VAng", "AllVAng",
-                "Raw angle penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                     // 14
-            pManager.AddNumberParameter("All VLen", "AllVLen",
-                "Raw length penalty [0..1] per individual {generation}(individual)", GH_ParamAccess.tree);                    // 15
-            pManager.AddIntegerParameter("Pareto Rank", "Rank",
-                "NSGA-II non-domination rank: 0=first Pareto front, 1=second, 2=third, etc. {generation}(individual). Multi-objective only.",
-                GH_ParamAccess.tree);                                                                                         // 16
-            pManager.AddNumberParameter("Obj Avg Util", "ObjUtil",
-                "Average utilization deviation from 90% target per individual {generation}(individual). Multi-objective only.",
-                GH_ParamAccess.tree);                                                                                         // 17
-            pManager.AddNumberParameter("Obj Feasibility", "ObjFeas",
-                "Raw feasibility score per individual {generation}(individual). " +
-                "Average of VDang + VAng + VLen (unweighted, [0..1]). Tri-objective only.",
-                GH_ParamAccess.tree);                                                                                         // 18
-            pManager.AddTextParameter("JSON Path", "JSON",
-                "Path to saved JSON file with full GA run data", GH_ParamAccess.item);                                        // 19
-            pManager.AddNumberParameter("All Metrics", "AllMet",
-                "All metric values per individual {generation;individual}(metric). " +
-                "Order: topo metrics first, then shape metrics.",
-                GH_ParamAccess.tree);                                                                                         // 20
-            pManager.AddTextParameter("Metric Names", "MetNm",
-                "Ordered metric axis labels (topology first, then shape)",
-                GH_ParamAccess.list);                                                                                         // 21
-            pManager.AddIntervalParameter("Metric Domains", "MDom",
-                "Pass-through of user-supplied normalization domains (one per metric axis).\n" +
-                "Connect to Radar Chart's MDom input for consistent normalization.",
-                GH_ParamAccess.list);                                                                                         // 22
-            pManager.AddNumberParameter("Crowding", "Crowd",
-                "NSGA-II crowding distance per individual {generation}(individual). Selection: lower rank wins; same rank then higher crowding. Multi-objective only.",
-                GH_ParamAccess.tree);                                                                                         // 23
-
-            pManager[1].Optional = true;
+            pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);                                   // 0
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
+                "In-memory GA run assembly (genotypes, fitness, objectives, models) for Data Preview components",
+                GH_ParamAccess.item);                                                                                         // 1
         }
 
         /// <summary>
@@ -251,123 +120,76 @@ namespace ShapeGrammar3D.Components
             if (!DA.GetDataList(1, rls)) return;
             if (!DA.GetData(2, ref reset)) return;
 
-            // --- GA parameters ---
-            int populationSize = _populationSize;
-            int numGenerations = _numGenerations;
-            int numClusters = _numClusters;
-            double mutationProb = _mutationProbability;
-            double crossoverProb = _crossoverProbability;
-            double eliteProb = _eliteProbability;
+            // --- Settings bundle ---
+            var settings = new GrammarInterpreterSettings
+            {
+                PopulationSize = _populationSize,
+                Generations = _numGenerations,
+                Clusters = _numClusters,
+                MutationProb = _mutationProbability,
+                CrossoverProb = _crossoverProbability,
+                EliteProb = _eliteProbability,
+                TopologyWeight = _topoWeight,
+                ShapeWeight = _shapeWeight,
+                FitnessWeight = _fitnessWeight,
+                KMeansIterations = _kmeansIterations,
+                ReclusterInterval = _reclusterInterval,
+                TopologyMetrics = new List<int>(_topoMetricTypes),
+                ShapeMetrics = new List<int>(_shapeMetricTypes),
+                FixedSeed = false,
+                DanglingWeight = _wDang,
+                AngleWeight = _wAng,
+                LengthWeight = _wLen,
+                NumObjectives = _numObjectives,
+                SelfWeight = _useSelfWeight,
+                CroSecOpt = _croSecOptMode,
+                MetricDomains = _metricDomains != null ? new List<Interval>(_metricDomains) : new List<Interval>(),
+                GravityDir = _gravityDir,
+                ClusterElite = _clusterEliteCount,
+                CSOptIterations = _croSecMaxIter
+            };
 
-            if (!DA.GetData(3, ref populationSize)) return;
-            if (!DA.GetData(4, ref numGenerations)) return;
-            if (!DA.GetData(5, ref numClusters)) return;
-            if (!DA.GetData(6, ref mutationProb)) return;
-            if (!DA.GetData(7, ref crossoverProb)) return;
-            if (!DA.GetData(8, ref eliteProb)) return;
+            GH_GrammarInterpreterSettings ghSettings = null;
+            if (DA.GetData(3, ref ghSettings) && ghSettings?.Value != null)
+                settings = ghSettings.Value;
+            settings.Sanitize();
 
-            _populationSize = Math.Max(1, populationSize);
-            _numGenerations = Math.Max(1, numGenerations);
-            _numClusters = Math.Max(1, numClusters);
-            _mutationProbability = Clamp01(mutationProb);
-            _crossoverProbability = Clamp01(crossoverProb);
-            _eliteProbability = Clamp01(eliteProb);
+            _populationSize = settings.PopulationSize;
+            _numGenerations = settings.Generations;
+            _numClusters = settings.Clusters;
+            _mutationProbability = settings.MutationProb;
+            _crossoverProbability = settings.CrossoverProb;
+            _eliteProbability = settings.EliteProb;
 
-            // --- Clustering parameters ---
-            double topoWeight = _topoWeight;
-            double shapeWeight = _shapeWeight;
-            double fitnessWeight = _fitnessWeight;
-            int kmeansIter = _kmeansIterations;
-            int reclusterInterval = _reclusterInterval;
+            _topoWeight = settings.TopologyWeight;
+            _shapeWeight = settings.ShapeWeight;
+            _fitnessWeight = settings.FitnessWeight;
+            _kmeansIterations = settings.KMeansIterations;
+            _reclusterInterval = settings.ReclusterInterval;
 
-            DA.GetData(9, ref topoWeight);
-            DA.GetData(10, ref shapeWeight);
-            DA.GetData(11, ref fitnessWeight);
-            DA.GetData(12, ref kmeansIter);
-            DA.GetData(13, ref reclusterInterval);
-
-            _topoWeight = Math.Max(0.0, topoWeight);
-            _shapeWeight = Math.Max(0.0, shapeWeight);
-            _fitnessWeight = Math.Max(0.0, fitnessWeight);
-            _kmeansIterations = Math.Max(1, kmeansIter);
-            _reclusterInterval = Math.Max(0, reclusterInterval);
-
-            // --- Metric selectors (list-based for n-dimensional clustering) ---
-            var rawTopoMetrics = new List<int>();
-            var rawShpeMetrics = new List<int>();
-            if (!DA.GetDataList(14, rawTopoMetrics) || rawTopoMetrics.Count == 0)
-                rawTopoMetrics = new List<int> { 0 };
-            if (!DA.GetDataList(15, rawShpeMetrics) || rawShpeMetrics.Count == 0)
-                rawShpeMetrics = new List<int> { 0 };
-            _topoMetricTypes = rawTopoMetrics
+            _topoMetricTypes = settings.TopologyMetrics
                 .Select(v => Math.Clamp(v, 0, TopologyMetrics.Count - 1))
                 .Distinct().ToList();
-            _shapeMetricTypes = rawShpeMetrics
+            _shapeMetricTypes = settings.ShapeMetrics
                 .Select(v => Math.Clamp(v, 0, ShapeMetrics.Count - 1))
                 .Distinct().ToList();
 
-            // --- Fixed seed mode ---
-            bool useFixedSeed = false;
-            DA.GetData(16, ref useFixedSeed);
+            bool useFixedSeed = settings.FixedSeed;
 
-            // --- Feasibility parameters ---
-            double wDang = _wDang;
-            double wAng = _wAng;
-            double wLen = _wLen;
-            DA.GetData(17, ref wDang);
-            DA.GetData(18, ref wAng);
-            DA.GetData(19, ref wLen);
-            _wDang = Math.Clamp(wDang, 0.0, 1.0);
-            _wAng = Math.Clamp(wAng, 0.0, 1.0);
-            _wLen = Math.Clamp(wLen, 0.0, 1.0);
-
-            // --- Multi-objective ---
-            int numObjectives = _numObjectives;
-            DA.GetData(20, ref numObjectives);
-            _numObjectives = Math.Clamp(numObjectives, 1, 3);
-
+            _wDang = settings.DanglingWeight;
+            _wAng = settings.AngleWeight;
+            _wLen = settings.LengthWeight;
+            _numObjectives = settings.NumObjectives;
             bool isMultiObjective = _numObjectives > 1;
 
-            // --- Self weight ---
-            bool useSelfWeight = _useSelfWeight;
-            DA.GetData(21, ref useSelfWeight);
-            _useSelfWeight = useSelfWeight;
-
-            Vector3d gravDir = _gravityDir;
-            DA.GetData(24, ref gravDir);
-            if (gravDir.Length > 1e-12)
-            {
-                gravDir.Unitize();
-                _gravityDir = gravDir;
-            }
-
-            // --- Cross-section optimization ---
-            int croSecOptMode = _croSecOptMode;
-            DA.GetData(22, ref croSecOptMode);
-            _croSecOptMode = Math.Clamp(croSecOptMode, 0, 4);
-
-            // --- Metric normalization domains ---
-            var rawDomains = new List<Grasshopper.Kernel.Types.GH_Interval>();
-            if (DA.GetDataList(23, rawDomains) && rawDomains.Count > 0)
-            {
-                _metricDomains = rawDomains
-                    .Select(d => d.Value)
-                    .ToList();
-            }
-            else
-            {
-                _metricDomains = null;
-            }
-
-            // --- Cluster elite ---
-            int clusterElite = _clusterEliteCount;
-            DA.GetData(25, ref clusterElite);
-            _clusterEliteCount = Math.Max(0, clusterElite);
-
-            // --- CroSec optimization iterations ---
-            int csIter = _croSecMaxIter;
-            DA.GetData(26, ref csIter);
-            _croSecMaxIter = Math.Clamp(csIter, 1, 500);
+            _useSelfWeight = settings.SelfWeight;
+            _croSecOptMode = settings.CroSecOpt;
+            _metricDomains = settings.MetricDomains != null && settings.MetricDomains.Count > 0
+                ? new List<Interval>(settings.MetricDomains)
+                : null;
+            _clusterEliteCount = settings.ClusterElite;
+            _croSecMaxIter = settings.CSOptIterations;
+            _gravityDir = settings.GravityDir;
 
             // --- init GA ---
             if (_ga == null || reset)
@@ -378,7 +200,8 @@ namespace ShapeGrammar3D.Components
 
             if (_isRunning)
             {
-                DA.SetData(7, "GA is currently running. Please wait for completion.");
+                DA.SetData(0, "GA is currently running. Please wait for completion.");
+                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
                 return;
             }
 
@@ -488,10 +311,8 @@ namespace ShapeGrammar3D.Components
                 jsonPath = string.Empty;
             }
 
-            // Output results
-            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
-            DA.SetData(8, string.Join("\n", clusterLogLines));
-            DA.SetData(19, jsonPath);
+            // Build assembly and output
+            OutputAssemblyResults(DA, evaluatedPop, string.Join("\n", clusterLogLines));
 
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
@@ -975,13 +796,14 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Outputs results to Grasshopper.
+        /// Builds in-memory assembly and outputs Info + Assembly for Auto6.
         /// </summary>
-        private void OutputResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, SG_Shape iniShape, List<SG_Rule> rules)
+        private void OutputAssemblyResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, string clusterLogLines)
         {
             if (evaluatedPop == null || evaluatedPop.Count == 0)
             {
-                DA.SetData(7, "No evaluated individuals yet");
+                DA.SetData(0, "No evaluated individuals yet");
+                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
                 return;
             }
 
@@ -1003,83 +825,47 @@ namespace ShapeGrammar3D.Components
                     : evaluatedPop.OrderBy(i => i.Fitness).First();
             }
 
-            var shapesTree = new GH_Structure<GH_ObjectWrapper>();
-            var modelsTree = new GH_Structure<GH_TB_Model>();
-            var fitnessTree = new GH_Structure<GH_Number>();
-            var clustGrpTree = new GH_Structure<GH_Integer>();
-            var topoTree = new GH_Structure<GH_Number>();
-            var shpeTree = new GH_Structure<GH_Number>();
-            var feasTree = new GH_Structure<GH_Number>();
-            var vDangTree = new GH_Structure<GH_Number>();
-            var vAngTree = new GH_Structure<GH_Number>();
-            var vLenTree = new GH_Structure<GH_Number>();
-            var rankTree = new GH_Structure<GH_Integer>();
-            var crowdingTree = new GH_Structure<GH_Number>();
-            var objVolTree = new GH_Structure<GH_Number>();
-            var objFeasTree = new GH_Structure<GH_Number>();
-            var allMetricsTree = new GH_Structure<GH_Number>();
+            var assembly = new SGShapeGrammar3DAssembly
+            {
+                Config = new AssemblyConfig
+                {
+                    PopulationSize = _populationSize,
+                    NumGenerations = _numGenerations,
+                    NumClusters = _numClusters,
+                    NumObjectives = _numObjectives,
+                    TopoMetricTypes = new List<int>(_topoMetricTypes),
+                    ShapeMetricTypes = new List<int>(_shapeMetricTypes)
+                }
+            };
+            foreach (int t in _topoMetricTypes)
+                assembly.MetricNames.Add("T:" + TopologyMetrics.GetLabel(t));
+            foreach (int s in _shapeMetricTypes)
+                assembly.MetricNames.Add("S:" + ShapeMetrics.GetLabel(s));
 
-            if (_allShapes != null && _allShapes.Count > 0)
+            if (_allShapes != null && _allGenerations != null)
             {
                 for (int g = 0; g < _allShapes.Count; g++)
                 {
-                    GH_Path path = new GH_Path(g);
-                    List<SG_Shape> genShapes = _allShapes[g];
-                    List<TB_Model> genModels = (_allModels != null && g < _allModels.Count) ? _allModels[g] : null;
-                    List<GAIndividual> genInds = (g < _allGenerations.Count) ? _allGenerations[g] : null;
-
+                    var genShapes = _allShapes[g];
+                    var genModels = (_allModels != null && g < _allModels.Count) ? _allModels[g] : null;
+                    var genInds = (g < _allGenerations.Count) ? _allGenerations[g] : null;
                     int count = genShapes.Count;
-                    List<int> sortedOrder;
-                    if (genInds != null && genInds.Count >= count)
-                    {
-                        sortedOrder = Enumerable.Range(0, count)
-                            .OrderBy(i => genInds[i].ClustGrp)
-                            .ThenBy(i => genInds[i].Fitness)
-                            .ToList();
-                    }
-                    else
-                    {
-                        sortedOrder = Enumerable.Range(0, count).ToList();
-                    }
+                    var sortedOrder = (genInds != null && genInds.Count >= count)
+                        ? Enumerable.Range(0, count).OrderBy(i => genInds[i].ClustGrp).ThenBy(i => genInds[i].Fitness).ToList()
+                        : Enumerable.Range(0, count).ToList();
 
+                    var ag = new AssemblyGeneration { Generation = g };
                     for (int pos = 0; pos < sortedOrder.Count; pos++)
                     {
                         int idx = sortedOrder[pos];
-                        shapesTree.Append(new GH_ObjectWrapper(genShapes[idx]), path);
-
-                        if (genModels != null && idx < genModels.Count)
-                            modelsTree.Append(new GH_TB_Model(genModels[idx]), path);
-
-                        if (genInds != null && idx < genInds.Count)
-                        {
-                            var ind = genInds[idx];
-                            fitnessTree.Append(new GH_Number(ind.Fitness), path);
-                            clustGrpTree.Append(new GH_Integer(ind.ClustGrp), path);
-                            topoTree.Append(new GH_Number(ind.Topo), path);
-                            shpeTree.Append(new GH_Number(ind.Shpe), path);
-                            feasTree.Append(new GH_Number(ind.Feas), path);
-                            vDangTree.Append(new GH_Number(ind.VDang), path);
-                            vAngTree.Append(new GH_Number(ind.VAng), path);
-                            vLenTree.Append(new GH_Number(ind.VLen), path);
-
-                            rankTree.Append(new GH_Integer(ind.Rank), path);
-                            crowdingTree.Append(new GH_Number(ind.CrowdingDistance), path);
-                            double objVol = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 1)
-                                ? ind.ObjectiveValues[1] : 0.0;
-                            objVolTree.Append(new GH_Number(objVol), path);
-                            double objFeas = (ind.ObjectiveValues != null && ind.ObjectiveValues.Count > 2)
-                                ? ind.ObjectiveValues[2] : 0.0;
-                            objFeasTree.Append(new GH_Number(objFeas), path);
-
-                            var metPath = new GH_Path(g, pos);
-                            if (ind.TopoValues != null)
-                                foreach (double tv in ind.TopoValues)
-                                    allMetricsTree.Append(new GH_Number(tv), metPath);
-                            if (ind.ShpeValues != null)
-                                foreach (double sv in ind.ShpeValues)
-                                    allMetricsTree.Append(new GH_Number(sv), metPath);
-                        }
+                        var ind = (genInds != null && idx < genInds.Count) ? genInds[idx] : null;
+                        var model = (genModels != null && idx < genModels.Count) ? genModels[idx] : null;
+                        var shape = (idx < genShapes.Count) ? genShapes[idx] : null;
+                        ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(
+                            ind ?? new GAIndividual(new List<int>(), new List<double>(), "?"),
+                            model, shape));
                     }
+                    assembly.Generations.Add(ag);
                 }
             }
 
@@ -1103,7 +889,7 @@ namespace ShapeGrammar3D.Components
                     "Best Individual ID: {7}\n" +
                     "Topology Metrics ({8}D): {9}\n" +
                     "Shape Metrics ({10}D): {11}\n" +
-                    "Clustering Dimensions: {12}",
+                    "Clustering Dimensions: {12}\n\n{13}",
                     _numObjectives, objLabels,
                     _currentGeneration, _numGenerations,
                     evaluatedPop.Count,
@@ -1112,7 +898,8 @@ namespace ShapeGrammar3D.Components
                     best.Id,
                     _topoMetricTypes.Count, topoLabels,
                     _shapeMetricTypes.Count, shpeLabels,
-                    clusterDims);
+                    clusterDims,
+                    clusterLogLines);
             }
             else
             {
@@ -1128,7 +915,7 @@ namespace ShapeGrammar3D.Components
                     "Topology Metrics ({12}D): {13}\n" +
                     "Shape Metrics ({14}D): {15}\n" +
                     "Clustering Dimensions: {16}\n" +
-                    "Feasibility: wDang={17:F2}, BestVDang={18:F4}, BestFeas={19:F4}, AvgFeas={20:F4}",
+                    "Feasibility: wDang={17:F2}, BestVDang={18:F4}, BestFeas={19:F4}, AvgFeas={20:F4}\n\n{21}",
                     _currentGeneration,
                     _numGenerations,
                     evaluatedPop.Count,
@@ -1144,53 +931,12 @@ namespace ShapeGrammar3D.Components
                     _wDang,
                     best.VDang,
                     best.Feas,
-                    evaluatedPop.Average(i => i.Feas));
+                    evaluatedPop.Average(i => i.Feas),
+                    clusterLogLines);
             }
 
-            SG_Shape bestShape = null;
-            TB_Model bestModel = null;
-
-            try
-            {
-                RecreateShapeAndModel(best, iniShape, rules, out bestShape, out bestModel);
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
-                    string.Format("Failed to reconstruct best individual: {0}", ex.Message));
-            }
-
-            DA.SetData(0, bestShape);
-            DA.SetData(1, bestModel != null ? new GH_TB_Model(bestModel) : null);
-            DA.SetData(2, best.Fitness);
-            DA.SetDataTree(3, shapesTree);
-            DA.SetDataTree(4, modelsTree);
-            DA.SetDataTree(5, fitnessTree);
-            DA.SetData(6, _currentGeneration);
-            DA.SetData(7, info);
-            // Output 8 (ClustInfo) is set in SolveInstance after OutputResults
-            DA.SetDataTree(9, clustGrpTree);
-            DA.SetDataTree(10, topoTree);
-            DA.SetDataTree(11, shpeTree);
-            DA.SetDataTree(12, feasTree);
-            DA.SetDataTree(13, vDangTree);
-            DA.SetDataTree(14, vAngTree);
-            DA.SetDataTree(15, vLenTree);
-            DA.SetDataTree(16, rankTree);
-            DA.SetDataTree(17, objVolTree);
-            DA.SetDataTree(18, objFeasTree);
-            DA.SetDataTree(23, crowdingTree);
-
-            DA.SetDataTree(20, allMetricsTree);
-            var metricNames = new List<string>();
-            foreach (int t in _topoMetricTypes)
-                metricNames.Add("T:" + TopologyMetrics.GetLabel(t));
-            foreach (int s in _shapeMetricTypes)
-                metricNames.Add("S:" + ShapeMetrics.GetLabel(s));
-            DA.SetDataList(21, metricNames);
-
-            if (_metricDomains != null && _metricDomains.Count > 0)
-                DA.SetDataList(22, _metricDomains.Select(d => new GH_Interval(d)).ToList());
+            DA.SetData(0, info);
+            DA.SetData(1, new GH_SGAssembly(assembly));
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
@@ -1238,7 +984,7 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("B4D6E8F1-2A3C-4D5E-9F1A-8B7C6D5E4F3A"); }
+            get { return new Guid("F1A2B3C4-D5E6-4F7A-8B9C-0D1E2F3A4B5C"); }
         }
 
         /// <summary>
