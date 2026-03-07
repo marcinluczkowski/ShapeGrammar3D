@@ -153,8 +153,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_Auto6", GH_ParamAccess.item);
             pManager.AddPlaneParameter("Plane", "Pln", "Graph plane (origin = bottom-left)", GH_ParamAccess.item, Plane.WorldXY);
             pManager.AddIntegerParameter("Num Objectives", "nObj", "1=Disp vs Gen, 2=Disp vs Util, 3=Disp x Util x Feas", GH_ParamAccess.item, 1);
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per cluster per generation. 0 = all (default). 1 = best one per cluster.", GH_ParamAccess.item, 0);
             pManager.AddIntegerParameter("Clusters", "Cls", "Which cluster(s). -1 = all (default).", GH_ParamAccess.list);
             pManager.AddNumberParameter("Width", "W", "Graph width", GH_ParamAccess.item, 10.0);
             pManager.AddNumberParameter("Height", "H", "Graph height", GH_ParamAccess.item, 6.0);
@@ -165,7 +166,7 @@ namespace ShapeGrammar3D.Components
             pManager[4].Optional = true;
             pManager[5].Optional = true;
             pManager[6].Optional = true;
-            pManager[8].Optional = true;
+            pManager[9].Optional = true;
             pManager[9].Optional = true;
             pManager[10].Optional = true;
             pManager[11].Optional = true;
@@ -176,8 +177,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddLineParameter("Lines", "Ln", "Axis and grid lines", GH_ParamAccess.tree);
             pManager.AddColourParameter("Colours", "Col", "Colours for Lines", GH_ParamAccess.tree);
             pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
-            pManager.AddPointParameter("Points", "Pts", "Scatter points", GH_ParamAccess.tree);
-            pManager.AddColourParameter("PointColours", "PCol", "Cluster colour per point", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Points All", "PtsAll", "All scatter points", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Points Top", "PtsTop", "Top/elite points only (when Highlight Top % ON)", GH_ParamAccess.tree);
+            pManager.AddColourParameter("PointColours", "PCol", "Cluster colour per point (matches Points All)", GH_ParamAccess.tree);
             pManager.AddNumberParameter("PointSizes", "PSz", "Radius per point", GH_ParamAccess.tree);
             pManager.AddPointParameter("LabelPts", "LblPt", "Axis label positions (for text)", GH_ParamAccess.tree);
             pManager.AddTextParameter("LabelTexts", "LblTxt", "Axis label texts (tick values, axis names, legend)", GH_ParamAccess.tree);
@@ -205,18 +207,21 @@ namespace ShapeGrammar3D.Components
 
             DA.GetData(1, ref plane);
             DA.GetData(2, ref numObj);
+            int topN = 0;
             DA.GetDataList(3, genList);
             DA.GetDataList(4, indList);
-            DA.GetDataList(5, clusterList);
+            DA.GetData(5, ref topN);
+            DA.GetDataList(6, clusterList);
             if (genList.Count == 0) genList.Add(-1);
             if (indList.Count == 0) indList.Add(-1);
             if (clusterList.Count == 0) clusterList.Add(-1);
-            DA.GetData(6, ref graphW);
-            DA.GetData(7, ref graphH);
-            DA.GetData(8, ref graphD);
-            DA.GetData(9, ref textH);
-            DA.GetData(10, ref ptSize);
-            DA.GetData(11, ref topPercent);
+            DA.GetData(7, ref graphW);
+            DA.GetData(8, ref graphH);
+            DA.GetData(9, ref graphD);
+            DA.GetData(10, ref textH);
+            DA.GetData(11, ref ptSize);
+            DA.GetData(12, ref topPercent);
+            topN = Math.Max(0, topN);
 
             numObj = Math.Clamp(numObj, 1, 3);
             graphW = Math.Max(1.0, graphW);
@@ -242,7 +247,7 @@ namespace ShapeGrammar3D.Components
             var selectedGens = allGens ? gens.Select(g => g.Generation).OrderBy(g => g).ToList() : genList.Where(g => gens.Any(gn => gn.Generation == g)).Distinct().OrderBy(g => g).ToList();
             if (selectedGens.Count == 0) selectedGens.Add(gens[gens.Count - 1].Generation);
 
-            var records = new List<IndRec>();
+            var allRecords = new List<IndRec>();
             var allClusterIds = new SortedSet<int>();
 
             foreach (var gen in gens.Where(g => selectedGens.Contains(g.Generation)))
@@ -257,7 +262,7 @@ namespace ShapeGrammar3D.Components
                     allClusterIds.Add(ind.ClustGrp);
                     if (!allClusters && !clusterList.Contains(ind.ClustGrp)) continue;
 
-                    records.Add(new IndRec
+                    allRecords.Add(new IndRec
                     {
                         Gen = gen.Generation,
                         Ind = i,
@@ -269,6 +274,13 @@ namespace ShapeGrammar3D.Components
                     });
                 }
             }
+
+            // Filter to Top N per cluster per generation
+            var records = topN > 0
+                ? allRecords.GroupBy(r => (r.Gen, r.Cluster))
+                    .SelectMany(grp => grp.OrderBy(r => r.Fitness).Take(topN))
+                    .ToList()
+                : allRecords;
 
             if (records.Count == 0)
             {
@@ -282,10 +294,9 @@ namespace ShapeGrammar3D.Components
             var clusterSet = new HashSet<int>(selectedClusters);
             records = records.Where(r => clusterSet.Contains(r.Cluster)).ToList();
 
-            // Elite set (top % per cluster)
+            // Elite set (top % per cluster) – always computed for Points Top output
             var eliteSet = new HashSet<(int gen, int ind)>();
             int eliteCount = 0;
-            if (HighlightElite)
             {
                 double fitMinE = records.Min(r => r.Fitness);
                 double fitRngE = records.Max(r => r.Fitness) - fitMinE;
@@ -339,7 +350,8 @@ namespace ShapeGrammar3D.Components
 
             var linesTree = new GH_Structure<GH_Line>();
             var colorsTree = new GH_Structure<GH_Colour>();
-            var pointsTree = new GH_Structure<GH_Point>();
+            var pointsAllTree = new GH_Structure<GH_Point>();
+            var pointsTopTree = new GH_Structure<GH_Point>();
             var ptColorsTree = new GH_Structure<GH_Colour>();
             var ptSizesTree = new GH_Structure<GH_Number>();
 
@@ -435,7 +447,9 @@ namespace ShapeGrammar3D.Components
                 Color drawColor = (HighlightElite && !isElite) ? Color.FromArgb(80, clColor.R, clColor.G, clColor.B) : clColor;
 
                 GH_Path ptPath = new GH_Path(rec.Gen);
-                pointsTree.Append(new GH_Point(pt), ptPath);
+                pointsAllTree.Append(new GH_Point(pt), ptPath);
+                if (isElite)
+                    pointsTopTree.Append(new GH_Point(pt), ptPath);
                 ptColorsTree.Append(new GH_Colour(drawColor), ptPath);
                 ptSizesTree.Append(new GH_Number(size), ptPath);
 
@@ -477,11 +491,12 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(1, colorsTree);
             DA.SetData(2, string.Format("Pareto Assembly ({0} obj)\nGens: {1}\nIndividuals: {2}\nRank-0: {3}\nElite: {4}\nSize: {5:F1}x{6:F1}{7}",
                 numObj, genLabel, records.Count, hasRank ? rank0Count.ToString() : "N/A", highlightInfo, graphW, graphH, numObj == 3 ? string.Format(" x {0:F1}", graphD) : ""));
-            DA.SetDataTree(3, pointsTree);
-            DA.SetDataTree(4, ptColorsTree);
-            DA.SetDataTree(5, ptSizesTree);
-            DA.SetDataTree(6, labelPtsTree);
-            DA.SetDataTree(7, labelTextsTree);
+            DA.SetDataTree(3, pointsAllTree);
+            DA.SetDataTree(4, pointsTopTree);
+            DA.SetDataTree(5, ptColorsTree);
+            DA.SetDataTree(6, ptSizesTree);
+            DA.SetDataTree(7, labelPtsTree);
+            DA.SetDataTree(8, labelTextsTree);
         }
 
         private static void PadRange(ref double min, ref double max) { if (max <= min) max = min + 1; double r = max - min; min -= r * 0.05; max += r * 0.05; }

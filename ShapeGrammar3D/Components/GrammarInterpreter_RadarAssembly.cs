@@ -151,8 +151,9 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_Auto6", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list,-1);
+            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list,-1);
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per cluster per generation. 0 = all (default). 1 = best one per cluster.", GH_ParamAccess.item, 0);
             pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing", GH_ParamAccess.item, 30.0);
             pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing", GH_ParamAccess.item, 10.0);
             pManager.AddNumberParameter("Radius", "R", "Axis length", GH_ParamAccess.item, 1.0);
@@ -186,25 +187,28 @@ namespace ShapeGrammar3D.Components
 
             List<int> genList = new List<int>();
             List<int> indList = new List<int>();
+            int topN = 0;
             DA.GetDataList(1, genList);
             DA.GetDataList(2, indList);
+            DA.GetData(3, ref topN);
             if (genList.Count == 0) genList.Add(-1);
             if (indList.Count == 0) indList.Add(-1);
             bool allGens = genList.Contains(-1);
             bool allInds = indList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
+            topN = Math.Max(0, topN);
 
             double xSpacing = 30.0, ySpacing = 10.0, radius = 1.0;
             Point3d insertPt = Point3d.Origin;
             var rawDomains = new List<GH_Interval>();
-            DA.GetDataList(6, rawDomains);
+            DA.GetDataList(7, rawDomains);
             List<Interval> domains = new List<Interval>();
-            DA.GetDataList(6, domains); // now domains contains only real Interval values
+            DA.GetDataList(7, domains); // now domains contains only real Interval values
                                         // treat domains.Count == 0 as "no domains supplied"
-            DA.GetData(3, ref xSpacing);
-            DA.GetData(4, ref ySpacing);
-            DA.GetData(5, ref radius);
-            DA.GetData(7, ref insertPt);
+            DA.GetData(4, ref xSpacing);
+            DA.GetData(5, ref ySpacing);
+            DA.GetData(6, ref radius);
+            DA.GetData(8, ref insertPt);
             if (radius <= 0) radius = 1.0;
 
             var metricNames = assembly.MetricNames ?? new List<string>();
@@ -267,6 +271,29 @@ namespace ShapeGrammar3D.Components
             int col = 0;
             int totalCharts = 0;
 
+            // Build elite set when Top N > 0
+            var eliteSet = new HashSet<(int gen, int ind)>();
+            if (topN > 0)
+            {
+                foreach (var gen in assembly.Generations ?? new List<AssemblyGeneration>())
+                {
+                    if (!allGens && !genList.Contains(gen.Generation)) continue;
+                    var candidates = new List<(int indIdx, double fit, int clust)>();
+                    for (int i = 0; i < (gen.Individuals?.Count ?? 0); i++)
+                    {
+                        if (!allInds && (indSet != null && !indSet.Contains(i))) continue;
+                        var ind = gen.Individuals[i];
+                        if (ind == null || ind.Fitness >= double.MaxValue * 0.5) continue;
+                        candidates.Add((i, ind.Fitness, ind.ClustGrp));
+                    }
+                    foreach (var grp in candidates.GroupBy(c => c.clust))
+                    {
+                        foreach (var x in grp.OrderBy(c => c.fit).Take(topN))
+                            eliteSet.Add((gen.Generation, x.indIdx));
+                    }
+                }
+            }
+
             foreach (var gen in assembly.Generations ?? new List<AssemblyGeneration>())
             {
                 if (!allGens && !genList.Contains(gen.Generation)) continue;
@@ -274,6 +301,7 @@ namespace ShapeGrammar3D.Components
                 for (int indIdx = 0; indIdx < gen.Individuals.Count; indIdx++)
                 {
                     if (!allInds && (indSet == null || !indSet.Contains(indIdx))) continue;
+                    if (topN > 0 && !eliteSet.Contains((gen.Generation, indIdx))) continue;
                     var ind = gen.Individuals[indIdx];
                     var vals = ind.AllMetrics();
                     if (vals.Count < numAxes) continue;
@@ -294,9 +322,12 @@ namespace ShapeGrammar3D.Components
 
                         Vector3d xdir = axisDirs[m];
                         Vector3d ydir = new Vector3d(-axisDirs[m].Y, axisDirs[m].X, 0);
-                        bool flipped = xdir.X < -1e-10 || (Math.Abs(xdir.X) < 1e-10 && xdir.Y < 0);
-                        if (flipped) { xdir = -xdir; ydir = -ydir; }
-                        Point3d labelPt = center + axisDirs[m] * (radius + _textHeight * 1.5);
+                        // Left-side axes: flip so text extends outward (right) instead of inward
+                        bool leftSide = axisDirs[m].X < -1e-10 || (Math.Abs(axisDirs[m].X) < 1e-10 && axisDirs[m].Y < 0);
+                        if (leftSide) { xdir = -xdir; ydir = -ydir; }
+                        // Place labels further outside to avoid overlap with polygon
+                        double labelOffset = radius + _textHeight * 3.5;
+                        Point3d labelPt = center + axisDirs[m] * labelOffset;
                         _axisLabels.Add(new RadarLabelA { Position = labelPt, Text = metricNames[m], XDir = xdir, YDir = ydir });
                         _axisLabels.Add(new RadarLabelA { Position = labelPt - ydir * _textHeight * 1.3, Text = string.Format("{0:F3} ({1:F2})", vals[m], clampedNorm), XDir = xdir, YDir = ydir });
                     }

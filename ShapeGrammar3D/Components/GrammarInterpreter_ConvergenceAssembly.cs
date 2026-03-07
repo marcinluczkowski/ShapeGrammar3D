@@ -49,6 +49,8 @@ namespace ShapeGrammar3D.Components
                 "Which individual(s) to include. Leave empty or -1 = all (default).", GH_ParamAccess.list);
             pManager.AddIntegerParameter("Clusters", "Cls",
                 "Which cluster(s) to display. Leave empty or -1 = all (default).", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN",
+                "Use only top N best per cluster per generation for curves. 0 = all (default). 1 = best one per cluster.", GH_ParamAccess.item, 0);
             pManager.AddNumberParameter("X Spacing", "dX",
                 "Graph width in model units", GH_ParamAccess.item, 10.0);
             pManager.AddNumberParameter("Y Spacing", "dY",
@@ -59,6 +61,7 @@ namespace ShapeGrammar3D.Components
             pManager[4].Optional = true;
             pManager[5].Optional = true;
             pManager[6].Optional = true;
+            pManager[7].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -66,8 +69,11 @@ namespace ShapeGrammar3D.Components
             pManager.AddLineParameter("Lines", "Ln", "Graph lines", GH_ParamAccess.tree);
             pManager.AddColourParameter("Colours", "Col", "Line colours", GH_ParamAccess.tree);
             pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
-            pManager.AddCurveParameter("Curves", "Crv", "Convergence curves", GH_ParamAccess.tree);
-            pManager.AddColourParameter("CurveColours", "CCol", "Curve colours", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("Curves Best", "Best", "Best objective curve per fitness source", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("Curves Worst", "Worst", "Worst objective curve per fitness source", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("Curves Avg", "Avg", "Average objective curve per fitness source", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("Curves Cluster", "Clust", "Best per cluster curves", GH_ParamAccess.tree);
+            pManager.AddColourParameter("CurveColours", "CCol", "Curve colours (cluster curves)", GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -90,17 +96,20 @@ namespace ShapeGrammar3D.Components
             DA.GetDataList(3, clusterList);
             if (genList.Count == 0) genList.Add(-1);
             if (indList.Count == 0) indList.Add(-1);
+            int topN = 0;
+            DA.GetData(4, ref topN);
             if (clusterList.Count == 0) clusterList.Add(-1);
             bool allGens = genList.Contains(-1);
             bool allInds = indList.Contains(-1);
             bool allClusters = clusterList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
+            topN = Math.Max(0, topN);
 
             double graphW = 10.0, graphH = 6.0;
             Point3d insertPt = Point3d.Origin;
-            DA.GetData(4, ref graphW);
-            DA.GetData(5, ref graphH);
-            DA.GetData(6, ref insertPt);
+            DA.GetData(5, ref graphW);
+            DA.GetData(6, ref graphH);
+            DA.GetData(7, ref insertPt);
             graphW = Math.Max(1.0, graphW);
             graphH = Math.Max(1.0, graphH);
 
@@ -111,10 +120,32 @@ namespace ShapeGrammar3D.Components
             var feasData = AssemblyToFeasData(assembly, genFilter, allInds ? null : indSet);
             var rankData = AssemblyToRankData(assembly, genFilter, allInds ? null : indSet);
 
+            var eliteSet = new HashSet<(int gen, int ind)>();
+            if (topN > 0 && assembly?.Generations != null)
+            {
+                foreach (var gen in assembly.Generations)
+                {
+                    if (genFilter != null && !genFilter.Contains(gen.Generation)) continue;
+                    if (gen.Individuals == null) continue;
+                    var candidates = new List<(int i, double fit, int clust)>();
+                    for (int i = 0; i < gen.Individuals.Count; i++)
+                    {
+                        if (indSet != null && !indSet.Contains(i)) continue;
+                        var ind = gen.Individuals[i];
+                        if (ind == null || ind.Fitness >= double.MaxValue * 0.5) continue;
+                        candidates.Add((i, ind.Fitness, ind.ClustGrp));
+                    }
+                    foreach (var grp in candidates.GroupBy(c => c.clust))
+                    {
+                        foreach (var x in grp.OrderBy(c => c.fit).Take(topN))
+                            eliteSet.Add((gen.Generation, x.i));
+                    }
+                }
+            }
+
             bool hasCluster = clustData.Count > 0;
             bool hasRank = rankData.Count > 0;
 
-            int fitIdx = 0;
             var fitSources = new List<(string Name, Dictionary<int, Dictionary<int, double>> Data)>();
             fitSources.Add(("Displacement", fitData));
             if (utilData != null && utilData.Count > 0)
@@ -147,13 +178,15 @@ namespace ShapeGrammar3D.Components
 
             var linesTree = new GH_Structure<GH_Line>();
             var colorsTree = new GH_Structure<GH_Colour>();
-            var curvesTree = new GH_Structure<GH_Curve>();
+            var curvesBestTree = new GH_Structure<GH_Curve>();
+            var curvesWorstTree = new GH_Structure<GH_Curve>();
+            var curvesAvgTree = new GH_Structure<GH_Curve>();
+            var curvesClusterTree = new GH_Structure<GH_Curve>();
             var curveColorsTree = new GH_Structure<GH_Colour>();
             double subGraphHeight = fitSources.Count > 1
                 ? (graphH - (fitSources.Count - 1) * _textHeight * 3) / fitSources.Count
                 : graphH;
             subGraphHeight = Math.Max(1.0, subGraphHeight);
-            int totalCurves = 0;
 
             for (int fi = 0; fi < fitSources.Count; fi++)
             {
@@ -163,6 +196,7 @@ namespace ShapeGrammar3D.Components
                     clusterCurves[cl] = new List<double>();
                 var avgCurve = new List<double>();
                 var topCurve = new List<double>();
+                var worstCurve = new List<double>();
                 double globalMin = double.MaxValue, globalMax = double.MinValue;
 
                 foreach (int gen in sortedGens)
@@ -173,6 +207,7 @@ namespace ShapeGrammar3D.Components
                             clusterCurves[cl].Add(double.NaN);
                         avgCurve.Add(double.NaN);
                         topCurve.Add(double.NaN);
+                        worstCurve.Add(double.NaN);
                         continue;
                     }
                     var genFit = sourceData[gen];
@@ -183,6 +218,7 @@ namespace ShapeGrammar3D.Components
                         double bestFit = double.MaxValue;
                         foreach (var kvp in genFit)
                         {
+                            if (topN > 0 && !eliteSet.Contains((gen, kvp.Key))) continue;
                             int indCluster = genClust != null && genClust.ContainsKey(kvp.Key) ? genClust[kvp.Key] : 0;
                             if (indCluster != cl) continue;
                             double val = kvp.Value;
@@ -196,23 +232,33 @@ namespace ShapeGrammar3D.Components
                     double sum = 0;
                     int count = 0;
                     double topVal = double.MaxValue;
+                    double worstVal = double.MinValue;
                     foreach (var kvp in genFit)
                     {
+                        if (topN > 0 && !eliteSet.Contains((gen, kvp.Key))) continue;
                         double val = kvp.Value;
                         if (double.IsInfinity(val) || val >= double.MaxValue * 0.5) continue;
                         sum += val;
                         count++;
                         if (val < topVal) topVal = val;
+                        if (val > worstVal) worstVal = val;
                     }
                     double avgVal = count > 0 ? sum / count : double.NaN;
                     avgCurve.Add(avgVal);
                     topCurve.Add(topVal < double.MaxValue * 0.5 ? topVal : double.NaN);
+                    worstCurve.Add(worstVal > double.MinValue && worstVal < double.MaxValue * 0.5 ? worstVal : double.NaN);
                     if (!double.IsNaN(avgVal)) { if (avgVal < globalMin) globalMin = avgVal; if (avgVal > globalMax) globalMax = avgVal; }
                     if (topCurve.Count > 0 && !double.IsNaN(topCurve[topCurve.Count - 1]))
                     {
                         double t = topCurve[topCurve.Count - 1];
                         if (t < globalMin) globalMin = t;
                         if (t > globalMax) globalMax = t;
+                    }
+                    if (worstCurve.Count > 0 && !double.IsNaN(worstCurve[worstCurve.Count - 1]))
+                    {
+                        double w = worstCurve[worstCurve.Count - 1];
+                        if (w < globalMin) globalMin = w;
+                        if (w > globalMax) globalMax = w;
                     }
                 }
 
@@ -235,14 +281,57 @@ namespace ShapeGrammar3D.Components
                 linesTree.Append(new GH_Line(new Line(graphOrigin, graphOrigin + plane.YAxis * subGraphHeight)), axisPath);
                 colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
 
+                // X-axis: generation sub-axes – vertical dividers and labels at each generation
+                double subAxisW = numGens > 1 ? graphW / (numGens - 1) : graphW;
+                for (int gi = 0; gi < numGens; gi++)
+                {
+                    double xFrac = numGens > 1 ? (double)gi / (numGens - 1) : 0.5;
+                    Point3d tickBase = graphOrigin + plane.XAxis * (xFrac * graphW);
+                    Point3d tickEnd = tickBase - plane.YAxis * (_textHeight * 0.3);
+                    linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
+                    colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
+                    if (gi >= 1)
+                    {
+                        Point3d gridTop = tickBase + plane.YAxis * subGraphHeight;
+                        linesTree.Append(new GH_Line(new Line(tickBase, gridTop)), gridPath);
+                        colorsTree.Append(new GH_Colour(supportGridColor), gridPath);
+                    }
+                    _labels.Add(new GraphLabel
+                    {
+                        Position = tickEnd - plane.YAxis * (_textHeight * 1.2),
+                        Text = sortedGens[gi].ToString(),
+                        XDir = plane.XAxis,
+                        YDir = plane.YAxis,
+                        Height = _textHeight * 0.8,
+                        Color = _textColor
+                    });
+                }
+
+                // Y-axis: tick marks and value labels
                 int numYTicks = 5;
-                for (int t = 1; t < numYTicks; t++)
+                for (int t = 0; t <= numYTicks; t++)
                 {
                     double frac = (double)t / numYTicks;
+                    double yVal = yMin + frac * yRangeTotal;
                     Point3d tickBase = graphOrigin + plane.YAxis * (frac * subGraphHeight);
-                    Point3d gridEnd = tickBase + plane.XAxis * graphW;
-                    linesTree.Append(new GH_Line(new Line(tickBase, gridEnd)), gridPath);
-                    colorsTree.Append(new GH_Colour(supportGridColor), gridPath);
+                    Point3d tickEnd = tickBase - plane.XAxis * (_textHeight * 0.3);
+                    linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
+                    colorsTree.Append(new GH_Colour(mainGridColor), axisPath);
+                    if (t > 0 && t < numYTicks)
+                    {
+                        Point3d gridEnd = tickBase + plane.XAxis * graphW;
+                        linesTree.Append(new GH_Line(new Line(tickBase, gridEnd)), gridPath);
+                        colorsTree.Append(new GH_Colour(supportGridColor), gridPath);
+                    }
+                    _labels.Add(new GraphLabel
+                    {
+                        Position = tickEnd - plane.XAxis * (_textHeight * 0.5),
+                        Text = FormatValue(yVal),
+                        XDir = plane.XAxis,
+                        YDir = plane.YAxis,
+                        Height = _textHeight * 0.8,
+                        Color = _textColor
+                    });
                 }
 
                 foreach (int cl in selectedClusters)
@@ -270,14 +359,14 @@ namespace ShapeGrammar3D.Components
                     }
                     if (curvePoints.Count >= 2)
                     {
-                        curvesTree.Append(new GH_Curve(new Polyline(curvePoints).ToNurbsCurve()), new GH_Path(fi, totalCurves));
-                        curveColorsTree.Append(new GH_Colour(clColor), new GH_Path(fi, totalCurves));
-                        totalCurves++;
+                        curvesClusterTree.Append(new GH_Curve(new Polyline(curvePoints).ToNurbsCurve()), new GH_Path(fi, 100 + cl));
+                        curveColorsTree.Append(new GH_Colour(clColor), new GH_Path(fi, 100 + cl));
                     }
                 }
 
                 Color avgColor = Color.FromArgb(140, 140, 140);
                 Color bestColor = Color.FromArgb(40, 40, 40);
+                Color worstColor = Color.FromArgb(100, 60, 60);
                 var avgPoints = new List<Point3d>();
                 var topPoints = new List<Point3d>();
                 for (int gi = 0; gi < numGens; gi++)
@@ -297,25 +386,32 @@ namespace ShapeGrammar3D.Components
                         topPoints.Add(graphOrigin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphHeight));
                     }
                 }
-                if (avgPoints.Count >= 2)
+                var worstPoints = new List<Point3d>();
+                for (int gi = 0; gi < numGens; gi++)
                 {
-                    curvesTree.Append(new GH_Curve(new Polyline(avgPoints).ToNurbsCurve()), new GH_Path(fi, totalCurves));
-                    curveColorsTree.Append(new GH_Colour(avgColor), new GH_Path(fi, totalCurves));
-                    totalCurves++;
-                }
-                if (topPoints.Count >= 2)
-                {
-                    curvesTree.Append(new GH_Curve(new Polyline(topPoints).ToNurbsCurve()), new GH_Path(fi, totalCurves));
-                    curveColorsTree.Append(new GH_Colour(bestColor), new GH_Path(fi, totalCurves));
-                    totalCurves++;
+                    if (!double.IsNaN(worstCurve[gi]))
+                    {
+                        double xFrac = numGens > 1 ? (double)gi / (numGens - 1) : 0.5;
+                        double yFrac = yRangeTotal > 0 ? (worstCurve[gi] - yMin) / yRangeTotal : 0.5;
+                        yFrac = Math.Clamp(yFrac, 0.0, 1.0);
+                        worstPoints.Add(graphOrigin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphHeight));
+                    }
                 }
 
+                if (topPoints.Count >= 2)
+                    curvesBestTree.Append(new GH_Curve(new Polyline(topPoints).ToNurbsCurve()), new GH_Path(fi, 0));
+                if (worstPoints.Count >= 2)
+                    curvesWorstTree.Append(new GH_Curve(new Polyline(worstPoints).ToNurbsCurve()), new GH_Path(fi, 0));
+                if (avgPoints.Count >= 2)
+                    curvesAvgTree.Append(new GH_Curve(new Polyline(avgPoints).ToNurbsCurve()), new GH_Path(fi, 0));
+
+                // Vertical metric label on the left, centered, away from Y-axis tick values
                 _labels.Add(new GraphLabel
                 {
-                    Position = graphOrigin + plane.YAxis * (subGraphHeight + _textHeight * 0.5),
+                    Position = graphOrigin - plane.XAxis * (_textHeight * 6) + plane.YAxis * (subGraphHeight * 0.5),
                     Text = sourceName,
-                    XDir = plane.XAxis,
-                    YDir = plane.YAxis,
+                    XDir = plane.YAxis,
+                    YDir = -plane.XAxis,
                     Height = _textHeight * 1.2,
                     Color = Color.FromArgb(40, 40, 40)
                 });
@@ -323,9 +419,21 @@ namespace ShapeGrammar3D.Components
 
             DA.SetDataTree(0, linesTree);
             DA.SetDataTree(1, colorsTree);
-            DA.SetData(2, string.Format("Convergence from Assembly: {0} gens, {1} curves", numGens, totalCurves));
-            DA.SetDataTree(3, curvesTree);
-            DA.SetDataTree(4, curveColorsTree);
+            DA.SetData(2, string.Format("Convergence from Assembly: {0} gens. Best/Worst/Avg + cluster curves.", numGens));
+            DA.SetDataTree(3, curvesBestTree);
+            DA.SetDataTree(4, curvesWorstTree);
+            DA.SetDataTree(5, curvesAvgTree);
+            DA.SetDataTree(6, curvesClusterTree);
+            DA.SetDataTree(7, curveColorsTree);
+        }
+
+        private static string FormatValue(double v)
+        {
+            double abs = Math.Abs(v);
+            if (abs >= 1000) return v.ToString("F0");
+            if (abs >= 1) return v.ToString("F2");
+            if (abs >= 0.01) return v.ToString("F4");
+            return v.ToString("E2");
         }
 
         private static Dictionary<int, Dictionary<int, double>> AssemblyToFitData(SGShapeGrammar3DAssembly a, HashSet<int> genFilter, HashSet<int> indFilter)
