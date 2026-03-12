@@ -30,8 +30,22 @@ namespace ShapeGrammar3D.Classes
         public double DanglingWeight { get; set; } = 0.20;
         public double AngleWeight { get; set; } = 0.0;
         public double LengthWeight { get; set; } = 0.0;
+        public double IntersectionWeight { get; set; } = 0.0;
+
+        /// <summary>Angle [deg] below which full penalty. 10–20° gradient to zero at AngleOptDeg.</summary>
+        public double AngleMinDeg { get; set; } = 10.0;
+        public double AngleOptDeg { get; set; } = 30.0;
+        /// <summary>Length [m]: below = full penalty; to LenOptLow = gradient to 0.</summary>
+        public double LenTooShort { get; set; } = 0.5;
+        public double LenOptLow { get; set; } = 1.0;
+        public double LenOptHigh { get; set; } = 5.0;
+        public double LenTooLong { get; set; } = 12.0;
 
         public int NumObjectives { get; set; } = 1;
+        /// <summary>When nObj=1: 0=Disp, 1=Feasibility, 2=AvgUtilDev, 3=MaxUtil.</summary>
+        public int SingleObjType { get; set; } = 0;
+        /// <summary>When nObj>=2: 0=Avg utilization deviation from 90%, 1=Max utilization.</summary>
+        public int UtilObjType { get; set; } = 0;
         public bool SelfWeight { get; set; } = false;
         public int CroSecOpt { get; set; } = 0;
         public List<Interval> MetricDomains { get; set; } = new List<Interval>();
@@ -59,9 +73,19 @@ namespace ShapeGrammar3D.Classes
             DanglingWeight = Math.Clamp(DanglingWeight, 0.0, 1.0);
             AngleWeight = Math.Clamp(AngleWeight, 0.0, 1.0);
             LengthWeight = Math.Clamp(LengthWeight, 0.0, 1.0);
+            IntersectionWeight = Math.Clamp(IntersectionWeight, 0.0, 1.0);
+            AngleMinDeg = Math.Clamp(AngleMinDeg, 0.0, 90.0);
+            AngleOptDeg = Math.Clamp(AngleOptDeg, 0.0, 180.0);
+            if (AngleOptDeg <= AngleMinDeg) AngleOptDeg = AngleMinDeg + 5.0;
+            LenTooShort = Math.Max(0.01, LenTooShort);
+            LenOptLow = Math.Max(LenTooShort, LenOptLow);
+            LenOptHigh = Math.Max(LenOptLow, LenOptHigh);
+            LenTooLong = Math.Max(LenOptHigh, LenTooLong);
 
             NumObjectives = Math.Clamp(NumObjectives, 1, 3);
-            CroSecOpt = Math.Clamp(CroSecOpt, 0, 4);
+            SingleObjType = Math.Clamp(SingleObjType, 0, 3);
+            UtilObjType = Math.Clamp(UtilObjType, 0, 1);
+            CroSecOpt = Math.Clamp(CroSecOpt, 0, 6);
             ClusterElite = Math.Max(0, ClusterElite);
             CSOptIterations = Math.Clamp(CSOptIterations, 1, 500);
 
@@ -101,7 +125,16 @@ namespace ShapeGrammar3D.Classes
                 DanglingWeight = Value.DanglingWeight,
                 AngleWeight = Value.AngleWeight,
                 LengthWeight = Value.LengthWeight,
+                IntersectionWeight = Value.IntersectionWeight,
+                AngleMinDeg = Value.AngleMinDeg,
+                AngleOptDeg = Value.AngleOptDeg,
+                LenTooShort = Value.LenTooShort,
+                LenOptLow = Value.LenOptLow,
+                LenOptHigh = Value.LenOptHigh,
+                LenTooLong = Value.LenTooLong,
                 NumObjectives = Value.NumObjectives,
+                SingleObjType = Value.SingleObjType,
+                UtilObjType = Value.UtilObjType,
                 SelfWeight = Value.SelfWeight,
                 CroSecOpt = Value.CroSecOpt,
                 MetricDomains = Value.MetricDomains != null ? new List<Interval>(Value.MetricDomains) : new List<Interval>(),

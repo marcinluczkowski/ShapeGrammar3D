@@ -30,10 +30,11 @@ namespace ShapeGrammar3D.Classes
         /// <summary>Number of elements with length violations (too short or too long).</summary>
         public int LengthViolationCount;
 
-        // --- Future feasibility components (placeholder) ---
-        // public double VLen;   // element length violation
-        // public double VAng;   // angle violation
-        // public double VDeg;   // degree violation
+        /// <summary>Intersection penalty [0..1]. Penalizes bracing/column elements that cross each other.</summary>
+        public double VIntersect;
+
+        /// <summary>Number of element pairs that intersect (excluding shared nodes).</summary>
+        public int IntersectionCount;
 
         /// <summary>Weighted sum of all active feasibility components.</summary>
         public double TotalViolation;
@@ -44,8 +45,8 @@ namespace ShapeGrammar3D.Classes
         public override string ToString()
         {
             return string.Format(
-                "VDang={0:F4} VAng={1:F4} VLen={2:F4} (dangling={3}, isolated={4}, angleViol={5}, lenViol={6}), Total={7:F4}",
-                VDang, VAng, VLen, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, TotalViolation);
+                "VDang={0:F4} VAng={1:F4} VLen={2:F4} VInt={3:F4} (dangling={4}, isolated={5}, angleViol={6}, lenViol={7}, intersect={8}), Total={9:F4}",
+                VDang, VAng, VLen, VIntersect, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, IntersectionCount, TotalViolation);
         }
     }
 }

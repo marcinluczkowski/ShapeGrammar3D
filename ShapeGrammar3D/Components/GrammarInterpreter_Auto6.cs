@@ -33,15 +33,15 @@ namespace ShapeGrammar3D.Components
         private List<int> _shapeMetricTypes = new List<int> { 0 };
 
         // Feasibility configuration
-        private double _wDang = 0.20;
-        private double _wAng = 0.0;
-        private double _wLen = 0.0;
+        private FeasibilitySettings _feasibilitySettings = FeasibilitySettings.Default();
 
         // Cluster elite: guaranteed survivors per cluster per generation
         private int _clusterEliteCount = 0;
 
         // Multi-objective configuration
         private int _numObjectives = 1;
+        private int _singleObjType = 0;  // 0=Disp, 1=Feas, 2=AvgUtilDev, 3=MaxUtil
+        private int _utilObjType = 0;    // 0=AvgDev, 1=MaxUtil
 
         // Self-weight
         private bool _useSelfWeight = false;
@@ -137,10 +137,19 @@ namespace ShapeGrammar3D.Components
                 TopologyMetrics = new List<int>(_topoMetricTypes),
                 ShapeMetrics = new List<int>(_shapeMetricTypes),
                 FixedSeed = false,
-                DanglingWeight = _wDang,
-                AngleWeight = _wAng,
-                LengthWeight = _wLen,
+                DanglingWeight = _feasibilitySettings.WDang,
+                AngleWeight = _feasibilitySettings.WAng,
+                LengthWeight = _feasibilitySettings.WLen,
+                IntersectionWeight = _feasibilitySettings.WIntersect,
+                AngleMinDeg = _feasibilitySettings.AngleMinDeg,
+                AngleOptDeg = _feasibilitySettings.AngleOptDeg,
+                LenTooShort = _feasibilitySettings.LenTooShort,
+                LenOptLow = _feasibilitySettings.LenOptLow,
+                LenOptHigh = _feasibilitySettings.LenOptHigh,
+                LenTooLong = _feasibilitySettings.LenTooLong,
                 NumObjectives = _numObjectives,
+                SingleObjType = _singleObjType,
+                UtilObjType = _utilObjType,
                 SelfWeight = _useSelfWeight,
                 CroSecOpt = _croSecOptMode,
                 MetricDomains = _metricDomains != null ? new List<Interval>(_metricDomains) : new List<Interval>(),
@@ -176,10 +185,22 @@ namespace ShapeGrammar3D.Components
 
             bool useFixedSeed = settings.FixedSeed;
 
-            _wDang = settings.DanglingWeight;
-            _wAng = settings.AngleWeight;
-            _wLen = settings.LengthWeight;
+            _feasibilitySettings = new FeasibilitySettings
+            {
+                WDang = settings.DanglingWeight,
+                WAng = settings.AngleWeight,
+                WLen = settings.LengthWeight,
+                WIntersect = settings.IntersectionWeight,
+                AngleMinDeg = settings.AngleMinDeg,
+                AngleOptDeg = settings.AngleOptDeg,
+                LenTooShort = settings.LenTooShort,
+                LenOptLow = settings.LenOptLow,
+                LenOptHigh = settings.LenOptHigh,
+                LenTooLong = settings.LenTooLong
+            };
             _numObjectives = settings.NumObjectives;
+            _singleObjType = settings.SingleObjType;
+            _utilObjType = settings.UtilObjType;
             bool isMultiObjective = _numObjectives > 1;
 
             _useSelfWeight = settings.SelfWeight;
@@ -532,7 +553,7 @@ namespace ShapeGrammar3D.Components
                         ApplySelfWeightLoads(shape, _gravityDir);
 
                     // --- Feasibility check (graph-based, before expensive FEM) ---
-                    FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _wDang, _wAng, _wLen);
+                    FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _feasibilitySettings);
 
                     TB_Model tb_mdl = new TB_Model(shape);
                     SolveLS slv = new SolveLS(ref tb_mdl);
@@ -543,9 +564,13 @@ namespace ShapeGrammar3D.Components
                     else if (_croSecOptMode == 2)
                         finalModel = OptimizeCrossSections_SHS(finalModel);
                     else if (_croSecOptMode == 3)
-                        finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: true);
+                        finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: true, includeRHS: false);
                     else if (_croSecOptMode == 4)
-                        finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: false);
+                        finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: false, includeRHS: false);
+                    else if (_croSecOptMode == 5)
+                        finalModel = OptimizeCrossSections_RHS(finalModel);
+                    else if (_croSecOptMode == 6)
+                        finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: false, includeRHS: true);
 
                     double rawDisp = CalculateMaxNodalDisplacement(finalModel);
 
@@ -561,33 +586,34 @@ namespace ShapeGrammar3D.Components
                     double utilDev = Math.Abs(avgUtil - TARGET_UTIL);
                     if (avgUtil > 1.0)
                         utilDev = (avgUtil - TARGET_UTIL) * 2.0;
+                    double maxUtil = ComputeMaxUtilization(finalModel);
+
+                    double rawFeas = (feasResult.VDang + feasResult.VAng + feasResult.VLen) / 3.0;
+                    rawFeas = Math.Clamp(rawFeas, 0.0, 1.0);
+
+                    double utilObj = _utilObjType == 1 ? maxUtil : utilDev;
 
                     if (_numObjectives > 1)
                     {
-                        // Log-transform displacement so its scale is comparable
-                        // to the [0,~1] range of the other objectives.
-                        // log(1 + 0) = 0  (perfect),  log(1 + 1) ≈ 0.69,
-                        // log(1 + 10) ≈ 2.4  (very bad).
                         double dispObj = Math.Log(1.0 + Math.Max(0.0, dispRatio));
-
-                        // Raw feasibility: average of all three sub-penalties
-                        // WITHOUT the single-objective user weights, so the
-                        // score spans the full [0, 1] range and every aspect
-                        // of feasibility contributes equally.
-                        double rawFeas = (feasResult.VDang + feasResult.VAng + feasResult.VLen) / 3.0;
-                        rawFeas = Math.Clamp(rawFeas, 0.0, 1.0);
-
                         individual.Fitness = dispRatio;
-                        individual.ObjectiveValues = new List<double> { dispObj, utilDev };
+                        individual.ObjectiveValues = new List<double> { dispObj, utilObj };
                         if (_numObjectives >= 3)
                             individual.ObjectiveValues.Add(rawFeas);
                     }
                     else
                     {
-                        double penalizedFitness = (rawDisp >= double.MaxValue || rawDisp <= double.MinValue)
-                            ? rawDisp
-                            : rawDisp * (1.0 + feasResult.TotalViolation);
-                        individual.Fitness = penalizedFitness;
+                        double singleFitness;
+                        switch (_singleObjType)
+                        {
+                            case 1: singleFitness = feasResult.TotalViolation; break;
+                            case 2: singleFitness = utilDev; break;
+                            case 3: singleFitness = maxUtil; break;
+                            default: singleFitness = (rawDisp >= double.MaxValue || rawDisp <= double.MinValue)
+                                ? rawDisp : rawDisp * (1.0 + feasResult.TotalViolation); break;
+                        }
+                        individual.Fitness = singleFitness;
+                        individual.ObjectiveValues = new List<double> { dispRatio, utilObj, rawFeas };
                     }
 
                     individual.TopoValues = topoVals;
@@ -740,6 +766,24 @@ namespace ShapeGrammar3D.Components
             }
 
             return count > 0 ? sum / count : 0.0;
+        }
+
+        /// <summary>
+        /// Computes the maximum element utilization. Used for "minimize highest utilization" objective.
+        /// </summary>
+        private static double ComputeMaxUtilization(TB_Model model)
+        {
+            if (model?.Elem1Ds == null || model.Elem1Ds.Count == 0)
+                return 0.0;
+
+            double maxU = 0.0;
+            foreach (var elem in model.Elem1Ds)
+            {
+                double u = ComputeElementUtilization(model, elem);
+                if (u < double.MaxValue && u > maxU)
+                    maxU = u;
+            }
+            return maxU;
         }
 
         /// <summary>
@@ -928,7 +972,7 @@ namespace ShapeGrammar3D.Components
                     _topoMetricTypes.Count, topoLabels,
                     _shapeMetricTypes.Count, shpeLabels,
                     clusterDims,
-                    _wDang,
+                    _feasibilitySettings.WDang,
                     best.VDang,
                     best.Feas,
                     evaluatedPop.Average(i => i.Feas),
@@ -1433,6 +1477,118 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
+        /// FSD iteration for RHS catalog (mode 5). Sorted by area; each element picks best RHS.
+        /// </summary>
+        private TB_Model OptimizeCrossSections_RHS(TB_Model solvedModel)
+        {
+            if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
+                return solvedModel;
+
+            var combos = RHS_Catalog.AllCombinations();
+            if (combos.Count == 0) return solvedModel;
+
+            var sortedRaw = combos
+                .Select(c =>
+                {
+                    double h = c.H, b = c.B, t = c.T;
+                    double bi = b - 2.0 * t;
+                    double hi = h - 2.0 * t;
+                    double area = h * b - bi * hi;
+                    double iy = (b * Math.Pow(h, 3) - bi * Math.Pow(hi, 3)) / 12.0;
+                    double iz = (h * Math.Pow(b, 3) - (h - 2.0 * t) * Math.Pow(b - 2.0 * t, 3)) / 12.0;
+                    double wy = iy / (0.5 * h);
+                    double wz = iz / (0.5 * b);
+                    return (c.H, c.B, c.T, Area: area, Wy: wy, Wz: wz, Iy: iy, Iz: iz);
+                })
+                .OrderBy(x => x.Area)
+                .ToList();
+
+            var sortedCombos = sortedRaw.Select(x => (x.H, x.B, x.T)).ToList();
+            var catalog = sortedRaw
+                .Select(x => new PrecomputedSec { Area = x.Area, Wy = x.Wy, Wz = x.Wz, Iy = x.Iy, Iz = x.Iz })
+                .ToArray();
+
+            int numOptions = catalog.Length;
+            int elemCount = solvedModel.Elem1Ds.Count;
+            double[] elemLengths = solvedModel.Elem1Ds.Select(e => e.Line.Length).ToArray();
+            const double TARGET_UTIL = 0.90;
+            int maxIter = _croSecMaxIter;
+
+            int[] secIdx = new int[elemCount];
+            for (int e = 0; e < elemCount; e++)
+            {
+                double fy = solvedModel.Elem1Ds[e].Sec.Mat.Fy;
+                double E  = solvedModel.Elem1Ds[e].Sec.Mat.E;
+                var forces = GetElementMaxForces(solvedModel, solvedModel.Elem1Ds[e]);
+                secIdx[e] = FindBestSectionIdx(forces, catalog, fy, E, elemLengths[e], TARGET_UTIL);
+            }
+
+            for (int iter = 0; iter < maxIter; iter++)
+            {
+                TB_Model model = RebuildModelWithRHSSections(solvedModel, secIdx, sortedCombos);
+                SolveLS slv = new SolveLS(ref model);
+                model = slv.Mdl;
+
+                int[] newIdx = new int[elemCount];
+                int totalDelta = 0;
+                double alpha = 0.7 + 0.25 * Math.Min(1.0, (double)iter / 10.0);
+                for (int e = 0; e < model.Elem1Ds.Count; e++)
+                {
+                    double fy = model.Elem1Ds[e].Sec.Mat.Fy;
+                    double E  = model.Elem1Ds[e].Sec.Mat.E;
+                    var forces = GetElementMaxForces(model, model.Elem1Ds[e]);
+                    int target = FindBestSectionIdx(forces, catalog, fy, E, elemLengths[e], TARGET_UTIL);
+                    int damped = (int)Math.Round(secIdx[e] + alpha * (target - secIdx[e]));
+                    newIdx[e] = Math.Clamp(damped, 0, numOptions - 1);
+                    totalDelta += Math.Abs(newIdx[e] - secIdx[e]);
+                }
+                secIdx = newIdx;
+                if (totalDelta == 0) break;
+            }
+
+            for (int safety = 0; safety < 5; safety++)
+            {
+                TB_Model model = RebuildModelWithRHSSections(solvedModel, secIdx, sortedCombos);
+                SolveLS slv = new SolveLS(ref model);
+                model = slv.Mdl;
+                bool anyBumped = false;
+                for (int e = 0; e < model.Elem1Ds.Count; e++)
+                {
+                    double util = ComputeElementUtilization(model, model.Elem1Ds[e]);
+                    if (util > 1.0)
+                    {
+                        double fy = model.Elem1Ds[e].Sec.Mat.Fy;
+                        double E  = model.Elem1Ds[e].Sec.Mat.E;
+                        var forces = GetElementMaxForces(model, model.Elem1Ds[e]);
+                        int target = FindBestSectionIdx(forces, catalog, fy, E, elemLengths[e], 1.0);
+                        if (target > secIdx[e]) { secIdx[e] = target; anyBumped = true; }
+                        else if (secIdx[e] < numOptions - 1) { secIdx[e]++; anyBumped = true; }
+                    }
+                }
+                if (!anyBumped) break;
+            }
+
+            return RebuildModelWithRHSSections(solvedModel, secIdx, sortedCombos);
+        }
+
+        private static TB_Model RebuildModelWithRHSSections(
+            TB_Model template, int[] secIdx,
+            List<(int H, int B, int T)> sortedCombos)
+        {
+            var newElems = new List<TB_Element_1D>();
+            for (int i = 0; i < template.Elem1Ds.Count; i++)
+            {
+                TB_Element_1D orig = template.Elem1Ds[i];
+                int idx = Math.Clamp(secIdx[i], 0, sortedCombos.Count - 1);
+                var combo = sortedCombos[idx];
+                string tag = string.Format("RHS_{0}x{1}x{2}", combo.H, combo.B, combo.T);
+                Section_RHS sec = new Section_RHS(orig.Sec.Mat, tag, combo.H, combo.B, combo.T, combo.T);
+                newElems.Add(new TB_Element_1D(orig.Line, orig.Tag, sec, orig.Vz, orig.Line.Length));
+            }
+            return new TB_Model(newElems, template.Sups, template.Loads);
+        }
+
+        /// <summary>
         /// Combined catalog entry that can represent either SHS or I-section.
         /// </summary>
         private struct CombinedEntry
@@ -1444,11 +1600,9 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Builds a combined catalog from SHS + HEA/HEB, sorted by area.
-        /// Each element can independently pick whichever section type gives
-        /// utilization closest to the target.
+        /// Builds a combined catalog from SHS + (optional RHS) + HEA/HEB, sorted by area.
         /// </summary>
-        private static CombinedEntry[] BuildCombinedCatalog()
+        private static CombinedEntry[] BuildCombinedCatalog(bool includeRHS = false)
         {
             var entries = new List<CombinedEntry>();
 
@@ -1467,6 +1621,28 @@ namespace ShapeGrammar3D.Components
                     H = s, W = s, Tw = t, Tf = t,
                     Tag = string.Format("SHS_{0}x{0}x{1}", s, t)
                 });
+            }
+
+            if (includeRHS)
+            {
+                foreach (var c in RHS_Catalog.AllCombinations())
+                {
+                    double h = c.H, b = c.B, t = c.T;
+                    double bi = b - 2.0 * t;
+                    double hi = h - 2.0 * t;
+                    double area = h * b - bi * hi;
+                    double iy = (b * Math.Pow(h, 3) - bi * Math.Pow(hi, 3)) / 12.0;
+                    double iz = (h * Math.Pow(b, 3) - (h - 2.0 * t) * Math.Pow(b - 2.0 * t, 3)) / 12.0;
+                    double wy = iy / (0.5 * h);
+                    double wz = iz / (0.5 * b);
+                    entries.Add(new CombinedEntry
+                    {
+                        Props = new PrecomputedSec { Area = area, Wy = wy, Wz = wz, Iy = iy, Iz = iz },
+                        IsI = false,
+                        H = h, W = b, Tw = t, Tf = t,
+                        Tag = string.Format("RHS_{0}x{1}x{2}", (int)h, (int)b, (int)t)
+                    });
+                }
             }
 
             foreach (var p in HEA_Catalog.AllProfiles())
@@ -1543,17 +1719,14 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// FSD optimization using a combined SHS + HEA/HEB catalog (mode 4)
-        /// or HEA/HEB-only catalog (mode 3).
-        /// Each element independently picks the section type that gives
-        /// utilization closest to 90%.
+        /// FSD optimization using combined catalog (mode 3 = HEA only, 4 = SHS+HEA, 6 = SHS+RHS+HEA).
         /// </summary>
-        private TB_Model OptimizeCrossSections_Combined(TB_Model solvedModel, bool heaOnly)
+        private TB_Model OptimizeCrossSections_Combined(TB_Model solvedModel, bool heaOnly, bool includeRHS = false)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
                 return solvedModel;
 
-            CombinedEntry[] catalog = heaOnly ? BuildHEACatalog() : BuildCombinedCatalog();
+            CombinedEntry[] catalog = heaOnly ? BuildHEACatalog() : BuildCombinedCatalog(includeRHS);
             if (catalog.Length == 0) return solvedModel;
 
             PrecomputedSec[] props = catalog.Select(c => c.Props).ToArray();

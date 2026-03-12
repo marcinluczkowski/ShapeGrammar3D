@@ -65,13 +65,46 @@ namespace ShapeGrammar3D.Components
                 "Weight for angle-based feasibility penalty (0..1). Penalizes very small angles (<10°), optimal >=30°.",
                 GH_ParamAccess.item, 0.0);                                                                                         // 15
             pManager.AddNumberParameter("Length Weight", "wLen",
-                "Weight for element length penalty (0..1). Penalizes elements <0.5m or >10m (gentle).",
+                "Weight for element length penalty (0..1). Uses Len bands below.",
                 GH_ParamAccess.item, 0.0);                                                                                         // 16
+            pManager.AddNumberParameter("Intersection Weight", "wInt",
+                "Weight for bracing/column intersection penalty (0..1). Small factor recommended.",
+                GH_ParamAccess.item, 0.0);                                                                                         // 16b
+            pManager.AddNumberParameter("Angle Min (deg)", "AngMin",
+                "Angle [deg]: below = full penalty; between Min and Opt = gradient to zero. Default 10.",
+                GH_ParamAccess.item, 10.0);                                                                                        // 16c
+            pManager.AddNumberParameter("Angle Opt (deg)", "AngOpt",
+                "Angle [deg]: at or above = no penalty. Default 30.",
+                GH_ParamAccess.item, 30.0);                                                                                       // 16d
+            pManager.AddNumberParameter("Len Too Short (m)", "LenShort",
+                "Length [m]: below = full penalty; to Len Opt Low = gradient to 0. Default 0.5.",
+                GH_ParamAccess.item, 0.5);                                                                                        // 16e
+            pManager.AddNumberParameter("Len Opt Low (m)", "LenOptLo",
+                "Length [m]: start of good range (no penalty). Default 1.",
+                GH_ParamAccess.item, 1.0);                                                                                        // 16f
+            pManager.AddNumberParameter("Len Opt High (m)", "LenOptHi",
+                "Length [m]: end of good range. Default 5.",
+                GH_ParamAccess.item, 5.0);                                                                                       // 16g
+            pManager.AddNumberParameter("Len Too Long (m)", "LenLong",
+                "Length [m]: above = gradient then high penalty. Default 12.",
+                GH_ParamAccess.item, 12.0);                                                                                      // 16h
             pManager.AddIntegerParameter("Num Objectives", "nObj",
                 "Number of objectives: 1 = single-objective GA, " +
-                "2 = bi-objective (displacement + avg utilization deviation), " +
+                "2 = bi-objective (displacement + util), " +
                 "3 = tri-objective (+ feasibility). Multi-objective uses NSGA-II.",
                 GH_ParamAccess.item, 1);                                                                                           // 17
+            pManager.AddIntegerParameter("Single Obj Type", "SingleObj",
+                "When nObj=1: which objective to minimize.\n" +
+                "0 = Displacement (default)\n" +
+                "1 = Feasibility\n" +
+                "2 = Avg utilization deviation from 90%\n" +
+                "3 = Max utilization",
+                GH_ParamAccess.item, 0);                                                                                           // 17b
+            pManager.AddIntegerParameter("Util Obj Type", "UtilObj",
+                "When nObj>=2: which utilization metric for the util objective.\n" +
+                "0 = Avg deviation from 90% (default)\n" +
+                "1 = Max utilization (minimize highest element util)",
+                GH_ParamAccess.item, 0);                                                                                           // 17c
             pManager.AddBooleanParameter("Self Weight", "SW",
                 "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
                 "Uses element length, cross-section area [mm²], and material density [kN/m³].",
@@ -80,9 +113,11 @@ namespace ShapeGrammar3D.Components
                 "Cross-section optimization mode:\n" +
                 "0 = off\n" +
                 "1 = solid Rect (50–1000 mm, 50 mm steps)\n" +
-                "2 = SHS catalog (standard square hollow sections)\n" +
-                "3 = HEA/HEB catalog (standard European I-sections)\n" +
-                "4 = Combined SHS + HEA/HEB (best per element)",
+                "2 = SHS catalog (square hollow sections)\n" +
+                "3 = HEA/HEB catalog (European I-sections)\n" +
+                "4 = Combined SHS + HEA/HEB\n" +
+                "5 = RHS catalog (rectangular hollow sections)\n" +
+                "6 = Combined SHS + RHS + HEA/HEB",
                 GH_ParamAccess.item, 0);                                                                                           // 19
             pManager.AddIntervalParameter("Metric Domains", "MDom",
                 "Expected [min, max] domain per metric dimension for clustering normalization.\n" +
@@ -104,7 +139,7 @@ namespace ShapeGrammar3D.Components
 
             pManager[11].Optional = true;
             pManager[12].Optional = true;
-            pManager[20].Optional = true;
+            pManager[29].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -133,6 +168,13 @@ namespace ShapeGrammar3D.Components
             double danglingWeight = settings.DanglingWeight;
             double angleWeight = settings.AngleWeight;
             double lengthWeight = settings.LengthWeight;
+            double intersectionWeight = settings.IntersectionWeight;
+            double angleMinDeg = settings.AngleMinDeg;
+            double angleOptDeg = settings.AngleOptDeg;
+            double lenTooShort = settings.LenTooShort;
+            double lenOptLow = settings.LenOptLow;
+            double lenOptHigh = settings.LenOptHigh;
+            double lenTooLong = settings.LenTooLong;
             int numObjectives = settings.NumObjectives;
             bool selfWeight = settings.SelfWeight;
             int croSecOpt = settings.CroSecOpt;
@@ -164,16 +206,26 @@ namespace ShapeGrammar3D.Components
             DA.GetData(14, ref danglingWeight);
             DA.GetData(15, ref angleWeight);
             DA.GetData(16, ref lengthWeight);
-            DA.GetData(17, ref numObjectives);
-            DA.GetData(18, ref selfWeight);
-            DA.GetData(19, ref croSecOpt);
+            DA.GetData(17, ref intersectionWeight);
+            DA.GetData(18, ref angleMinDeg);
+            DA.GetData(19, ref angleOptDeg);
+            DA.GetData(20, ref lenTooShort);
+            DA.GetData(21, ref lenOptLow);
+            DA.GetData(22, ref lenOptHigh);
+            DA.GetData(23, ref lenTooLong);
+            DA.GetData(24, ref numObjectives);
+            int singleObjType = 0, utilObjType = 0;
+            DA.GetData(25, ref singleObjType);
+            DA.GetData(26, ref utilObjType);
+            DA.GetData(27, ref selfWeight);
+            DA.GetData(28, ref croSecOpt);
 
             var rawDomains = new List<GH_Interval>();
-            if (DA.GetDataList(20, rawDomains) && rawDomains.Count > 0)
+            if (DA.GetDataList(29, rawDomains) && rawDomains.Count > 0)
                 settings.MetricDomains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(21, ref gravityDir);
-            DA.GetData(22, ref clusterElite);
-            DA.GetData(23, ref csOptIterations);
+            DA.GetData(30, ref gravityDir);
+            DA.GetData(31, ref clusterElite);
+            DA.GetData(32, ref csOptIterations);
 
             settings.PopulationSize = populationSize;
             settings.Generations = generations;
@@ -190,7 +242,16 @@ namespace ShapeGrammar3D.Components
             settings.DanglingWeight = danglingWeight;
             settings.AngleWeight = angleWeight;
             settings.LengthWeight = lengthWeight;
+            settings.IntersectionWeight = intersectionWeight;
+            settings.AngleMinDeg = angleMinDeg;
+            settings.AngleOptDeg = angleOptDeg;
+            settings.LenTooShort = lenTooShort;
+            settings.LenOptLow = lenOptLow;
+            settings.LenOptHigh = lenOptHigh;
+            settings.LenTooLong = lenTooLong;
             settings.NumObjectives = numObjectives;
+            settings.SingleObjType = singleObjType;
+            settings.UtilObjType = utilObjType;
             settings.SelfWeight = selfWeight;
             settings.CroSecOpt = croSecOpt;
             settings.GravityDir = gravityDir;
