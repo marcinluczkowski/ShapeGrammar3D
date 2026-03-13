@@ -1,4 +1,4 @@
-using System;
+    using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -157,12 +157,8 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 if (closestStuds.Count > 2)
                 {
-                    //newElemL = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, closestStuds[0].Pt), -999, "3DAR5", new SH_CrossSection_Beam()) { Autorule = UT.RULE050_MARKER };
-                    //newElemR = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, closestStuds[1].Pt), -999, "3DAR5", new SH_CrossSection_Beam()) { Autorule = UT.RULE050_MARKER };
-
-                    //251002
-                    var ln0 = new Line(closestStuds[0].Pt, closestStuds[1].Pt);
-                    var ln1 = new Line(closestStuds[0].Pt, closestStuds[2].Pt);
+                    var ln0 = new Line(stud0.Nodes[1].Pt, closestStuds[0].Pt);
+                    var ln1 = new Line(stud0.Nodes[1].Pt, closestStuds[1].Pt);
 
                     bool ln0Valid = ln0.IsValid && ln0.Length > UT.PRES;
                     bool ln1Valid = ln1.IsValid && ln1.Length > UT.PRES;
@@ -172,7 +168,7 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (ln1Valid)
                         newElem1 = new SG_Elem1D(ln1, -999, "3DAR5", def_crosec) { Autorule = UT.RULE051_MARKER };
 
-                    if (!flg_start || !flg_end)
+                    if (!flg_start_or_end)
                     {
                         if (optionNumber == 1 && ln0Valid)
                         {
@@ -187,13 +183,16 @@ namespace ShapeGrammar3D.Classes.Rules
                             if (ln0Valid) ss_ref.AddNewElement(newElem0);
                             if (ln1Valid) ss_ref.AddNewElement(newElem1);
                         }
-
+                    }
+                    else
+                    {
+                        if (ln0Valid) ss_ref.AddNewElement(newElem0);
                     }
                 }
 
                 else if (closestStuds.Count == 2)
                 {
-                    var ln0 = new Line(closestStuds[0].Pt, closestStuds[1].Pt);
+                    var ln0 = new Line(stud0.Nodes[1].Pt, closestStuds[0].Pt);
                     if (!ln0.IsValid || ln0.Length <= UT.PRES) continue;
 
                     newElem0 = new SG_Elem1D(ln0, -999, "3DAR5", def_crosec) { Autorule = UT.RULE051_MARKER };
@@ -211,39 +210,6 @@ namespace ShapeGrammar3D.Classes.Rules
                         ss_ref.AddNewElement(newElem0);
                     }
                 }
-
-
-                var o = optionNumber;
-
-
-
-                //if (optionNumber == 2)
-                //{
-                //    if (newElemL.Ln.Length > UT.PRES && !flg_start_or_end)
-                //    {
-                //        ss_ref.AddNewElement(newElemL);
-                //    }
-
-                //}
-                //else if (optionNumber == 1)
-                //{
-                //    if (newElemR.Ln.Length > UT.PRES && !flg_start_or_end)
-                //    {
-                //        ss_ref.AddNewElement(newElemR);
-                //    }
-                //}
-                //else if (optionNumber == 3)
-                //{
-                //    if (newElemL.Ln.Length > UT.PRES && !flg_start_or_end)
-                //    {
-                //        ss_ref.AddNewElement(newElemL);
-                //    }
-                //    if (newElemR.Ln.Length > UT.PRES && !flg_start_or_end)
-                //    {
-                //        ss_ref.AddNewElement(newElemR);
-                //    }
-                //}
-
 
             }
 

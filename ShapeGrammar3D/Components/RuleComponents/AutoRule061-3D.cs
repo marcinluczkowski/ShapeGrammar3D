@@ -27,7 +27,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.item);
-            // pManager.AddIntegerParameter("Rule option", "O", "options: 1 to the left, 2 to the right, 3 for both", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Domain", "D", "", GH_ParamAccess.list);
 
         }
 
@@ -51,15 +51,14 @@ namespace ShapeGrammar3D.Components.RuleComponents
 
             // --- input ---
             if (!DA.GetData(0, ref eName)) return;
-            // if (!DA.GetDataList(1, domain)) return;
+            if (!DA.GetDataList(1, domain)) return;
 
             // --- solve ---
 
-            //SG_AutoRule05_3D ar5 = new SG_AutoRule05_3D(eName, domain.ToArray());
-            SG_AutoRule061_3D ar60 = new SG_AutoRule061_3D(eName);
+            SG_AutoRule061_3D ar61 = new SG_AutoRule061_3D(eName, domain.ToArray());
 
             // --- output ---
-            DA.SetData(0, ar60);
+            DA.SetData(0, ar61);
         }
 
         /// <summary>
