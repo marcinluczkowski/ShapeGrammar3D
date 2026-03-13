@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,6 +10,15 @@ using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar3D.Classes.Elements
 {
+    /// <summary>Structural role used for intersection feasibility: only Bar–Bar and Strut–Bar crossings are penalized. Bar = rule 04+, Strut = rule 02.</summary>
+    public enum Elem1DStructuralType
+    {
+        MainBeam = 0,
+        Strut = 1,
+        Bar = 2,
+        Other = 3
+    }
+
     [Serializable]
     public class SG_Elem1D : SG_Element
     {
@@ -25,6 +34,9 @@ namespace ShapeGrammar3D.Classes.Elements
         public Curve Init_Crv { get; set; }
         public Plane EPln { get; set; }
         public SH_CrossSection_Beam CrossSection { get; set; }
+
+        /// <summary>Structural role for feasibility: main beam (rule 01), strut/column (rule 02), bar/diagonal (rules 04+). Uses Name when Autorule is 0/-999 (e.g. after section sync).</summary>
+        public Elem1DStructuralType StructuralType => GetStructuralType(Autorule, Name);
 
         // --- constructors ---
         public SG_Elem1D()
@@ -205,6 +217,33 @@ namespace ShapeGrammar3D.Classes.Elements
         private void CreateLine()
         {
             Ln = new Line(Nodes[0].Pt, Nodes[1].Pt);
+        }
+
+        /// <summary>Maps Autorule (and optional Name) to structural type. When Autorule is 0 or RULE_END_MARKER, Name is used so bar/strut aren't lost after section sync.</summary>
+        public static Elem1DStructuralType GetStructuralType(int autorule, string name = null)
+        {
+            if (autorule == UT.RULE010_MARKER || autorule == 1) return Elem1DStructuralType.MainBeam;
+            if (autorule == UT.RULE020_MARKER || autorule == 2) return Elem1DStructuralType.Strut;
+            if (autorule == 3 || autorule == UT.RULE030_MARKER || autorule == UT.RULE031_MARKER) return Elem1DStructuralType.Strut;
+            if (autorule == 4 || autorule == 5 || autorule == 6
+                || autorule == UT.RULE040_MARKER || autorule == UT.RULE041_MARKER
+                || autorule == UT.RULE050_MARKER || autorule == UT.RULE051_MARKER
+                || autorule == UT.RULE060_MARKER || autorule == UT.RULE061_MARKER)
+                return Elem1DStructuralType.Bar;
+            if (autorule == 0 || autorule == UT.RULE_END_MARKER) return GetStructuralTypeFromName(name);
+            return Elem1DStructuralType.Other;
+        }
+
+        /// <summary>Fallback when Autorule is missing (0 or -999): infer Bar/Strut from element Name so section sync doesn't lose type.</summary>
+        private static Elem1DStructuralType GetStructuralTypeFromName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return Elem1DStructuralType.Other;
+            if (name == "3DAR2" || name == "AR2") return Elem1DStructuralType.Strut;
+            if (name == "3DAR4" || name == "3DAR5" || name == "dg"
+                || name.IndexOf("AR4", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("AR5", StringComparison.OrdinalIgnoreCase) >= 0)
+                return Elem1DStructuralType.Bar;
+            return Elem1DStructuralType.Other;
         }
 
         public override SG_Element DeepClone()

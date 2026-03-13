@@ -623,6 +623,9 @@ namespace ShapeGrammar3D.Components
                     individual.VAng = feasResult.VAng;
                     individual.VLen = feasResult.VLen;
 
+                    if (finalModel != null && shape.Elems != null && shape.Elems.Count == finalModel.Elem1Ds.Count)
+                        SyncShapeSectionsFromModel(shape, finalModel);
+
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
                     modelsOut.Add(CloneModel(finalModel));
@@ -878,7 +881,13 @@ namespace ShapeGrammar3D.Components
                     NumClusters = _numClusters,
                     NumObjectives = _numObjectives,
                     TopoMetricTypes = new List<int>(_topoMetricTypes),
-                    ShapeMetricTypes = new List<int>(_shapeMetricTypes)
+                    ShapeMetricTypes = new List<int>(_shapeMetricTypes),
+                    FeasibilityAngleMinDeg = _feasibilitySettings.AngleMinDeg,
+                    FeasibilityAngleOptDeg = _feasibilitySettings.AngleOptDeg,
+                    FeasibilityLenTooShort = _feasibilitySettings.LenTooShort,
+                    FeasibilityLenOptLow = _feasibilitySettings.LenOptLow,
+                    FeasibilityLenOptHigh = _feasibilitySettings.LenOptHigh,
+                    FeasibilityLenTooLong = _feasibilitySettings.LenTooLong
                 }
             };
             foreach (int t in _topoMetricTypes)
@@ -1800,6 +1809,29 @@ namespace ShapeGrammar3D.Components
             TB_Model finalModel = RebuildModelWithCombinedSections(solvedModel, secIdx, catalog);
             SolveLS finalSlv = new SolveLS(ref finalModel);
             return finalSlv.Mdl;
+        }
+
+        /// <summary>
+        /// Writes optimized cross-sections from the solved model back to the shape
+        /// so that stored assembly shapes (and GI Feasibility Preview) show correct column/beam sizes.
+        /// </summary>
+        private static void SyncShapeSectionsFromModel(SG_Shape shape, TB_Model model)
+        {
+            if (shape?.Elems == null || model?.Elem1Ds == null || shape.Elems.Count != model.Elem1Ds.Count)
+                return;
+            for (int i = 0; i < shape.Elems.Count; i++)
+            {
+                if (!(shape.Elems[i] is SG_Elem1D sgElem) || model.Elem1Ds[i]?.Sec == null)
+                    continue;
+                var sec = model.Elem1Ds[i].Sec;
+                double area = sec.Area;
+                if (area <= 0) continue;
+                double dim = Math.Sqrt(area);
+                var mat = sgElem.CrossSection?.Material ?? SH_Material_Isotrop.Default_Material();
+                var newRect = new SH_CrossSection_Rectangle(dim, dim);
+                newRect.Material = mat;
+                sgElem.CrossSection = newRect;
+            }
         }
 
         private static SG_Shape CloneShape(SG_Shape source)

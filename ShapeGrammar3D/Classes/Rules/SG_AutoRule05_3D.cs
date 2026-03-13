@@ -92,10 +92,45 @@ namespace ShapeGrammar3D.Classes.Rules
                 int optionNumber = (int)roundedOptDbl;
 
                 var re = (SG_Elem1D) relevantElems[i];
-
-                var closestElms = initialElems.OrderBy(e => e.Nodes[1].Pt.DistanceTo(re.Nodes[1].Pt)).ToList();
-
                 Point3d tip = re.Nodes[1].Pt;
+
+                // Order struts along the initial curve by parameter t (ClosestPoint of base on curve) — not X or distance from start
+                Curve iniCrv = null;
+                var mainBeamAtBase = re.Nodes[0].Elements?.FirstOrDefault(e => e.Autorule == UT.RULE010_MARKER);
+                if (mainBeamAtBase is SG_Elem1D mainBeam1d && mainBeam1d.Init_Crv != null)
+                    iniCrv = mainBeam1d.Init_Crv;
+
+                var closestElms = new List<SG_Element>();
+                if (iniCrv != null && iniCrv.IsValid)
+                {
+                    double t0;
+                    iniCrv.ClosestPoint(re.Nodes[0].Pt, out t0);
+                    var othersWithT = new List<(double t, SG_Element e)>();
+                    foreach (var e in initialElems)
+                    {
+                        if (e == re) continue;
+                        double t;
+                        iniCrv.ClosestPoint(((SG_Elem1D)e).Nodes[0].Pt, out t);
+                        Point3d onCurve = iniCrv.PointAt(t);
+                        if (((SG_Elem1D)e).Nodes[0].Pt.DistanceTo(onCurve) > UT.PRES) continue; // only struts attached to this curve
+                        othersWithT.Add((t, e));
+                    }
+                    var previous = othersWithT.Where(p => p.t < t0).OrderByDescending(p => p.t).Select(p => p.e).FirstOrDefault();
+                    var next = othersWithT.Where(p => p.t > t0).OrderBy(p => p.t).Select(p => p.e).FirstOrDefault();
+                    if (previous != null) closestElms.Add(previous);
+                    if (next != null) closestElms.Add(next);
+                }
+                else
+                {
+                    // Fallback: no initial curve, use base X
+                    double reBaseX = re.Nodes[0].Pt.X;
+                    var others = initialElems.Where(e => e != re).ToList();
+                    var previous = others.Where(e => e.Nodes[0].Pt.X < reBaseX).OrderByDescending(e => e.Nodes[0].Pt.X).FirstOrDefault();
+                    var next = others.Where(e => e.Nodes[0].Pt.X > reBaseX).OrderBy(e => e.Nodes[0].Pt.X).FirstOrDefault();
+                    if (previous != null) closestElms.Add(previous);
+                    if (next != null) closestElms.Add(next);
+                }
+
                 Point3d rightElemPt, leftElemPt = new Point3d();
                 Line line = new Line();
 
