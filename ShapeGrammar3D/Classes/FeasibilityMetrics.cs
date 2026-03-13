@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Rhino.Geometry;
 using Rhino.Geometry.Intersect;
+using ShapeGrammar3D.Classes.Elements;
 
 namespace ShapeGrammar3D.Classes
 {
@@ -175,8 +177,9 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Computes angle-based penalty at nodes.
-        /// 0–minAngleDeg: full penalty; minAngleDeg–optAngleDeg: linear gradient to zero; ≥optAngleDeg: no penalty.
+        /// Computes angle-based penalty at all nodes (including upper nodes, not only baseline).
+        /// For each node with 2+ incident elements, compares every element with every other element
+        /// and uses the minimum angle. 0–minAngleDeg: full penalty; minAngleDeg–optAngleDeg: linear gradient; ≥optAngleDeg: no penalty.
         /// </summary>
         private static FeasibilityResult ComputeAnglePenalty(SG_Shape shape, double minAngleDeg = 10.0, double optAngleDeg = 30.0)
         {
@@ -197,43 +200,14 @@ namespace ShapeGrammar3D.Classes
 
             foreach (var node in shape.Nodes)
             {
-                if (node.Elements == null || node.Elements.Count < 2)
-                    continue; // no angle to evaluate
-
-                // Build vectors for incident elements at this node
-                var vectors = new List<Vector3d>();
-                foreach (var elem in node.Elements)
-                {
-                    // Each element should be SG_Elem1D
-                    if (elem is Elements.SG_Elem1D e1d)
-                    {
-                        // Determine the other node point to form vector
-                        var n0 = e1d.Nodes?[0];
-                        var n1 = e1d.Nodes?[1];
-                        Point3d otherPt;
-                        if (n0 == null || n1 == null)
-                            continue;
-
-                        if (n0.ID == node.ID)
-                            otherPt = n1.Pt;
-                        else
-                            otherPt = n0.Pt;
-
-                        var v = otherPt - node.Pt;
-                        if (v.IsZero)
-                            continue;
-                        v.Unitize();
-                        vectors.Add(v);
-                    }
-                }
-
+                var vectors = GetDirectionVectorsAtPoint(shape, node.Pt);
                 if (vectors.Count < 2)
                     continue;
 
                 evaluatedNodes++;
 
-                // Find smallest angle between any two vectors
-                double minAngle = double.MaxValue; // degrees
+                // Compare every pair: use the smaller angle so "below 10°" = tight regardless of measurement side (10° or 350°)
+                double minAngle = double.MaxValue;
                 for (int i = 0; i < vectors.Count; i++)
                 {
                     for (int j = i + 1; j < vectors.Count; j++)
@@ -241,7 +215,7 @@ namespace ShapeGrammar3D.Classes
                         double dot = Vector3d.Multiply(vectors[i], vectors[j]);
                         dot = Math.Clamp(dot, -1.0, 1.0);
                         double angRad = Math.Acos(dot);
-                        double angDeg = angRad * (180.0 / Math.PI);
+                        double angDeg = SmallAngleDeg(angRad * (180.0 / Math.PI));
                         if (angDeg < minAngle) minAngle = angDeg;
                     }
                 }
@@ -345,50 +319,208 @@ namespace ShapeGrammar3D.Classes
             return res;
         }
 
+        private const double INTERSECT_BAR_BAR_BASE = 1.0;
+        private const double INTERSECT_STRUT_BAR_BASE = 2.0;
+        private const double INTERSECT_MULTI_CROSS_INCREMENT = 0.3;
+        /// <summary>Tolerance for "same endpoint": intersections at or within this distance of any segment endpoint are ignored (node connections, not true crossings).</summary>
+        private const double INTERSECT_ENDPOINT_TOL = 1e-4;
+        /// <summary>Only skip a pair when endpoints are this close (squared). Use tight value so bar-bar with distinct joints are not skipped.</summary>
+        private const double SHARE_ENDPOINT_POSITION_TOL_SQ = 1e-20;
+
         /// <summary>
-        /// Penalizes intersecting element pairs (bracing/column crossing). Excludes pairs that share a node.
-        /// VIntersect = normalized count (bounded 0..1) so simple beams get low score.
+        /// Gets curve for intersection test: prefers node positions so rule-02 columns (Crv overwritten) use actual segment.
+        /// </summary>
+        private static Curve GetCurveForIntersection(Elements.SG_Elem1D e1)
+        {
+            if (e1?.Nodes != null && e1.Nodes.Length >= 2 && e1.Nodes[0] != null && e1.Nodes[1] != null)
+                return new Line(e1.Nodes[0].Pt, e1.Nodes[1].Pt).ToNurbsCurve();
+            if (e1?.Crv != null) return e1.Crv;
+            if (e1?.Ln.IsValid == true) return e1.Ln.ToNurbsCurve();
+            return null;
+        }
+
+        /// <summary>Returns base penalty for an intersection by element types. Used after finding every geometric crossing.</summary>
+        private static double GetBasePenaltyForPair(Elem1DStructuralType ta, Elem1DStructuralType tb)
+        {
+            if (ta == Elem1DStructuralType.Strut && tb == Elem1DStructuralType.Bar) return INTERSECT_STRUT_BAR_BASE;
+            if (ta == Elem1DStructuralType.Bar && tb == Elem1DStructuralType.Strut) return INTERSECT_STRUT_BAR_BASE;
+            if (ta == Elem1DStructuralType.Bar && tb == Elem1DStructuralType.Bar) return INTERSECT_BAR_BAR_BASE;
+            return INTERSECT_BAR_BAR_BASE;
+        }
+
+        /// <summary>
+        /// Intersection data per event: actual 3D point and penalty contribution to feasibility.
+        /// </summary>
+        public struct IntersectionData
+        {
+            public Point3d Point;
+            public double Value;
+        }
+
+        /// <summary>Element type counts for reverse-engineering when bar markers are lost (e.g. after section sync).</summary>
+        public struct ElementTypeCounts
+        {
+            public int MainBeam;
+            public int Strut;
+            public int Bar;
+            public int Other;
+            public int Total => MainBeam + Strut + Bar + Other;
+        }
+
+        /// <summary>Returns how many elements are MainBeam, Strut, Bar, Other. Use to verify bar count and find when type is lost.</summary>
+        public static ElementTypeCounts GetElementTypeCounts(SG_Shape shape)
+        {
+            var c = new ElementTypeCounts();
+            if (shape?.Elems == null) return c;
+            foreach (var e in shape.Elems)
+            {
+                if (!(e is Elements.SG_Elem1D e1)) continue;
+                switch (e1.StructuralType)
+                {
+                    case Elem1DStructuralType.MainBeam: c.MainBeam++; break;
+                    case Elem1DStructuralType.Strut: c.Strut++; break;
+                    case Elem1DStructuralType.Bar: c.Bar++; break;
+                    default: c.Other++; break;
+                }
+            }
+            return c;
+        }
+
+        /// <summary>Returns (element, type, Autorule, Name) for each 1D element so you can see which are Other and why (e.g. Autorule 0).</summary>
+        public static List<(Elements.SG_Elem1D Elem, Elem1DStructuralType Type, int Autorule, string Name)> GetElementTypeBreakdown(SG_Shape shape)
+        {
+            var list = new List<(Elements.SG_Elem1D, Elem1DStructuralType, int, string)>();
+            if (shape?.Elems == null) return list;
+            foreach (var e in shape.Elems)
+            {
+                if (!(e is Elements.SG_Elem1D e1)) continue;
+                list.Add((e1, e1.StructuralType, e1.Autorule, e1.Name ?? ""));
+            }
+            return list;
+        }
+
+        /// <summary>Gets the segment line for intersection: element Ln if valid, else line from node positions.</summary>
+        private static Line GetElementLine(Elements.SG_Elem1D e1)
+        {
+            if (e1 == null || e1.Nodes == null || e1.Nodes.Length < 2 || e1.Nodes[0] == null || e1.Nodes[1] == null)
+                return Line.Unset;
+            return e1.Ln.IsValid ? e1.Ln : new Line(e1.Nodes[0].Pt, e1.Nodes[1].Pt);
+        }
+
+        /// <summary>True if the two elements share a node (by ID) or have an endpoint at the same position (within tolSq). Use for strut-bar.</summary>
+        private static bool ShareNodeOrEndpoint(Elements.SG_Elem1D a, Elements.SG_Elem1D b, double tolSq)
+        {
+            if (a?.Nodes == null || a.Nodes.Length < 2 || b?.Nodes == null || b.Nodes.Length < 2) return true;
+            int na0 = a.Nodes[0].ID, na1 = a.Nodes[1].ID;
+            int nb0 = b.Nodes[0].ID, nb1 = b.Nodes[1].ID;
+            if (nb0 == na0 || nb0 == na1 || nb1 == na0 || nb1 == na1) return true;
+            Point3d a0 = a.Nodes[0].Pt, a1 = a.Nodes[1].Pt, b0 = b.Nodes[0].Pt, b1 = b.Nodes[1].Pt;
+            return a0.DistanceToSquared(b0) <= tolSq || a0.DistanceToSquared(b1) <= tolSq || a1.DistanceToSquared(b0) <= tolSq || a1.DistanceToSquared(b1) <= tolSq;
+        }
+
+        /// <summary>True only if an endpoint of a is at the same position as an endpoint of b (within tolSq). Ignores node ID so bar-bar pairs with shared IDs but distinct geometry still get intersection tested.</summary>
+        private static bool ShareEndpointByPositionOnly(Elements.SG_Elem1D a, Elements.SG_Elem1D b, double tolSq)
+        {
+            if (a?.Nodes == null || a.Nodes.Length < 2 || b?.Nodes == null || b.Nodes.Length < 2) return true;
+            Point3d a0 = a.Nodes[0].Pt, a1 = a.Nodes[1].Pt, b0 = b.Nodes[0].Pt, b1 = b.Nodes[1].Pt;
+            return a0.DistanceToSquared(b0) <= tolSq || a0.DistanceToSquared(b1) <= tolSq || a1.DistanceToSquared(b0) <= tolSq || a1.DistanceToSquared(b1) <= tolSq;
+        }
+
+        /// <summary>
+        /// Returns intersection locations (Point3d) and per-intersection penalty values. Main beam is skipped.
+        /// Two loops: strut vs bar, then bar vs bar. Smaller lists and clearer logic for large structures.
+        /// </summary>
+        public static List<IntersectionData> GetIntersectionData(SG_Shape shape)
+        {
+            var outList = new List<IntersectionData>();
+            if (shape?.Elems == null || shape.Elems.Count < 2) return outList;
+
+            var struts = new List<Elements.SG_Elem1D>();
+            var bars = new List<Elements.SG_Elem1D>();
+            foreach (var e in shape.Elems)
+            {
+                if (!(e is Elements.SG_Elem1D e1) || e1.Nodes == null || e1.Nodes.Length < 2) continue;
+                Line ln = GetElementLine(e1);
+                if (!ln.IsValid) continue;
+                switch (e1.StructuralType)
+                {
+                    case Elem1DStructuralType.Strut: struts.Add(e1); break;
+                    case Elem1DStructuralType.Bar: bars.Add(e1); break;
+                    default: break;
+                }
+            }
+
+            const double lineLineTol = 1e-6;
+            var rawIntersections = new List<(Point3d Pt, double BasePenalty, int StrutIdx, int BarIdxA, int BarIdxB)>();
+
+            for (int si = 0; si < struts.Count; si++)
+            {
+                var a = struts[si];
+                Line la = GetElementLine(a);
+                if (!la.IsValid) continue;
+
+                for (int bj = 0; bj < bars.Count; bj++)
+                {
+                    var b = bars[bj];
+                    if (ShareNodeOrEndpoint(a, b, SHARE_ENDPOINT_POSITION_TOL_SQ)) continue;
+                    Line lb = GetElementLine(b);
+                    if (!lb.IsValid) continue;
+                    if (!Intersection.LineLine(la, lb, out double pa, out double pb, lineLineTol, true)) continue;
+                    if (pa <= 0.001 || pa >= 0.999 || pb <= 0.001 || pb >= 0.999) continue;
+                    Point3d pt = la.PointAt(pa);
+                    rawIntersections.Add((pt, INTERSECT_STRUT_BAR_BASE, si, bj, -1));
+                }
+            }
+
+            for (int bi = 0; bi < bars.Count; bi++)
+            {
+                var a = bars[bi];
+                Line la = GetElementLine(a);
+                if (!la.IsValid) continue;
+
+                for (int bj = bi + 1; bj < bars.Count; bj++)
+                {
+                    var b = bars[bj];
+                    if (ShareEndpointByPositionOnly(a, b, SHARE_ENDPOINT_POSITION_TOL_SQ)) continue;
+                    Line lb = GetElementLine(b);
+                    if (!lb.IsValid) continue;
+                    if (!Intersection.LineLine(la, lb, out double pa, out double pb, lineLineTol, true)) continue;
+                    if (pa <= 0.001 || pa >= 0.999 || pb <= 0.001 || pb >= 0.999) continue;
+                    Point3d pt = la.PointAt(pa);
+                    rawIntersections.Add((pt, INTERSECT_BAR_BAR_BASE, -1, bi, bj));
+                }
+            }
+
+            var crossingCountStrut = new int[struts.Count];
+            var crossingCountBar = new int[bars.Count];
+            foreach (var (_, _, strutIdx, barIdxA, barIdxB) in rawIntersections)
+            {
+                if (strutIdx >= 0) { crossingCountStrut[strutIdx]++; crossingCountBar[barIdxA]++; }
+                else { crossingCountBar[barIdxA]++; crossingCountBar[barIdxB]++; }
+            }
+
+            foreach (var (pt, basePenalty, strutIdx, barIdxA, barIdxB) in rawIntersections)
+            {
+                int extraA = strutIdx >= 0 ? Math.Max(0, crossingCountStrut[strutIdx] - 1) : Math.Max(0, crossingCountBar[barIdxA] - 1);
+                int extraB = strutIdx >= 0 ? Math.Max(0, crossingCountBar[barIdxA] - 1) : Math.Max(0, crossingCountBar[barIdxB] - 1);
+                double extra = (extraA + extraB) * INTERSECT_MULTI_CROSS_INCREMENT;
+                outList.Add(new IntersectionData { Point = pt, Value = basePenalty + extra });
+            }
+
+            return outList;
+        }
+
+        /// <summary>
+        /// Penalizes qualifying intersections only (Bar–Bar and Strut–Bar). Strut–Bar worse than Bar–Bar; multiple crossings per bar increase penalty.
         /// </summary>
         private static FeasibilityResult ComputeIntersectionPenalty(SG_Shape shape)
         {
             var res = new FeasibilityResult();
-            if (shape == null || shape.Elems == null || shape.Elems.Count < 2)
-            {
-                res.VIntersect = 0.0;
-                res.IntersectionCount = 0;
-                return res;
-            }
-
-            var elems1d = new List<Elements.SG_Elem1D>();
-            foreach (var e in shape.Elems)
-            {
-                if (e is Elements.SG_Elem1D e1 && e1.Crv != null && e1.Nodes != null && e1.Nodes.Length >= 2)
-                    elems1d.Add(e1);
-            }
-
-            int intersectCount = 0;
-            for (int i = 0; i < elems1d.Count; i++)
-            {
-                var a = elems1d[i];
-                Curve ca = a.Crv;
-                var na0 = a.Nodes[0].ID;
-                var na1 = a.Nodes[1].ID;
-
-                for (int j = i + 1; j < elems1d.Count; j++)
-                {
-                    var b = elems1d[j];
-                    if (b.Nodes[0].ID == na0 || b.Nodes[0].ID == na1 || b.Nodes[1].ID == na0 || b.Nodes[1].ID == na1)
-                        continue; // share a node
-                    Curve cb = b.Crv;
-                    var events = Intersection.CurveCurve(ca, cb, 1e-6, 1e-6);
-                    if (events != null && events.Count > 0)
-                        intersectCount++;
-                }
-            }
-
-            res.IntersectionCount = intersectCount;
-            int maxPairs = (elems1d.Count * (elems1d.Count - 1)) / 2;
-            res.VIntersect = maxPairs > 0 ? Math.Clamp((double)intersectCount / Math.Max(1, maxPairs / 4), 0.0, 1.0) : 0.0;
+            var data = GetIntersectionData(shape);
+            res.IntersectionCount = data.Count;
+            double totalValue = 0;
+            foreach (var d in data) totalValue += d.Value;
+            res.VIntersect = Math.Clamp(totalValue / Math.Max(1.0, 4.0), 0.0, 1.0);
             return res;
         }
 
@@ -400,12 +532,56 @@ namespace ShapeGrammar3D.Classes
             return "Dangling Bar Penalty + Angle";
         }
 
+        /// <summary>Returns the smaller angle in [0, 180] so that "below 10°" always means tight regardless of which side is measured (e.g. 10° or 350° both become 10°).</summary>
+        private static double SmallAngleDeg(double angDeg)
+        {
+            if (double.IsNaN(angDeg) || double.IsInfinity(angDeg)) return angDeg;
+            angDeg = ((angDeg % 360.0) + 360.0) % 360.0;
+            return angDeg <= 180.0 ? angDeg : (360.0 - angDeg);
+        }
+
+        private const double NODE_SAME_POS_TOL = 1e-6;
+        private static readonly double NODE_SAME_POS_TOL_SQ = NODE_SAME_POS_TOL * NODE_SAME_POS_TOL;
+
+        /// <summary>Builds unit direction vectors for every element in shape.Elems that has an endpoint at pt (by geometry).
+        /// This includes all rules (01, 02, 03, …); we do not use node.Elements so rule 03+ diagonals are never missed.</summary>
+        private static List<Vector3d> GetDirectionVectorsAtPoint(SG_Shape shape, Point3d pt, double tolSq = -1)
+        {
+            if (tolSq < 0) tolSq = NODE_SAME_POS_TOL_SQ;
+            var vectors = new List<Vector3d>();
+            if (shape?.Elems == null) return vectors;
+            foreach (var e in shape.Elems)
+            {
+                if (!(e is Elements.SG_Elem1D e1d) || e1d.Nodes == null || e1d.Nodes.Length < 2) continue;
+                var n0 = e1d.Nodes[0];
+                var n1 = e1d.Nodes[1];
+                if (n0 == null || n1 == null) continue;
+                Point3d other;
+                if (n0.Pt.DistanceToSquared(pt) <= tolSq) other = n1.Pt;
+                else if (n1.Pt.DistanceToSquared(pt) <= tolSq) other = n0.Pt;
+                else continue;
+                var v = other - pt;
+                if (v.IsZero) continue;
+                v.Unitize();
+                bool duplicate = false;
+                for (int k = 0; k < vectors.Count; k++)
+                {
+                    if (Math.Abs(Vector3d.Multiply(vectors[k], v)) > 0.9999)
+                    { duplicate = true; break; }
+                }
+                if (!duplicate)
+                    vectors.Add(v);
+            }
+            return vectors;
+        }
+
         // --- Visualization helpers ---
 
-        /// <summary>Classification: 0=good, 1=orange (between), 2=bad.</summary>
+        /// <summary>Classification: 0=good, 1=orange (between), 2=bad, -1=no angle (degree&lt;2).</summary>
         public const int CLS_GOOD = 0;
         public const int CLS_ORANGE = 1;
         public const int CLS_BAD = 2;
+        public const int CLS_NONE = -1;
 
         /// <summary>Returns (element, length[m], classification). Classification: 0=good, 1=orange, 2=bad.</summary>
         public static List<(Elements.SG_Elem1D Elem, double Length, int Classification)> GetElementLengthData(
@@ -431,7 +607,7 @@ namespace ShapeGrammar3D.Classes
             return list;
         }
 
-        /// <summary>Returns (node, minAngleDeg, classification). Classification: 0=good, 1=orange, 2=bad.</summary>
+        /// <summary>Returns (node, minAngleDeg, classification) for all nodes with 2+ elements. Compares every element pair at each node. Classification: 0=good, 1=orange, 2=bad.</summary>
         public static List<(SG_Node Node, double MinAngleDeg, int Classification)> GetNodeAngleData(
             SG_Shape shape, double minDeg = 10.0, double optDeg = 30.0)
         {
@@ -439,26 +615,14 @@ namespace ShapeGrammar3D.Classes
             if (shape?.Nodes == null) return list;
             foreach (var node in shape.Nodes)
             {
-                if (node.Elements == null || node.Elements.Count < 2) continue;
-                var vectors = new List<Vector3d>();
-                foreach (var elem in node.Elements)
-                {
-                    if (!(elem is Elements.SG_Elem1D e1d) || e1d.Nodes == null) continue;
-                    var n0 = e1d.Nodes[0]; var n1 = e1d.Nodes[1];
-                    if (n0 == null || n1 == null) continue;
-                    Point3d otherPt = n0.ID == node.ID ? n1.Pt : n0.Pt;
-                    var v = otherPt - node.Pt;
-                    if (v.IsZero) continue;
-                    v.Unitize();
-                    vectors.Add(v);
-                }
+                var vectors = GetDirectionVectorsAtPoint(shape, node.Pt);
                 if (vectors.Count < 2) continue;
                 double minAngle = double.MaxValue;
                 for (int i = 0; i < vectors.Count; i++)
                     for (int j = i + 1; j < vectors.Count; j++)
                     {
                         double dot = Math.Clamp(Vector3d.Multiply(vectors[i], vectors[j]), -1.0, 1.0);
-                        double angDeg = Math.Acos(dot) * (180.0 / Math.PI);
+                        double angDeg = SmallAngleDeg(Math.Acos(dot) * (180.0 / Math.PI));
                         if (angDeg < minAngle) minAngle = angDeg;
                     }
                 int cls = minAngle >= optDeg ? CLS_GOOD : (minAngle >= minDeg ? CLS_ORANGE : CLS_BAD);
@@ -467,36 +631,40 @@ namespace ShapeGrammar3D.Classes
             return list;
         }
 
-        /// <summary>Returns intersection points (midpoint of overlap) for non-adjacent element pairs.</summary>
+        /// <summary>Returns (node, minAngleDeg, classification) for every node in the structure.
+        /// Nodes with &lt;2 elements get MinAngleDeg=NaN and Classification=CLS_NONE (-1).
+        /// Use this to visualize analysis at all nodes (e.g. gray dot for no angle, colored for angle quality).</summary>
+        public static List<(SG_Node Node, double MinAngleDeg, int Classification)> GetAllNodesAngleData(
+            SG_Shape shape, double minDeg = 10.0, double optDeg = 30.0)
+        {
+            var list = new List<(SG_Node, double, int)>();
+            if (shape?.Nodes == null) return list;
+            foreach (var node in shape.Nodes)
+            {
+                var vectors = GetDirectionVectorsAtPoint(shape, node.Pt);
+                if (vectors.Count < 2)
+                {
+                    list.Add((node, double.NaN, CLS_NONE));
+                    continue;
+                }
+                double minAngle = double.MaxValue;
+                for (int i = 0; i < vectors.Count; i++)
+                    for (int j = i + 1; j < vectors.Count; j++)
+                    {
+                        double dot = Math.Clamp(Vector3d.Multiply(vectors[i], vectors[j]), -1.0, 1.0);
+                        double angDeg = SmallAngleDeg(Math.Acos(dot) * (180.0 / Math.PI));
+                        if (angDeg < minAngle) minAngle = angDeg;
+                    }
+                int cls = minAngle >= optDeg ? CLS_GOOD : (minAngle >= minDeg ? CLS_ORANGE : CLS_BAD);
+                list.Add((node, minAngle, cls));
+            }
+            return list;
+        }
+
+        /// <summary>Returns intersection points at actual crossing locations. Only Bar–Bar and Strut–Bar (qualifying) pairs.</summary>
         public static List<Point3d> GetIntersectionPoints(SG_Shape shape)
         {
-            var pts = new List<Point3d>();
-            if (shape?.Elems == null || shape.Elems.Count < 2) return pts;
-            var elems1d = new List<Elements.SG_Elem1D>();
-            foreach (var e in shape.Elems)
-            {
-                if (e is Elements.SG_Elem1D e1 && e1.Crv != null && e1.Nodes != null && e1.Nodes.Length >= 2)
-                    elems1d.Add(e1);
-            }
-            for (int i = 0; i < elems1d.Count; i++)
-            {
-                var a = elems1d[i];
-                int na0 = a.Nodes[0].ID, na1 = a.Nodes[1].ID;
-                for (int j = i + 1; j < elems1d.Count; j++)
-                {
-                    var b = elems1d[j];
-                    if (b.Nodes[0].ID == na0 || b.Nodes[0].ID == na1 || b.Nodes[1].ID == na0 || b.Nodes[1].ID == na1)
-                        continue;
-                    var events = Intersection.CurveCurve(a.Crv, b.Crv, 1e-6, 1e-6);
-                    if (events != null)
-                        foreach (var ev in events)
-                        {
-                            if (ev != null && ev.IsPoint)
-                                pts.Add(ev.PointA);
-                        }
-                }
-            }
-            return pts;
+            return GetIntersectionData(shape).Select(x => x.Point).ToList();
         }
 
         /// <summary>Returns (element, midpoint) for elements with at least one endpoint of degree ≤ 1.</summary>

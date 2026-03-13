@@ -188,22 +188,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddPointParameter("Insert Point", "Pt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddIntegerParameter("Load Case", "LC", "Load case for utilization (-1 = last)", GH_ParamAccess.item, -1);
             pManager.AddNumberParameter("Dot Radius", "DotR", "Radius of angle/intersection/dangling dots", GH_ParamAccess.item, 0.15);
-            pManager.AddNumberParameter("Len Short", "LShort", "Length band: below = bad (m)", GH_ParamAccess.item, 0.5);
-            pManager.AddNumberParameter("Len Opt Lo", "LOptLo", "Length band: good range start (m)", GH_ParamAccess.item, 1.0);
-            pManager.AddNumberParameter("Len Opt Hi", "LOptHi", "Length band: good range end (m)", GH_ParamAccess.item, 5.0);
-            pManager.AddNumberParameter("Len Long", "LLong", "Length band: above = bad (m)", GH_ParamAccess.item, 12.0);
-            pManager.AddNumberParameter("Ang Min", "AMin", "Angle band: below = bad (deg)", GH_ParamAccess.item, 10.0);
-            pManager.AddNumberParameter("Ang Opt", "AOpt", "Angle band: above = good (deg)", GH_ParamAccess.item, 30.0);
-            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "0 = all. 1 = best per cluster.", GH_ParamAccess.item, 0);
             pManager[6].Optional = true;
             pManager[7].Optional = true;
-            pManager[8].Optional = true;
-            pManager[9].Optional = true;
-            pManager[10].Optional = true;
-            pManager[11].Optional = true;
-            pManager[12].Optional = true;
-            pManager[13].Optional = true;
-            pManager[14].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -216,6 +202,14 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("VIntersect", "VInt", "Intersection penalty per individual", GH_ParamAccess.tree);
             pManager.AddNumberParameter("Feas Total", "Feas", "Total feasibility per individual", GH_ParamAccess.tree);
             pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
+            pManager.AddPointParameter("Angle Node Pts", "AngPts", "Points at each node with angle data (for text tags). Layout offset applied.", GH_ParamAccess.tree);
+            pManager.AddTextParameter("Angle Node Txt", "AngTxt", "Angle feasibility per node: min angle [°] and classification (good/medium/bad). One item per angle node.", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Label Pt", "LabelPt", "One point per structure for placing a feasibility summary text tag.", GH_ParamAccess.tree);
+            pManager.AddTextParameter("Label Txt", "LabelTxt", "Feasibility summary text per structure (Feas, VAng, angle node counts).", GH_ParamAccess.tree);
+            pManager.AddIntegerParameter("Intersection Count", "IntN", "Number of qualifying intersections (Bar–Bar, Strut–Bar) per individual.", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Intersection Pts", "IntPts", "Actual intersection locations (Point3d). One point per intersection.", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("Intersection Values", "IntVal", "Penalty value per intersection contributing to VIntersect.", GH_ParamAccess.tree);
+            pManager.AddTextParameter("Elem Type Counts", "TypeCnt", "Per structure: MainBeam, Strut, Bar, Other counts (for reverse-engineering when bar marker is lost).", GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -254,15 +248,17 @@ namespace ShapeGrammar3D.Components
             DA.GetData(5, ref insertPt);
             DA.GetData(6, ref lcIndex);
             DA.GetData(7, ref dotR);
-            DA.GetData(8, ref lenShort);
-            DA.GetData(9, ref lenOptLo);
-            DA.GetData(10, ref lenOptHi);
-            DA.GetData(11, ref lenLong);
-            DA.GetData(12, ref angMin);
-            DA.GetData(13, ref angOpt);
-            DA.GetData(14, ref topN);
             _dotRadius = Math.Max(0.01, dotR);
-            topN = Math.Max(0, topN);
+
+            if (assembly.Config != null)
+            {
+                if (assembly.Config.FeasibilityAngleMinDeg.HasValue) angMin = assembly.Config.FeasibilityAngleMinDeg.Value;
+                if (assembly.Config.FeasibilityAngleOptDeg.HasValue) angOpt = assembly.Config.FeasibilityAngleOptDeg.Value;
+                if (assembly.Config.FeasibilityLenTooShort.HasValue) lenShort = assembly.Config.FeasibilityLenTooShort.Value;
+                if (assembly.Config.FeasibilityLenOptLow.HasValue) lenOptLo = assembly.Config.FeasibilityLenOptLow.Value;
+                if (assembly.Config.FeasibilityLenOptHigh.HasValue) lenOptHi = assembly.Config.FeasibilityLenOptHigh.Value;
+                if (assembly.Config.FeasibilityLenTooLong.HasValue) lenLong = assembly.Config.FeasibilityLenTooLong.Value;
+            }
 
             var feasSettings = FeasibilitySettings.Default();
             feasSettings.LenTooShort = lenShort;
@@ -303,6 +299,14 @@ namespace ShapeGrammar3D.Components
             var vLenTree = new GH_Structure<GH_Number>();
             var vIntTree = new GH_Structure<GH_Number>();
             var feasTree = new GH_Structure<GH_Number>();
+            var angleNodePtsTree = new GH_Structure<GH_Point>();
+            var angleNodeTxtTree = new GH_Structure<GH_String>();
+            var labelPtTree = new GH_Structure<GH_Point>();
+            var labelTxtTree = new GH_Structure<GH_String>();
+            var intCountTree = new GH_Structure<GH_Integer>();
+            var intPtsTree = new GH_Structure<GH_Point>();
+            var intValTree = new GH_Structure<GH_Number>();
+            var elemTypeCountsTree = new GH_Structure<GH_String>();
 
             double[] utilThresholds = new double[] { 50, 80, 95, 100, 110 };
             int col = 0;
@@ -351,14 +355,15 @@ namespace ShapeGrammar3D.Components
                         ? lenData.OrderByDescending(x => x.Length).ToList()
                         : null;
 
-                    int elemIdx = 0;
                     foreach (var elem in shape.Elems)
                     {
                         if (!(elem is SG_Elem1D e1)) continue;
-                        Line ln = e1.Crv != null ? new Line(e1.Crv.PointAtStart, e1.Crv.PointAtEnd) : e1.Ln;
-                        if (!ln.IsValid) { elemIdx++; continue; }
+                        Line ln = GetElementLine(e1);
+                        if (!ln.IsValid) continue;
                         Line offsetLn = new Line(ln.From + offset, ln.To + offset);
                         lineTree.Append(new GH_Line(offsetLn), path);
+
+                        TB_Element_1D modelElem = FindModelElementByLine(model, ln);
 
                         Color meshColor = Color.Gray;
                         if (useLengthColor && sortedLen != null)
@@ -366,17 +371,21 @@ namespace ShapeGrammar3D.Components
                             var ld = sortedLen.FirstOrDefault(x => x.Elem == e1);
                             meshColor = FeasColor(ld.Classification);
                         }
-                        else if (useUtilColor && model?.Elem1Ds != null && elemIdx < model.Elem1Ds.Count)
+                        else if (useUtilColor && modelElem != null)
                         {
-                            double util = ComputeUtilization(model, model.Elem1Ds[elemIdx], lc);
+                            double util = ComputeUtilization(model, modelElem, lc);
                             meshColor = UtilColor(util, utilThresholds);
                         }
-                        elemIdx++;
 
                         if (ShowLength || ShowUtilization)
                         {
                             double sw = 0.05, sh = 0.05;
-                            if (e1.CrossSection != null)
+                            if (modelElem?.Sec != null)
+                            {
+                                sw = Math.Sqrt(Math.Max(0.01, modelElem.Sec.Area)) * 0.0005;
+                                sh = sw;
+                            }
+                            if ((sw <= 0 || sh <= 0) && e1.CrossSection != null)
                             {
                                 if (e1.CrossSection is SH_CrossSection_RHS rhs) { sw = rhs.Width * 0.0005; sh = rhs.Height * 0.0005; }
                                 else if (e1.CrossSection is SH_CrossSection_Beam b) { sw = Math.Sqrt(b.Area) * 0.001; sh = sw; }
@@ -389,18 +398,56 @@ namespace ShapeGrammar3D.Components
                         }
                     }
 
+                    var allNodeAngleData = FeasibilityMetrics.GetAllNodesAngleData(shape, angMin, angOpt);
                     if (ShowAngle)
                     {
-                        foreach (var (Node, _, Classification) in FeasibilityMetrics.GetNodeAngleData(shape, angMin, angOpt))
+                        foreach (var (Node, MinAngleDeg, Classification) in allNodeAngleData)
                         {
                             Point3d pt = Node.Pt + offset;
-                            _angleDots.Add(new DotMark { Position = pt, Colour = FeasColor(Classification) });
+                            Color dotColor = Classification >= 0 ? FeasColor(Classification) : Color.FromArgb(180, 160, 160, 160);
+                            _angleDots.Add(new DotMark { Position = pt, Colour = dotColor });
                         }
                     }
-                    if (ShowIntersection)
+                    foreach (var (Node, MinAngleDeg, Classification) in allNodeAngleData)
                     {
-                        foreach (Point3d pt in FeasibilityMetrics.GetIntersectionPoints(shape))
-                            _intersectDots.Add(new DotMark { Position = pt + offset, Colour = Color.FromArgb(255, 200, 0) });
+                        angleNodePtsTree.Append(new GH_Point(Node.Pt + offset), path);
+                        string txt;
+                        if (Classification < 0)
+                            txt = "—";
+                        else
+                        {
+                            string clsStr = Classification == FeasibilityMetrics.CLS_GOOD ? "good" : (Classification == FeasibilityMetrics.CLS_ORANGE ? "medium" : "bad");
+                            txt = string.Format("{0:F1}° ({1})", MinAngleDeg, clsStr);
+                        }
+                        angleNodeTxtTree.Append(new GH_String(txt), path);
+                    }
+                    Point3d labelPt;
+                    if (shape.Nodes != null && shape.Nodes.Count > 0)
+                    {
+                        var cen = Point3d.Origin;
+                        foreach (var n in shape.Nodes) cen += n.Pt;
+                        cen /= shape.Nodes.Count;
+                        labelPt = cen + offset;
+                    }
+                    else
+                        labelPt = insertPt + offset;
+                    int angGood = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_GOOD);
+                    int angOrange = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_ORANGE);
+                    int angBad = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_BAD);
+                    string labelTxt = string.Format("Feas:{0:F3} VAng:{1:F3} | Angle nodes: {2} good, {3} medium, {4} bad", feas.TotalViolation, feas.VAng, angGood, angOrange, angBad);
+                    labelPtTree.Append(new GH_Point(labelPt), path);
+                    labelTxtTree.Append(new GH_String(labelTxt), path);
+                    var typeCounts = FeasibilityMetrics.GetElementTypeCounts(shape);
+                    elemTypeCountsTree.Append(new GH_String(string.Format("MainBeam:{0} Strut:{1} Bar:{2} Other:{3}", typeCounts.MainBeam, typeCounts.Strut, typeCounts.Bar, typeCounts.Other)), path);
+                    var intersectionData = FeasibilityMetrics.GetIntersectionData(shape);
+                    intCountTree.Append(new GH_Integer(intersectionData.Count), path);
+                    foreach (var d in intersectionData)
+                    {
+                        Point3d ptLayout = d.Point + offset;
+                        intPtsTree.Append(new GH_Point(ptLayout), path);
+                        intValTree.Append(new GH_Number(d.Value), path);
+                        if (ShowIntersection)
+                            _intersectDots.Add(new DotMark { Position = ptLayout, Colour = Color.FromArgb(255, 200, 0) });
                     }
                     if (ShowDangling)
                     {
@@ -424,6 +471,14 @@ namespace ShapeGrammar3D.Components
             DA.SetData(7, string.Format("Feasibility Preview: {0} individuals. Util:{1} Len:{2} Ang:{3} Int:{4} Dang:{5}",
                 totalCount, ShowUtilization ? "ON" : "OFF", ShowLength ? "ON" : "OFF", ShowAngle ? "ON" : "OFF",
                 ShowIntersection ? "ON" : "OFF", ShowDangling ? "ON" : "OFF"));
+            DA.SetDataTree(8, angleNodePtsTree);
+            DA.SetDataTree(9, angleNodeTxtTree);
+            DA.SetDataTree(10, labelPtTree);
+            DA.SetDataTree(11, labelTxtTree);
+            DA.SetDataTree(12, intCountTree);
+            DA.SetDataTree(13, intPtsTree);
+            DA.SetDataTree(14, intValTree);
+            DA.SetDataTree(15, elemTypeCountsTree);
         }
 
         private static Color FeasColor(int cls)
@@ -469,6 +524,30 @@ namespace ShapeGrammar3D.Components
             double My_Ed = Math.Max(Math.Abs(F[4]), Math.Abs(F[10]));
             double Mz_Ed = Math.Max(Math.Abs(F[5]), Math.Abs(F[11]));
             return N_Ed / N_Rd + My_Ed / My_Rd + Mz_Ed / Mz_Rd;
+        }
+
+        private const double LINE_MATCH_TOL = 1e-3;
+
+        /// <summary>Gets the segment line for display. Prefers node positions so rule-02 columns (which have Crv overwritten with beam curve) still draw correctly.</summary>
+        private static Line GetElementLine(SG_Elem1D e1)
+        {
+            if (e1?.Nodes != null && e1.Nodes.Length >= 2 && e1.Nodes[0] != null && e1.Nodes[1] != null)
+                return new Line(e1.Nodes[0].Pt, e1.Nodes[1].Pt);
+            if (e1.Crv != null)
+                return new Line(e1.Crv.PointAtStart, e1.Crv.PointAtEnd);
+            return e1.Ln;
+        }
+
+        private static TB_Element_1D FindModelElementByLine(TB_Model model, Line ln)
+        {
+            if (model?.Elem1Ds == null || !ln.IsValid) return null;
+            foreach (var e in model.Elem1Ds)
+            {
+                if (e?.Line == null) continue;
+                if (e.Line.From.DistanceTo(ln.From) <= LINE_MATCH_TOL && e.Line.To.DistanceTo(ln.To) <= LINE_MATCH_TOL) return e;
+                if (e.Line.From.DistanceTo(ln.To) <= LINE_MATCH_TOL && e.Line.To.DistanceTo(ln.From) <= LINE_MATCH_TOL) return e;
+            }
+            return null;
         }
 
         private static int ResolveLoadCase(TB_Model model, int requested)

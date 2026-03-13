@@ -5,6 +5,7 @@ using CSparse.Storage;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
+using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Elements;
 using System;
 using System.Collections.Generic;
@@ -102,6 +103,10 @@ namespace ShapeGrammar3D.Classes.Toolbox
             }
             return tb_sups;
         }
+        /// <summary>
+        /// Converts all SG elements (including rule 02 columns) to TB elements.
+        /// Uses default material when CrossSection or Material is null so no elements are dropped.
+        /// </summary>
         private List<TB_Element_1D> SG_Elms2TB_Elms(List<SG_Element> sg_elms)
         {
             List<TB_Element_1D> tb_elems = new List<TB_Element_1D>();
@@ -113,10 +118,11 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     Point3d toPt = sg_e1d.Nodes?[1]?.Pt ?? sg_e1d.Ln.To;
                     Line liveLine = new Line(fromPt, toPt);
 
-                    var sg_m = sg_e1d.CrossSection.Material as SH_Material_Isotrop;
-                    if (sg_m == null) continue;
+                    var sg_m = sg_e1d.CrossSection?.Material as SH_Material_Isotrop;
+                    if (sg_m == null)
+                        sg_m = SH_Material_Isotrop.Default_Material();
 
-                    TB_Material tb_m = new TB_Material(sg_m.Tag, sg_m.E, sg_m.G_ip, sg_m.Density, sg_m.alphaT, sg_m.Fy);
+                    TB_Material tb_m = new TB_Material(sg_m.Tag ?? "default", sg_m.E, sg_m.G_ip, sg_m.Density, sg_m.alphaT, sg_m.Fy);
                     Vector3d zvec = liveLine.Direction;
 
                     TB_Section tb_sec;
@@ -129,11 +135,15 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     {
                         tb_sec = new Section_Rect(tb_m, sg_rect.Name, sg_rect.width, sg_rect.height);
                     }
+                    else if (sg_e1d.CrossSection != null && sg_e1d.CrossSection.Area > 0)
+                    {
+                        double dim = Math.Sqrt(sg_e1d.CrossSection.Area);
+                        tb_sec = new Section_Rect(tb_m, sg_e1d.CrossSection.Name ?? "default", dim, dim);
+                    }
                     else
                     {
-                        tb_sec = new Section_Rect(tb_m, sg_e1d.CrossSection?.Name ?? "default",
-                            sg_e1d.CrossSection.Area > 0 ? Math.Sqrt(sg_e1d.CrossSection.Area) : 10,
-                            sg_e1d.CrossSection.Area > 0 ? Math.Sqrt(sg_e1d.CrossSection.Area) : 10);
+                        const double defaultDim = 10.0;
+                        tb_sec = new Section_Rect(tb_m, "default", defaultDim, defaultDim);
                     }
 
                     TB_Element_1D tb_e1d = new TB_Element_1D(liveLine, sg_e1d.Name, tb_sec, zvec, liveLine.Length);

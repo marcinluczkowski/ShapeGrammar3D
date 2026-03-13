@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -78,12 +78,19 @@ namespace ShapeGrammar3D.Classes
             Nodes = newNodes.ToList();
         }
 
+        /// <summary>
+        /// Registers every element in Elems to its endpoint nodes. Ensures all nodes
+        /// (including those created by rule 02 or other rules) have their incident
+        /// elements listed, so angle/feasibility analysis runs on all nodes.
+        /// </summary>
         public void RegisterElemsToNodes()
         {
+            if (Elems == null) return;
             foreach (SG_Element e in Elems)
             {
+                if (e?.Nodes == null || e.Nodes.Length < 2 || e.Nodes[0] == null || e.Nodes[1] == null)
+                    continue;
                 if (!e.Nodes[0].Elements.Contains(e)) e.Nodes[0].Elements.Add(e);
-
                 if (!e.Nodes[1].Elements.Contains(e)) e.Nodes[1].Elements.Add(e);
             }
         }
