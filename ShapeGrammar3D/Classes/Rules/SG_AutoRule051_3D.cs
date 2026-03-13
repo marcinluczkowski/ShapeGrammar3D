@@ -104,27 +104,24 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
 
-                if (iniCrv.PointAtStart.DistanceTo(stud0.Nodes[0].Pt) < UT.PRES)
-                {
+                // Current strut: which end is on the curve (base); the other is tip. Get t0 from base.
+                double t0n0, t0n1;
+                iniCrv.ClosestPoint(stud0.Nodes[0].Pt, out t0n0);
+                iniCrv.ClosestPoint(stud0.Nodes[1].Pt, out t0n1);
+                Point3d on0_0 = iniCrv.PointAt(t0n0), on0_1 = iniCrv.PointAt(t0n1);
+                double d0_0 = stud0.Nodes[0].Pt.DistanceTo(on0_0), d0_1 = stud0.Nodes[1].Pt.DistanceTo(on0_1);
+                double t0 = d0_0 <= d0_1 ? t0n0 : t0n1;
+                Point3d stud0BasePt = d0_0 <= d0_1 ? stud0.Nodes[0].Pt : stud0.Nodes[1].Pt;
+
+                if (iniCrv.PointAtStart.DistanceTo(stud0BasePt) < UT.PRES)
                     flg_start = true;
-                }
-
-                if (iniCrv.PointAtEnd.DistanceTo(stud0.Nodes[0].Pt) < UT.PRES)
-                {
+                if (iniCrv.PointAtEnd.DistanceTo(stud0BasePt) < UT.PRES)
                     flg_end = true;
-                }
-
-
-                if (iniCrv.PointAtStart.DistanceTo(stud0.Nodes[0].Pt) < UT.PRES ||
-                    iniCrv.PointAtEnd.DistanceTo(stud0.Nodes[0].Pt) < UT.PRES)
-                {
+                if (flg_start || flg_end)
                     flg_start_or_end = true;
-                }
 
                 // Order along initial curve by parameter t (ClosestPoint of strut base on curve) — not distance from start
                 var targetStudsWithT = new List<(double t, SG_Node tip)>();
-                double t0 = 0;
-                iniCrv.ClosestPoint(stud0.Nodes[0].Pt, out t0);
 
                 for (int j = 0; j < studElements.Count; j++)
                 {
@@ -156,8 +153,8 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 if (closestStuds.Count >= 1)
                 {
-                    var ln0 = new Line(stud0.Nodes[1].Pt, closestStuds[0].Pt);
-                    var ln1 = new Line(stud0.Nodes[1].Pt, closestStuds[1].Pt);
+                    Point3d myTip = (d0_0 <= d0_1 ? stud0.Nodes[1] : stud0.Nodes[0]).Pt; // current strut top (end not on curve)
+                    var ln0 = new Line(myTip, closestStuds[0].Pt);
 
                     bool ln0Valid = ln0.IsValid && ln0.Length > UT.PRES;
                     if (ln0Valid)
@@ -187,27 +184,6 @@ namespace ShapeGrammar3D.Classes.Rules
                     else
                     {
                         if (ln0Valid) ss_ref.AddNewElement(newElem0);
-                    }
-                }
-
-                else if (closestStuds.Count == 2)
-                {
-                    var ln0 = new Line(stud0.Nodes[1].Pt, closestStuds[0].Pt);
-                    if (!ln0.IsValid || ln0.Length <= UT.PRES) continue;
-
-                    newElem0 = new SG_Elem1D(ln0, -999, "3DAR5", def_crosec) { Autorule = UT.RULE051_MARKER };
-
-                    if (optionNumber == 1)
-                    {
-                        ss_ref.AddNewElement(newElem0);
-                    }
-                    else if (optionNumber == 2)
-                    {
-                        ss_ref.AddNewElement(newElem0);
-                    }
-                    else if (optionNumber == 3)
-                    {
-                        ss_ref.AddNewElement(newElem0);
                     }
                 }
 
