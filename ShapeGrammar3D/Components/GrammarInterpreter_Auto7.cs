@@ -12,11 +12,11 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto6 : GH_Component
+    public class GrammarInterpreter_Auto7 : GH_Component
     {
-        // Genetic Algorithm configuration (overridable from GH inputs)
-        private int _populationSize = 5;
-        private int _numGenerations = 3;
+        // Genetic Algorithm configuration (overridable from GH inputs). Defaults for large runs (1000 pop, 100 gen).
+        private int _populationSize = 1000;
+        private int _numGenerations = 100;
         private int _numClusters = 1;
         private double _mutationProbability = 0.10;
         private double _crossoverProbability = 0.9;
@@ -59,17 +59,18 @@ namespace ShapeGrammar3D.Components
         private int _currentGeneration;
         private List<GAIndividual> _currentPopulation;
         private bool _isRunning;
-        private List<List<GAIndividual>> _allGenerations;
-        private List<List<SG_Shape>> _allShapes;
-        private List<List<TB_Model>> _allModels;
-        private GARunStore _runStore;
+        // Memory-optimized: only first and last generation shapes stored; no full history.
+        private List<SG_Shape> _firstGenShapes;
+        private List<SG_Shape> _lastGenShapes;
+        /// <summary>Per generation, per cluster: (gen, cluster, best, worst, avg) fitness for convergence plots.</summary>
+        private List<(int gen, int cluster, double best, double worst, double avg)> _convergenceData;
 
         /// <summary>
-        /// Initializes a new instance of the GrammarInterpreter_Auto4 class.
+        /// Large-scale GA interpreter: 1000 pop × 100 gen by default. Stores only first and last generation shapes and lightweight convergence data per cluster per generation.
         /// </summary>
-        public GrammarInterpreter_Auto6()
-          : base("GrammarInterpreter_Auto6", "GI_Auto6",
-              "GA Interpreter with in-memory Assembly output (genotypes, results, models). Use with Data Preview components.",
+        public GrammarInterpreter_Auto7()
+          : base("GrammarInterpreter_Auto7", "GI_Auto7",
+              "Large-scale GA (e.g. 1000×100). Outputs first and last generation shapes only; convergence data (best/worst/avg per cluster per gen) for plotting.",
               UT.CAT, UT.GR_INT)
         {
         }
@@ -94,9 +95,11 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
             pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);                                   // 0
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
-                "In-memory GA run assembly (genotypes, fitness, objectives, models) for Data Preview components",
-                GH_ParamAccess.item);                                                                                         // 1
+            pManager.AddGenericParameter("First Gen", "First", "SG_Shape list for generation 0 (deep copies)", GH_ParamAccess.list);   // 1
+            pManager.AddGenericParameter("Last Gen", "Last", "SG_Shape list for final generation (deep copies)", GH_ParamAccess.list);  // 2
+            pManager.AddNumberParameter("Conv Best", "CBest", "Convergence: best fitness per cluster per generation. Path = (gen, cluster)", GH_ParamAccess.tree);  // 3
+            pManager.AddNumberParameter("Conv Worst", "CWorst", "Convergence: worst fitness per cluster per generation. Path = (gen, cluster)", GH_ParamAccess.tree); // 4
+            pManager.AddNumberParameter("Conv Avg", "CAvg", "Convergence: average fitness per cluster per generation. Path = (gen, cluster)", GH_ParamAccess.tree);   // 5
         }
 
         /// <summary>
@@ -108,9 +111,9 @@ namespace ShapeGrammar3D.Components
             _currentGeneration = 0;
             _currentPopulation = null;
             _isRunning = false;
-            _allGenerations = new List<List<GAIndividual>>();
-            _allShapes = new List<List<SG_Shape>>();
-            _allModels = new List<List<TB_Model>>();
+            _firstGenShapes = null;
+            _lastGenShapes = null;
+            _convergenceData = new List<(int gen, int cluster, double best, double worst, double avg)>();
 
             SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
@@ -224,7 +227,11 @@ namespace ShapeGrammar3D.Components
             if (_isRunning)
             {
                 DA.SetData(0, "GA is currently running. Please wait for completion.");
-                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
+                DA.SetDataList(1, _firstGenShapes ?? new List<SG_Shape>());
+                DA.SetDataList(2, _lastGenShapes ?? new List<SG_Shape>());
+                DA.SetDataTree(3, new GH_Structure<GH_Number>());
+                DA.SetDataTree(4, new GH_Structure<GH_Number>());
+                DA.SetDataTree(5, new GH_Structure<GH_Number>());
                 return;
             }
 
@@ -256,7 +263,7 @@ namespace ShapeGrammar3D.Components
             List<GAIndividual> evaluatedPop = null;
             List<SG_Shape> evaluatedShapes = null;
             List<TB_Model> evaluatedModels = null;
-            List<string> clusterLogLines = new List<string>();
+            string lastClusterLog = string.Empty;
 
             while (true)
             {
@@ -264,10 +271,21 @@ namespace ShapeGrammar3D.Components
 
                 evaluatedShapes = new List<SG_Shape>();
                 evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
-                _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
-                _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
+
+                // Cluster so ClustGrp is set before we record convergence (both single- and multi-objective)
+                _ga.ClusterPopulation(evaluatedPop);
+                AppendConvergenceForGeneration(evaluatedPop, _currentGeneration, _numClusters);
+
+                if (_currentGeneration == 0)
+                    _firstGenShapes = evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList();
 
                 bool isLastGeneration = _currentGeneration >= _numGenerations - 1;
+                if (isLastGeneration)
+                    _lastGenShapes = evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList();
+
+                lastClusterLog = isMultiObjective
+                    ? BuildMOInfo(evaluatedPop, _currentGeneration)
+                    : BuildClusterInfo(evaluatedPop, _currentGeneration);
 
                 if (!isLastGeneration)
                 {
@@ -296,49 +314,45 @@ namespace ShapeGrammar3D.Components
                 }
 
                 if (isMultiObjective)
-                    _ga.ClusterPopulation(evaluatedPop);
+                    _ga.ClusterPopulation(evaluatedPop); // MOGA: cluster again for elite selection
 
-                // Cluster-elite injection for multi-objective mode:
-                // after clustering, guarantee the best N individuals from
-                // each cluster survive into the next generation's offspring.
                 if (isMultiObjective && _clusterEliteCount > 0 && !isLastGeneration)
                 {
                     _currentPopulation = InjectClusterElites(
                         _currentPopulation, evaluatedPop, _numClusters, _clusterEliteCount);
                 }
 
-                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
-                _allGenerations.Add(snapshot);
-
-                _runStore.AppendGeneration(evaluatedPop, _currentGeneration);
-
-                clusterLogLines.Add(isMultiObjective
-                    ? BuildMOInfo(evaluatedPop, _currentGeneration)
-                    : BuildClusterInfo(evaluatedPop, _currentGeneration));
+                // Drop references to current gen data as soon as next gen is built so GC can reclaim memory
+                evaluatedShapes?.Clear();
+                evaluatedShapes = null;
+                evaluatedModels?.Clear();
+                evaluatedModels = null;
+                evaluatedPop = null;
 
                 if (isLastGeneration)
                     break;
             }
 
-            // Save JSON
-            string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                string.Format("GA4_run_{0}.json", _runStore.RunId));
-            try
-            {
-                _runStore.SaveToJson(jsonPath);
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
-                    string.Format("Failed to save JSON: {0}", ex.Message));
-                jsonPath = string.Empty;
-            }
-
-            // Build assembly and output
-            OutputAssemblyResults(DA, evaluatedPop, string.Join("\n", clusterLogLines));
-
+            OutputFirstLastAndConvergence(DA, lastClusterLog);
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
+        }
+
+        /// <summary>Appends best/worst/avg fitness per cluster for this generation to _convergenceData.</summary>
+        private void AppendConvergenceForGeneration(List<GAIndividual> population, int generation, int numClusters)
+        {
+            if (population == null) return;
+            var validFitness = population
+                .Where(ind => !double.IsInfinity(ind.Fitness) && ind.Fitness != double.MaxValue && ind.Fitness != double.MinValue)
+                .ToList();
+            for (int c = 0; c < numClusters; c++)
+            {
+                var inCluster = validFitness.Where(ind => ind.ClustGrp == c).ToList();
+                double best = inCluster.Count > 0 ? inCluster.Min(ind => ind.Fitness) : double.NaN;
+                double worst = inCluster.Count > 0 ? inCluster.Max(ind => ind.Fitness) : double.NaN;
+                double avg = inCluster.Count > 0 ? inCluster.Average(ind => ind.Fitness) : double.NaN;
+                _convergenceData.Add((generation, c, best, worst, avg));
+            }
         }
 
         /// <summary>
@@ -441,26 +455,9 @@ namespace ShapeGrammar3D.Components
 
             _currentGeneration = 0;
             _currentPopulation = null;
-            _allGenerations = new List<List<GAIndividual>>();
-            _allShapes = new List<List<SG_Shape>>();
-            _allModels = new List<List<TB_Model>>();
-
-            _runStore = new GARunStore
-            {
-                RunId = Guid.NewGuid().ToString("N").Substring(0, 8),
-                StartedAt = DateTime.Now,
-                PopulationSize = _populationSize,
-                NumGenerations = _numGenerations,
-                NumClusters = _numClusters,
-                MutationProb = _mutationProbability,
-                CrossoverProb = _crossoverProbability,
-                EliteProb = _eliteProbability,
-                NumObjectives = _numObjectives,
-                UseSelfWeight = _useSelfWeight,
-                UseCroSecOpt = _croSecOptMode > 0,
-                TopoMetricTypes = new List<int>(_topoMetricTypes),
-                ShapeMetricTypes = new List<int>(_shapeMetricTypes)
-            };
+            _firstGenShapes = null;
+            _lastGenShapes = null;
+            _convergenceData = new List<(int gen, int cluster, double best, double worst, double avg)>();
 
             FixedGenotypes.Reset();
         }
@@ -845,153 +842,42 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Builds in-memory assembly and outputs Info + Assembly for Auto6.
+        /// Outputs first/last generation shapes and convergence trees for Auto7.
         /// </summary>
-        private void OutputAssemblyResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, string clusterLogLines)
+        private void OutputFirstLastAndConvergence(IGH_DataAccess DA, string lastClusterLog)
         {
-            if (evaluatedPop == null || evaluatedPop.Count == 0)
-            {
-                DA.SetData(0, "No evaluated individuals yet");
-                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
-                return;
-            }
+            var firstList = _firstGenShapes ?? new List<SG_Shape>();
+            var lastList = _lastGenShapes ?? new List<SG_Shape>();
 
-            bool isMultiObjective = _numObjectives > 1;
+            DA.SetDataList(1, firstList);
+            DA.SetDataList(2, lastList);
 
-            GAIndividual best;
-            if (isMultiObjective)
+            var convBest = new GH_Structure<GH_Number>();
+            var convWorst = new GH_Structure<GH_Number>();
+            var convAvg = new GH_Structure<GH_Number>();
+            if (_convergenceData != null)
             {
-                var frontZero = evaluatedPop.Where(i => i.Rank == 0).ToList();
-                if (frontZero.Count > 0)
-                    best = frontZero.OrderBy(i => i.Fitness).First();
-                else
-                    best = evaluatedPop.OrderBy(i => i.Fitness).First();
-            }
-            else
-            {
-                best = MAXIMIZE
-                    ? evaluatedPop.OrderByDescending(i => i.Fitness).First()
-                    : evaluatedPop.OrderBy(i => i.Fitness).First();
-            }
-
-            var assembly = new SGShapeGrammar3DAssembly
-            {
-                Config = new AssemblyConfig
+                foreach (var (gen, cluster, best, worst, avg) in _convergenceData)
                 {
-                    PopulationSize = _populationSize,
-                    NumGenerations = _numGenerations,
-                    NumClusters = _numClusters,
-                    NumObjectives = _numObjectives,
-                    TopoMetricTypes = new List<int>(_topoMetricTypes),
-                    ShapeMetricTypes = new List<int>(_shapeMetricTypes),
-                    FeasibilityAngleMinDeg = _feasibilitySettings.AngleMinDeg,
-                    FeasibilityAngleOptDeg = _feasibilitySettings.AngleOptDeg,
-                    FeasibilityLenTooShort = _feasibilitySettings.LenTooShort,
-                    FeasibilityLenOptLow = _feasibilitySettings.LenOptLow,
-                    FeasibilityLenOptHigh = _feasibilitySettings.LenOptHigh,
-                    FeasibilityLenTooLong = _feasibilitySettings.LenTooLong
-                }
-            };
-            foreach (int t in _topoMetricTypes)
-                assembly.MetricNames.Add("T:" + TopologyMetrics.GetLabel(t));
-            foreach (int s in _shapeMetricTypes)
-                assembly.MetricNames.Add("S:" + ShapeMetrics.GetLabel(s));
-
-            if (_allShapes != null && _allGenerations != null)
-            {
-                for (int g = 0; g < _allShapes.Count; g++)
-                {
-                    var genShapes = _allShapes[g];
-                    var genModels = (_allModels != null && g < _allModels.Count) ? _allModels[g] : null;
-                    var genInds = (g < _allGenerations.Count) ? _allGenerations[g] : null;
-                    int count = genShapes.Count;
-                    var sortedOrder = (genInds != null && genInds.Count >= count)
-                        ? Enumerable.Range(0, count).OrderBy(i => genInds[i].ClustGrp).ThenBy(i => genInds[i].Fitness).ToList()
-                        : Enumerable.Range(0, count).ToList();
-
-                    var ag = new AssemblyGeneration { Generation = g };
-                    for (int pos = 0; pos < sortedOrder.Count; pos++)
-                    {
-                        int idx = sortedOrder[pos];
-                        var ind = (genInds != null && idx < genInds.Count) ? genInds[idx] : null;
-                        var model = (genModels != null && idx < genModels.Count) ? genModels[idx] : null;
-                        var shape = (idx < genShapes.Count) ? genShapes[idx] : null;
-                        ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(
-                            ind ?? new GAIndividual(new List<int>(), new List<double>(), "?"),
-                            model, shape));
-                    }
-                    assembly.Generations.Add(ag);
+                    var path = new GH_Path(gen, cluster);
+                    convBest.Append(new GH_Number(best), path);
+                    convWorst.Append(new GH_Number(worst), path);
+                    convAvg.Append(new GH_Number(avg), path);
                 }
             }
+            DA.SetDataTree(3, convBest);
+            DA.SetDataTree(4, convWorst);
+            DA.SetDataTree(5, convAvg);
 
             string topoLabels = string.Join(", ", _topoMetricTypes.Select(t => TopologyMetrics.GetLabel(t)));
             string shpeLabels = string.Join(", ", _shapeMetricTypes.Select(s => ShapeMetrics.GetLabel(s)));
-            int clusterDims = _topoMetricTypes.Count + _shapeMetricTypes.Count + (_fitnessWeight > 0 ? 1 : 0);
-
-            string info;
-            if (isMultiObjective)
-            {
-                int frontZero = evaluatedPop.Count(ind => ind.Rank == 0);
-                string objLabels = _numObjectives == 2
-                    ? "log(1+Disp%SLS), AvgUtil Dev"
-                    : "log(1+Disp%SLS), AvgUtil Dev, RawFeas(avg VDang+VAng+VLen)";
-                info = string.Format(
-                    "Mode: NSGA-II ({0} objectives: {1})\n" +
-                    "Generation: {2}/{3}\n" +
-                    "Population Size: {4}\n" +
-                    "Pareto Front (rank 0) Size: {5}\n" +
-                    "Best Displacement: {6:F6}\n" +
-                    "Best Individual ID: {7}\n" +
-                    "Topology Metrics ({8}D): {9}\n" +
-                    "Shape Metrics ({10}D): {11}\n" +
-                    "Clustering Dimensions: {12}\n\n{13}",
-                    _numObjectives, objLabels,
-                    _currentGeneration, _numGenerations,
-                    evaluatedPop.Count,
-                    frontZero,
-                    best.Fitness,
-                    best.Id,
-                    _topoMetricTypes.Count, topoLabels,
-                    _shapeMetricTypes.Count, shpeLabels,
-                    clusterDims,
-                    clusterLogLines);
-            }
-            else
-            {
-                info = string.Format(
-                    "Mode: Single-Objective\n" +
-                    "Generation: {0}/{1}\n" +
-                    "Population Size: {2}\n" +
-                    "Best Fitness: {3:F6}\n" +
-                    "Worst Fitness: {4:F6}\n" +
-                    "Mean Fitness: {5:F6}\n" +
-                    "Best Individual ID: {6}\n" +
-                    "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
-                    "Topology Metrics ({12}D): {13}\n" +
-                    "Shape Metrics ({14}D): {15}\n" +
-                    "Clustering Dimensions: {16}\n" +
-                    "Feasibility: wDang={17:F2}, BestVDang={18:F4}, BestFeas={19:F4}, AvgFeas={20:F4}\n\n{21}",
-                    _currentGeneration,
-                    _numGenerations,
-                    evaluatedPop.Count,
-                    best.Fitness,
-                    (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
-                    evaluatedPop.Average(i => i.Fitness),
-                    best.Id,
-                    _topoWeight, _shapeWeight, _fitnessWeight,
-                    _kmeansIterations, _reclusterInterval,
-                    _topoMetricTypes.Count, topoLabels,
-                    _shapeMetricTypes.Count, shpeLabels,
-                    clusterDims,
-                    _feasibilitySettings.WDang,
-                    best.VDang,
-                    best.Feas,
-                    evaluatedPop.Average(i => i.Feas),
-                    clusterLogLines);
-            }
-
+            string info = string.Format(
+                "GI_Auto7: {0} pop × {1} gen. First gen: {2} shapes, Last gen: {3} shapes. Convergence: {4} (gen,cluster) entries.\n\n{5}",
+                _populationSize, _numGenerations,
+                firstList.Count, lastList.Count,
+                _convergenceData?.Count ?? 0,
+                lastClusterLog);
             DA.SetData(0, info);
-            DA.SetData(1, new GH_SGAssembly(assembly));
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)

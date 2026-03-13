@@ -21,7 +21,7 @@ namespace ShapeGrammar3D.Components
     public class FeasibilityPreviewAttributes : GH_ComponentAttributes
     {
         private RectangleF _panelBounds;
-        private RectangleF _btnUtil, _btnLength, _btnAngle, _btnIntersect, _btnDangling;
+        private RectangleF _btnUtil, _btnLength, _btnLengthBins, _btnAngle, _btnIntersect, _btnDangling;
         private const float BTN_H = 22f, PAD = 4f, MIN_W = 200f;
         private GI_FeasibilityPreview Comp => (GI_FeasibilityPreview)Owner;
 
@@ -37,6 +37,7 @@ namespace ShapeGrammar3D.Components
 
             _btnUtil = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnLength = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
+            _btnLengthBins = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnAngle = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnIntersect = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnDangling = new RectangleF(cx, y, cw, BTN_H);
@@ -56,6 +57,7 @@ namespace ShapeGrammar3D.Components
             }
             DrawToggle(g, _btnUtil, "Utilization", Comp.ShowUtilization);
             DrawToggle(g, _btnLength, "Length (ranked)", Comp.ShowLength);
+            DrawToggle(g, _btnLengthBins, "Length bins (VRepet)", Comp.ShowLengthBins);
             DrawToggle(g, _btnAngle, "Angle (nodes)", Comp.ShowAngle);
             DrawToggle(g, _btnIntersect, "Intersections", Comp.ShowIntersection);
             DrawToggle(g, _btnDangling, "Dangling", Comp.ShowDangling);
@@ -92,6 +94,7 @@ namespace ShapeGrammar3D.Components
             {
                 if (_btnUtil.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Utilization"); Comp.ShowUtilization = !Comp.ShowUtilization; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnLength.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Length"); Comp.ShowLength = !Comp.ShowLength; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
+                if (_btnLengthBins.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Length Bins"); Comp.ShowLengthBins = !Comp.ShowLengthBins; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnAngle.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Angle"); Comp.ShowAngle = !Comp.ShowAngle; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnIntersect.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Intersection"); Comp.ShowIntersection = !Comp.ShowIntersection; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnDangling.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Dangling"); Comp.ShowDangling = !Comp.ShowDangling; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
@@ -128,6 +131,7 @@ namespace ShapeGrammar3D.Components
 
         public bool ShowUtilization { get; set; } = true;
         public bool ShowLength { get; set; } = false;
+        public bool ShowLengthBins { get; set; } = false;
         public bool ShowAngle { get; set; } = false;
         public bool ShowIntersection { get; set; } = false;
         public bool ShowDangling { get; set; } = false;
@@ -145,6 +149,7 @@ namespace ShapeGrammar3D.Components
         {
             writer.SetBoolean("ShowUtilization", ShowUtilization);
             writer.SetBoolean("ShowLength", ShowLength);
+            writer.SetBoolean("ShowLengthBins", ShowLengthBins);
             writer.SetBoolean("ShowAngle", ShowAngle);
             writer.SetBoolean("ShowIntersection", ShowIntersection);
             writer.SetBoolean("ShowDangling", ShowDangling);
@@ -155,6 +160,7 @@ namespace ShapeGrammar3D.Components
         {
             if (reader.ItemExists("ShowUtilization")) ShowUtilization = reader.GetBoolean("ShowUtilization");
             if (reader.ItemExists("ShowLength")) ShowLength = reader.GetBoolean("ShowLength");
+            if (reader.ItemExists("ShowLengthBins")) ShowLengthBins = reader.GetBoolean("ShowLengthBins");
             if (reader.ItemExists("ShowAngle")) ShowAngle = reader.GetBoolean("ShowAngle");
             if (reader.ItemExists("ShowIntersection")) ShowIntersection = reader.GetBoolean("ShowIntersection");
             if (reader.ItemExists("ShowDangling")) ShowDangling = reader.GetBoolean("ShowDangling");
@@ -200,6 +206,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("VAng", "VAng", "Angle penalty per individual", GH_ParamAccess.tree);
             pManager.AddNumberParameter("VLen", "VLen", "Length penalty per individual", GH_ParamAccess.tree);
             pManager.AddNumberParameter("VIntersect", "VInt", "Intersection penalty per individual", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("VRepet", "VRepet", "Repetitiveness penalty per individual (10% length bins; lower = more similar elements)", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("VDup", "VDup", "Duplicate-element penalty per individual (goal: 0; Rule 051 can produce duplicates)", GH_ParamAccess.tree);
             pManager.AddNumberParameter("Feas Total", "Feas", "Total feasibility per individual", GH_ParamAccess.tree);
             pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
             pManager.AddPointParameter("Angle Node Pts", "AngPts", "Points at each node with angle data (for text tags). Layout offset applied.", GH_ParamAccess.tree);
@@ -298,6 +306,8 @@ namespace ShapeGrammar3D.Components
             var vAngTree = new GH_Structure<GH_Number>();
             var vLenTree = new GH_Structure<GH_Number>();
             var vIntTree = new GH_Structure<GH_Number>();
+            var vRepetTree = new GH_Structure<GH_Number>();
+            var vDupTree = new GH_Structure<GH_Number>();
             var feasTree = new GH_Structure<GH_Number>();
             var angleNodePtsTree = new GH_Structure<GH_Point>();
             var angleNodeTxtTree = new GH_Structure<GH_String>();
@@ -343,16 +353,23 @@ namespace ShapeGrammar3D.Components
                     vAngTree.Append(new GH_Number(feas.VAng), path);
                     vLenTree.Append(new GH_Number(feas.VLen), path);
                     vIntTree.Append(new GH_Number(feas.VIntersect), path);
+                    vRepetTree.Append(new GH_Number(feas.VRepet), path);
+                    vDupTree.Append(new GH_Number(feas.VDup), path);
                     feasTree.Append(new GH_Number(feas.TotalViolation), path);
 
-                    bool useLengthColor = ShowLength;
-                    bool useUtilColor = ShowUtilization && !useLengthColor && model != null;
+                    bool useLengthBinsColor = ShowLengthBins;
+                    bool useLengthColor = ShowLength && !useLengthBinsColor;
+                    bool useUtilColor = ShowUtilization && !useLengthColor && !useLengthBinsColor && model != null;
 
                     int lc = ResolveLoadCase(model, lcIndex);
 
                     var lenData = useLengthColor ? FeasibilityMetrics.GetElementLengthData(shape, lenShort, lenOptLo, lenOptHi, lenLong) : null;
                     var sortedLen = useLengthColor && lenData != null
                         ? lenData.OrderByDescending(x => x.Length).ToList()
+                        : null;
+                    var binMapping = useLengthBinsColor ? FeasibilityMetrics.GetElementLengthBinMapping(shape, 10.0) : (default, 0);
+                    var elemToBin = useLengthBinsColor && binMapping.Mappings != null
+                        ? binMapping.Mappings.ToDictionary(x => x.Elem, x => (x.BinIndex, binMapping.TotalBinCount))
                         : null;
 
                     foreach (var elem in shape.Elems)
@@ -366,7 +383,11 @@ namespace ShapeGrammar3D.Components
                         TB_Element_1D modelElem = FindModelElementByLine(model, ln);
 
                         Color meshColor = Color.Gray;
-                        if (useLengthColor && sortedLen != null)
+                        if (useLengthBinsColor && elemToBin != null && elemToBin.TryGetValue(e1, out var binInfo))
+                        {
+                            meshColor = BinIndexToColor(binInfo.BinIndex, binInfo.TotalBinCount);
+                        }
+                        else if (useLengthColor && sortedLen != null)
                         {
                             var ld = sortedLen.FirstOrDefault(x => x.Elem == e1);
                             meshColor = FeasColor(ld.Classification);
@@ -377,7 +398,7 @@ namespace ShapeGrammar3D.Components
                             meshColor = UtilColor(util, utilThresholds);
                         }
 
-                        if (ShowLength || ShowUtilization)
+                        if (ShowLength || ShowUtilization || ShowLengthBins)
                         {
                             double sw = 0.05, sh = 0.05;
                             if (modelElem?.Sec != null)
@@ -467,18 +488,20 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(3, vAngTree);
             DA.SetDataTree(4, vLenTree);
             DA.SetDataTree(5, vIntTree);
-            DA.SetDataTree(6, feasTree);
-            DA.SetData(7, string.Format("Feasibility Preview: {0} individuals. Util:{1} Len:{2} Ang:{3} Int:{4} Dang:{5}",
-                totalCount, ShowUtilization ? "ON" : "OFF", ShowLength ? "ON" : "OFF", ShowAngle ? "ON" : "OFF",
-                ShowIntersection ? "ON" : "OFF", ShowDangling ? "ON" : "OFF"));
-            DA.SetDataTree(8, angleNodePtsTree);
-            DA.SetDataTree(9, angleNodeTxtTree);
-            DA.SetDataTree(10, labelPtTree);
-            DA.SetDataTree(11, labelTxtTree);
-            DA.SetDataTree(12, intCountTree);
-            DA.SetDataTree(13, intPtsTree);
-            DA.SetDataTree(14, intValTree);
-            DA.SetDataTree(15, elemTypeCountsTree);
+            DA.SetDataTree(6, vRepetTree);
+            DA.SetDataTree(7, vDupTree);
+            DA.SetDataTree(8, feasTree);
+            DA.SetData(9, string.Format("Feasibility Preview: {0} individuals. Util:{1} Len:{2} LenBins:{3} Ang:{4} Int:{5} Dang:{6} Repet+Dup:computed",
+                totalCount, ShowUtilization ? "ON" : "OFF", ShowLength ? "ON" : "OFF", ShowLengthBins ? "ON" : "OFF",
+                ShowAngle ? "ON" : "OFF", ShowIntersection ? "ON" : "OFF", ShowDangling ? "ON" : "OFF"));
+            DA.SetDataTree(10, angleNodePtsTree);
+            DA.SetDataTree(11, angleNodeTxtTree);
+            DA.SetDataTree(12, labelPtTree);
+            DA.SetDataTree(13, labelTxtTree);
+            DA.SetDataTree(14, intCountTree);
+            DA.SetDataTree(15, intPtsTree);
+            DA.SetDataTree(16, intValTree);
+            DA.SetDataTree(17, elemTypeCountsTree);
         }
 
         private static Color FeasColor(int cls)
@@ -486,6 +509,30 @@ namespace ShapeGrammar3D.Components
             if (cls == FeasibilityMetrics.CLS_GOOD) return Color.FromArgb(0, 180, 80);
             if (cls == FeasibilityMetrics.CLS_ORANGE) return Color.FromArgb(255, 165, 0);
             return Color.FromArgb(220, 50, 50);
+        }
+
+        /// <summary>Full 0–255 gradient: blue→cyan→green→yellow→red for length-bin visualization.</summary>
+        private static Color BinIndexToColor(int binIndex, int totalBins)
+        {
+            if (totalBins <= 1) return Color.FromArgb(0, 128, 255);
+            double t = (double)binIndex / Math.Max(1, totalBins - 1);
+            t = Math.Clamp(t, 0, 1);
+            var stops = new[] {
+                (0.00, Color.FromArgb(0, 0, 255)),
+                (0.25, Color.FromArgb(0, 255, 255)),
+                (0.50, Color.FromArgb(0, 255, 0)),
+                (0.75, Color.FromArgb(255, 255, 0)),
+                (1.00, Color.FromArgb(255, 0, 0))
+            };
+            for (int i = 0; i < stops.Length - 1; i++)
+            {
+                if (t >= stops[i].Item1 && t <= stops[i + 1].Item1)
+                {
+                    double local = (t - stops[i].Item1) / (stops[i + 1].Item1 - stops[i].Item1);
+                    return Lerp(stops[i].Item2, stops[i + 1].Item2, local);
+                }
+            }
+            return stops[stops.Length - 1].Item2;
         }
 
         private static Color UtilColor(double util, double[] t)

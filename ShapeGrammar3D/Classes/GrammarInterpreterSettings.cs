@@ -31,6 +31,8 @@ namespace ShapeGrammar3D.Classes
         public double AngleWeight { get; set; } = 0.0;
         public double LengthWeight { get; set; } = 0.0;
         public double IntersectionWeight { get; set; } = 0.0;
+        public double RepetWeight { get; set; } = 0.0;
+        public double DuplicateWeight { get; set; } = 0.0;
 
         /// <summary>Angle [deg] below which full penalty. 10–20° gradient to zero at AngleOptDeg.</summary>
         public double AngleMinDeg { get; set; } = 10.0;
@@ -74,6 +76,8 @@ namespace ShapeGrammar3D.Classes
             AngleWeight = Math.Clamp(AngleWeight, 0.0, 1.0);
             LengthWeight = Math.Clamp(LengthWeight, 0.0, 1.0);
             IntersectionWeight = Math.Clamp(IntersectionWeight, 0.0, 1.0);
+            RepetWeight = Math.Clamp(RepetWeight, 0.0, 1.0);
+            DuplicateWeight = Math.Clamp(DuplicateWeight, 0.0, 1.0);
             AngleMinDeg = Math.Clamp(AngleMinDeg, 0.0, 90.0);
             AngleOptDeg = Math.Clamp(AngleOptDeg, 0.0, 180.0);
             if (AngleOptDeg <= AngleMinDeg) AngleOptDeg = AngleMinDeg + 5.0;
@@ -126,6 +130,8 @@ namespace ShapeGrammar3D.Classes
                 AngleWeight = Value.AngleWeight,
                 LengthWeight = Value.LengthWeight,
                 IntersectionWeight = Value.IntersectionWeight,
+                RepetWeight = Value.RepetWeight,
+                DuplicateWeight = Value.DuplicateWeight,
                 AngleMinDeg = Value.AngleMinDeg,
                 AngleOptDeg = Value.AngleOptDeg,
                 LenTooShort = Value.LenTooShort,

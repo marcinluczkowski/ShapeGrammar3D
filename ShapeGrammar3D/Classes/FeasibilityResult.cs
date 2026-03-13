@@ -36,6 +36,18 @@ namespace ShapeGrammar3D.Classes
         /// <summary>Number of element pairs that intersect (excluding shared nodes).</summary>
         public int IntersectionCount;
 
+        /// <summary>Repetitiveness penalty [0..1]. Lower when more elements share similar lengths (10% bins). Favours manufacturing.</summary>
+        public double VRepet;
+
+        /// <summary>Number of distinct length bins (10% tolerance). Fewer = more repetitive.</summary>
+        public int RepetitivenessBinCount;
+
+        /// <summary>Duplicate-element penalty [0..1]. Zero when no duplicates; penalizes elements with identical geometry.</summary>
+        public double VDup;
+
+        /// <summary>Number of duplicate element pairs (same line geometry, e.g. from rule 051).</summary>
+        public int DuplicateCount;
+
         /// <summary>Weighted sum of all active feasibility components.</summary>
         public double TotalViolation;
 
@@ -45,8 +57,8 @@ namespace ShapeGrammar3D.Classes
         public override string ToString()
         {
             return string.Format(
-                "VDang={0:F4} VAng={1:F4} VLen={2:F4} VInt={3:F4} (dangling={4}, isolated={5}, angleViol={6}, lenViol={7}, intersect={8}), Total={9:F4}",
-                VDang, VAng, VLen, VIntersect, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, IntersectionCount, TotalViolation);
+                "VDang={0:F4} VAng={1:F4} VLen={2:F4} VInt={3:F4} VRepet={4:F4} VDup={5:F4} (dangling={6}, isolated={7}, angleViol={8}, lenViol={9}, intersect={10}, bins={11}, dup={12}), Total={13:F4}",
+                VDang, VAng, VLen, VIntersect, VRepet, VDup, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, IntersectionCount, RepetitivenessBinCount, DuplicateCount, TotalViolation);
         }
     }
 }

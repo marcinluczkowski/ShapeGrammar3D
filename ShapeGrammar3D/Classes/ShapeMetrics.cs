@@ -46,7 +46,10 @@ namespace ShapeGrammar3D.Classes
         ConvexHullAreaXY = 10,
 
         /// <summary>11 – Hull aspect ratio in XY (width/length, 1=square, &lt;1=elongated).</summary>
-        HullAspectRatioXY = 11
+        HullAspectRatioXY = 11,
+
+        /// <summary>12 – Area from mesh created from lines (JoinCurves + planar breps). More accurate than hull.</summary>
+        MeshAreaFromLines = 12
     }
 
     /// <summary>
@@ -82,6 +85,7 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.Compactness           => Compactness(shape),
                 ShapeMetricType.ConvexHullAreaXY      => ConvexHullAreaXY(shape),
                 ShapeMetricType.HullAspectRatioXY     => HullAspectRatioXY(shape),
+                ShapeMetricType.MeshAreaFromLines     => MeshAreaFromLines(shape),
                 _ => TotalLength(shape)
             };
         }
@@ -105,6 +109,7 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.Compactness           => "Compactness (L/diag)",
                 ShapeMetricType.ConvexHullAreaXY      => "Hull Area XY",
                 ShapeMetricType.HullAspectRatioXY     => "Hull Aspect XY",
+                ShapeMetricType.MeshAreaFromLines     => "Mesh Area (from lines)",
                 _ => "Unknown"
             };
         }
@@ -274,6 +279,201 @@ namespace ShapeGrammar3D.Classes
             double major = Math.Max(w, h);
             double minor = Math.Min(w, h);
             return major > 0 ? minor / major : 0.0;
+        }
+
+        /// <summary>12 – Area from mesh/surface created from lines (JoinCurves → planar breps). More accurate than convex hull for concave structures.</summary>
+        public static double MeshAreaFromLines(SG_Shape shape)
+        {
+            if (shape?.Elems == null || shape.Elems.Count == 0) return 0.0;
+            var (area, _) = MeshAreaFromLinesWithMesh(shape);
+            return area;
+        }
+
+        /// <summary>Computes area and mesh from line network via planar graph face extraction. Captures all enclosed cells (triangles, quads, etc.).</summary>
+        public static (double area, Mesh mesh) MeshAreaFromLinesWithMesh(SG_Shape shape)
+        {
+            if (shape?.Elems == null || shape.Elems.Count == 0)
+                return (0.0, null);
+
+            const double tol = 1e-8;
+            const double tolSq = tol * tol;
+
+            var segs = new List<(Point2d a, Point2d b)>();
+            foreach (var elem in shape.Elems)
+            {
+                if (!(elem is SG_Elem1D e1) || e1.Nodes == null || e1.Nodes.Length < 2) continue;
+                var a = new Point2d(e1.Nodes[0].Pt.X, e1.Nodes[0].Pt.Y);
+                var b = new Point2d(e1.Nodes[1].Pt.X, e1.Nodes[1].Pt.Y);
+                if (DistSq2d(a, b) < tolSq) continue;
+                segs.Add((a, b));
+            }
+            if (segs.Count == 0) return (0.0, null);
+
+            var splitSegs = SplitSegmentsAtIntersections(segs, tol);
+            if (splitSegs.Count == 0) return (0.0, null);
+
+            var verts = new List<Point2d>(splitSegs.Count * 2);
+            int GetVert(Point2d p)
+            {
+                for (int i = 0; i < verts.Count; i++)
+                    if (DistSq2d(verts[i], p) <= tolSq) return i;
+                verts.Add(p);
+                return verts.Count - 1;
+            }
+
+            var edges = new List<(int from, int to)>();
+            var edgeSet = new HashSet<(int, int)>();
+            foreach (var (a, b) in splitSegs)
+            {
+                int u = GetVert(a), v = GetVert(b);
+                if (u == v) continue;
+                var uv = u < v ? (u, v) : (v, u);
+                if (edgeSet.Contains(uv)) continue;
+                edgeSet.Add(uv);
+                edges.Add((u, v));
+                edges.Add((v, u));
+            }
+
+            var adj = new List<List<int>>(verts.Count);
+            for (int i = 0; i < verts.Count; i++) adj.Add(new List<int>());
+            for (int e = 0; e < edges.Count; e++)
+                adj[edges[e].from].Add(e);
+
+            for (int v = 0; v < verts.Count; v++)
+            {
+                var list = adj[v];
+                var pt = verts[v];
+                list.Sort((ea, eb) =>
+                {
+                    var pa = verts[edges[ea].to];
+                    var pb = verts[edges[eb].to];
+                    return Math.Atan2(pa.Y - pt.Y, pa.X - pt.X).CompareTo(Math.Atan2(pb.Y - pt.Y, pb.X - pt.X));
+                });
+            }
+
+            var nextEdge = new int[edges.Count];
+            for (int e = 0; e < edges.Count; e++)
+            {
+                var list = adj[edges[e].to];
+                int rev = e ^ 1;
+                int idx = list.IndexOf(rev);
+                nextEdge[e] = idx >= 0 ? list[(idx + 1) % list.Count] : -1;
+            }
+
+            var used = new bool[edges.Count];
+            double totalArea = 0.0;
+            var facePolys = new List<Point2d[]>();
+
+            for (int start = 0; start < edges.Count; start++)
+            {
+                if (used[start]) continue;
+                var face = new List<int>(64);
+                int e = start;
+                do
+                {
+                    face.Add(e);
+                    used[e] = true;
+                    e = nextEdge[e];
+                } while (e >= 0 && e != start && face.Count < 10000);
+
+                if (e != start || face.Count < 3) continue;
+                var poly = new Point2d[face.Count];
+                for (int i = 0; i < face.Count; i++)
+                    poly[i] = verts[edges[face[i]].from];
+                double area = ShoelaceSigned(poly);
+                if (area > tol)
+                {
+                    totalArea += area;
+                    facePolys.Add(poly);
+                }
+            }
+
+            Mesh combined = null;
+            if (facePolys.Count > 0)
+            {
+                combined = new Mesh();
+                foreach (var poly in facePolys)
+                {
+                    var pts = new Point3d[poly.Length];
+                    for (int i = 0; i < poly.Length; i++)
+                        pts[i] = new Point3d(poly[i].X, poly[i].Y, 0);
+                    var pl = new Polyline(pts);
+                    pl.Add(pts[0]);
+                    var crv = pl.ToNurbsCurve();
+                    if (crv != null && crv.IsClosed)
+                    {
+                        var breps = Brep.CreatePlanarBreps(crv, tol);
+                        if (breps != null)
+                            foreach (var brep in breps)
+                            {
+                                if (brep == null) continue;
+                                var m = Mesh.CreateFromBrep(brep, MeshingParameters.Default);
+                                if (m != null)
+                                    foreach (var sub in m)
+                                        if (sub != null && sub.IsValid) combined.Append(sub);
+                            }
+                    }
+                }
+            }
+            return (totalArea, combined);
+        }
+
+        private static List<(Point2d a, Point2d b)> SplitSegmentsAtIntersections(List<(Point2d a, Point2d b)> segs, double tol)
+        {
+            var result = new List<(Point2d a, Point2d b)>();
+            for (int i = 0; i < segs.Count; i++)
+            {
+                var (a, b) = segs[i];
+                var pts = new List<double> { 0.0, 1.0 };
+                double ax = b.X - a.X, ay = b.Y - a.Y;
+                for (int j = 0; j < segs.Count; j++)
+                {
+                    if (i == j) continue;
+                    var (c, d) = segs[j];
+                    if (!SegSegIntersect(a, b, c, d, tol, out double t, out double u))
+                        continue;
+                    if (t > tol && t < 1 - tol) pts.Add(t);
+                }
+                pts.Sort();
+                for (int k = 0; k + 1 < pts.Count; k++)
+                {
+                    double t0 = pts[k], t1 = pts[k + 1];
+                    if (t1 - t0 < tol) continue;
+                    var p0 = new Point2d(a.X + ax * t0, a.Y + ay * t0);
+                    var p1 = new Point2d(a.X + ax * t1, a.Y + ay * t1);
+                    if (DistSq2d(p0, p1) > tol * tol)
+                        result.Add((p0, p1));
+                }
+            }
+            return result;
+        }
+
+        private static bool SegSegIntersect(Point2d a, Point2d b, Point2d c, Point2d d, double tol, out double t, out double u)
+        {
+            t = u = 0;
+            double vx = b.X - a.X, vy = b.Y - a.Y;
+            double wx = d.X - c.X, wy = d.Y - c.Y;
+            double det = vx * wy - vy * wx;
+            if (Math.Abs(det) < tol * tol) return false;
+            double cx = c.X - a.X, cy = c.Y - a.Y;
+            t = (cx * wy - cy * wx) / det;
+            u = (cx * vy - cy * vx) / det;
+            return t >= -tol && t <= 1 + tol && u >= -tol && u <= 1 + tol;
+        }
+
+        private static double DistSq2d(Point2d a, Point2d b)
+        {
+            double dx = a.X - b.X, dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
+        }
+
+        private static double ShoelaceSigned(Point2d[] p)
+        {
+            if (p == null || p.Length < 3) return 0;
+            double a = 0;
+            for (int i = 0, n = p.Length; i < n; i++)
+                a += p[i].X * (p[(i + 1) % n].Y - p[(i + n - 1) % n].Y);
+            return a * 0.5;
         }
 
         private static List<Point2d> GetXYPoints(SG_Shape shape)

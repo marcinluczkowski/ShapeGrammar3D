@@ -17,6 +17,8 @@ namespace ShapeGrammar3D.Classes
         public double WAng;
         public double WLen;
         public double WIntersect;
+        public double WRepet;
+        public double WDup;
 
         /// <summary>Angle [deg]: below this = full penalty.</summary>
         public double AngleMinDeg;
@@ -40,6 +42,8 @@ namespace ShapeGrammar3D.Classes
                 WAng = 0.0,
                 WLen = 0.0,
                 WIntersect = 0.0,
+                WRepet = 0.0,
+                WDup = 0.0,
                 AngleMinDeg = 10.0,
                 AngleOptDeg = 30.0,
                 LenTooShort = 0.5,
@@ -77,11 +81,21 @@ namespace ShapeGrammar3D.Classes
             result.VIntersect = intResult.VIntersect;
             result.IntersectionCount = intResult.IntersectionCount;
 
+            var repResult = ComputeRepetitivenessPenalty(shape, binTolerancePercent: 10.0);
+            result.VRepet = repResult.VRepet;
+            result.RepetitivenessBinCount = repResult.RepetitivenessBinCount;
+
+            var dupResult = ComputeDuplicatePenalty(shape);
+            result.VDup = dupResult.VDup;
+            result.DuplicateCount = dupResult.DuplicateCount;
+
             double total = 0.0;
             total += Math.Clamp(s.WDang * result.VDang, 0.0, 1.0);
             total += Math.Clamp(s.WAng * result.VAng, 0.0, 1.0);
             total += Math.Clamp(s.WLen * result.VLen, 0.0, 1.0);
             total += Math.Clamp(s.WIntersect * result.VIntersect, 0.0, 1.0);
+            total += Math.Clamp(s.WRepet * result.VRepet, 0.0, 1.0);
+            total += Math.Clamp(s.WDup * result.VDup, 0.0, 1.0);
             result.TotalViolation = Math.Clamp(total, 0.0, 1.0);
 
             return result;
@@ -525,6 +539,98 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
+        /// Penalizes low repetitiveness. Uses 10% length bins: elements within ±10% length go in same bin.
+        /// VRepet low when many elements share few bins (good for manufacturing); high when many bins.
+        /// </summary>
+        private static FeasibilityResult ComputeRepetitivenessPenalty(SG_Shape shape, double binTolerancePercent = 10.0)
+        {
+            var res = new FeasibilityResult();
+            if (shape?.Elems == null || shape.Elems.Count == 0)
+            {
+                res.VRepet = 0.0;
+                res.RepetitivenessBinCount = 0;
+                return res;
+            }
+
+            var lengths = new List<double>();
+            foreach (var elem in shape.Elems)
+            {
+                if (elem is SG_Elem1D e1 && (e1.Ln.IsValid || (e1.Crv != null && e1.Crv.IsValid)))
+                {
+                    double len = e1.Ln.IsValid ? e1.Ln.Length : e1.Crv.GetLength();
+                    if (len > 1e-10) lengths.Add(len);
+                }
+            }
+            if (lengths.Count == 0)
+            {
+                res.VRepet = 0.0;
+                res.RepetitivenessBinCount = 0;
+                return res;
+            }
+
+            lengths.Sort();
+            double factor = 1.0 + binTolerancePercent / 100.0;
+            int binCount = 1;
+            double binMin = lengths[0];
+
+            for (int i = 1; i < lengths.Count; i++)
+            {
+                double L = lengths[i];
+                if (L > factor * binMin)
+                {
+                    binCount++;
+                    binMin = L;
+                }
+            }
+
+            res.RepetitivenessBinCount = binCount;
+            res.VRepet = Math.Clamp((double)binCount / lengths.Count, 0.0, 1.0);
+            return res;
+        }
+
+        /// <summary>
+        /// Penalizes duplicate elements (same line geometry). Rule 051 can produce duplicates; goal is zero.
+        /// </summary>
+        private static FeasibilityResult ComputeDuplicatePenalty(SG_Shape shape)
+        {
+            var res = new FeasibilityResult();
+            if (shape?.Elems == null || shape.Elems.Count < 2)
+            {
+                res.VDup = 0.0;
+                res.DuplicateCount = 0;
+                return res;
+            }
+
+            const double tolSq = 1e-16;
+            var elems1D = new List<SG_Elem1D>();
+            foreach (var e in shape.Elems)
+            {
+                if (e is SG_Elem1D e1 && e1.Nodes != null && e1.Nodes.Length >= 2
+                    && (e1.Ln.IsValid || (e1.Crv != null && e1.Crv.IsValid)))
+                    elems1D.Add(e1);
+            }
+
+            int dupCount = 0;
+            for (int i = 0; i < elems1D.Count; i++)
+            {
+                var a = elems1D[i];
+                Point3d a0 = a.Nodes[0].Pt, a1 = a.Nodes[1].Pt;
+                for (int j = i + 1; j < elems1D.Count; j++)
+                {
+                    var b = elems1D[j];
+                    Point3d b0 = b.Nodes[0].Pt, b1 = b.Nodes[1].Pt;
+                    bool matchFwd = a0.DistanceToSquared(b0) <= tolSq && a1.DistanceToSquared(b1) <= tolSq;
+                    bool matchRev = a0.DistanceToSquared(b1) <= tolSq && a1.DistanceToSquared(b0) <= tolSq;
+                    if (matchFwd || matchRev) dupCount++;
+                }
+            }
+
+            res.DuplicateCount = dupCount;
+            res.VDup = Math.Clamp((double)dupCount / Math.Max(1, elems1D.Count), 0.0, 1.0);
+            return res;
+        }
+
+        /// <summary>
         /// Human-readable label for the feasibility penalty.
         /// </summary>
         public static string GetLabel()
@@ -605,6 +711,43 @@ namespace ShapeGrammar3D.Classes
                 list.Add((e1, elen, cls));
             }
             return list;
+        }
+
+        /// <summary>Returns (element, binIndex, length) for 10% length bins (same as VRepet). Used for visualization by bin.</summary>
+        public static (List<(Elements.SG_Elem1D Elem, int BinIndex, double Length)> Mappings, int TotalBinCount) GetElementLengthBinMapping(
+            SG_Shape shape, double binTolerancePercent = 10.0)
+        {
+            var mappings = new List<(Elements.SG_Elem1D, int, double)>();
+            if (shape?.Elems == null) return (mappings, 0);
+
+            var withLen = new List<(Elements.SG_Elem1D Elem, double Length)>();
+            foreach (var elem in shape.Elems)
+            {
+                if (!(elem is Elements.SG_Elem1D e1)) continue;
+                double len = 0;
+                if (e1.Ln.IsValid) len = e1.Ln.Length;
+                else if (e1.Crv != null && e1.Crv.IsValid) try { len = e1.Crv.GetLength(); } catch { }
+                if (len > 1e-10) withLen.Add((e1, len));
+            }
+            if (withLen.Count == 0) return (mappings, 0);
+
+            withLen.Sort((a, b) => a.Length.CompareTo(b.Length));
+            double factor = 1.0 + binTolerancePercent / 100.0;
+            int binIndex = 0;
+            double binMin = withLen[0].Length;
+
+            foreach (var (Elem, Length) in withLen)
+            {
+                if (Length > factor * binMin)
+                {
+                    binIndex++;
+                    binMin = Length;
+                }
+                mappings.Add((Elem, binIndex, Length));
+            }
+
+            int totalBins = binIndex + 1;
+            return (mappings, totalBins);
         }
 
         /// <summary>Returns (node, minAngleDeg, classification) for all nodes with 2+ elements. Compares every element pair at each node. Classification: 0=good, 1=orange, 2=bad.</summary>

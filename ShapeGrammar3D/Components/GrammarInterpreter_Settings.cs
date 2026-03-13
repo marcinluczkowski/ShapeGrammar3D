@@ -51,7 +51,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
                 "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
                 "0=TotalLength, 1=AvgLength, 2=MaxLength, 3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
-                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=Hull Area XY, 11=Hull Aspect XY",
+                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=HullAreaXY, 11=HullAspectXY, 12=MeshArea(from lines)",
                 GH_ParamAccess.list);                                                                                              // 12
             pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
                 "Use a deterministic pre-generated population (same genotypes every run) for controlled metric comparison experiments.",
@@ -69,7 +69,13 @@ namespace ShapeGrammar3D.Components
                 GH_ParamAccess.item, 0.0);                                                                                         // 16
             pManager.AddNumberParameter("Intersection Weight", "wInt",
                 "Weight for bracing/column intersection penalty (0..1). Small factor recommended.",
-                GH_ParamAccess.item, 0.0);                                                                                         // 16b
+                GH_ParamAccess.item, 0.0);                                                                                         // 17
+            pManager.AddNumberParameter("Repet Weight", "wRepet",
+                "Weight for repetitiveness penalty (0..1). Favours designs with similar element lengths (10% bins). Set 0 to disable.",
+                GH_ParamAccess.item, 0.0);                                                                                         // 18
+            pManager.AddNumberParameter("Duplicate Weight", "wDup",
+                "Weight for duplicate-element penalty (0..1). Penalizes identical elements (Rule 051 can produce them). Goal: 0. Set 0 to disable.",
+                GH_ParamAccess.item, 0.0);                                                                                         // 19
             pManager.AddNumberParameter("Angle Min (deg)", "AngMin",
                 "Angle [deg]: below = full penalty; between Min and Opt = gradient to zero. Default 10.",
                 GH_ParamAccess.item, 10.0);                                                                                        // 16c
@@ -139,7 +145,7 @@ namespace ShapeGrammar3D.Components
 
             pManager[11].Optional = true;
             pManager[12].Optional = true;
-            pManager[29].Optional = true;
+            pManager[31].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -169,6 +175,8 @@ namespace ShapeGrammar3D.Components
             double angleWeight = settings.AngleWeight;
             double lengthWeight = settings.LengthWeight;
             double intersectionWeight = settings.IntersectionWeight;
+            double repetWeight = settings.RepetWeight;
+            double duplicateWeight = settings.DuplicateWeight;
             double angleMinDeg = settings.AngleMinDeg;
             double angleOptDeg = settings.AngleOptDeg;
             double lenTooShort = settings.LenTooShort;
@@ -207,25 +215,26 @@ namespace ShapeGrammar3D.Components
             DA.GetData(15, ref angleWeight);
             DA.GetData(16, ref lengthWeight);
             DA.GetData(17, ref intersectionWeight);
-            DA.GetData(18, ref angleMinDeg);
-            DA.GetData(19, ref angleOptDeg);
-            DA.GetData(20, ref lenTooShort);
-            DA.GetData(21, ref lenOptLow);
-            DA.GetData(22, ref lenOptHigh);
-            DA.GetData(23, ref lenTooLong);
-            DA.GetData(24, ref numObjectives);
+            DA.GetData(18, ref repetWeight);
+            DA.GetData(19, ref angleMinDeg);
+            DA.GetData(21, ref angleOptDeg);
+            DA.GetData(22, ref lenTooShort);
+            DA.GetData(23, ref lenOptLow);
+            DA.GetData(24, ref lenOptHigh);
+            DA.GetData(25, ref lenTooLong);
+            DA.GetData(26, ref numObjectives);
             int singleObjType = 0, utilObjType = 0;
-            DA.GetData(25, ref singleObjType);
-            DA.GetData(26, ref utilObjType);
-            DA.GetData(27, ref selfWeight);
-            DA.GetData(28, ref croSecOpt);
+            DA.GetData(27, ref singleObjType);
+            DA.GetData(28, ref utilObjType);
+            DA.GetData(29, ref selfWeight);
+            DA.GetData(30, ref croSecOpt);
 
             var rawDomains = new List<GH_Interval>();
-            if (DA.GetDataList(29, rawDomains) && rawDomains.Count > 0)
+            if (DA.GetDataList(31, rawDomains) && rawDomains.Count > 0)
                 settings.MetricDomains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(30, ref gravityDir);
-            DA.GetData(31, ref clusterElite);
-            DA.GetData(32, ref csOptIterations);
+            DA.GetData(32, ref gravityDir);
+            DA.GetData(33, ref clusterElite);
+            DA.GetData(34, ref csOptIterations);
 
             settings.PopulationSize = populationSize;
             settings.Generations = generations;
@@ -243,6 +252,8 @@ namespace ShapeGrammar3D.Components
             settings.AngleWeight = angleWeight;
             settings.LengthWeight = lengthWeight;
             settings.IntersectionWeight = intersectionWeight;
+            settings.RepetWeight = repetWeight;
+            settings.DuplicateWeight = duplicateWeight;
             settings.AngleMinDeg = angleMinDeg;
             settings.AngleOptDeg = angleOptDeg;
             settings.LenTooShort = lenTooShort;
