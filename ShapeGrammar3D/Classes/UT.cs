@@ -157,5 +157,31 @@ namespace ShapeGrammar3D.Classes
         {
             return ss?.DeepCopy();
         }
+
+        /// <summary>
+        /// Deep copy for List of SG_Shape using each item's DeepCopy method.
+        /// </summary>
+        /// <param name="shapes"></param>
+        /// <returns></returns>
+        public static List<SG_Shape> DeepCopy(List<SG_Shape> shapes)
+        {
+            if (shapes == null)
+                return null;
+
+            return shapes.Select(s => s?.DeepCopy()).ToList();
+        }
+
+        /// <summary>
+        /// Deep copy for List of GAIndividual using each item's Clone method.
+        /// </summary>
+        /// <param name="individuals"></param>
+        /// <returns></returns>
+        public static List<GAIndividual> DeepCopy(List<GAIndividual> individuals)
+        {
+            if (individuals == null)
+                return null;
+
+            return individuals.Select(i => i?.Clone()).ToList();
+        }
     }
 }

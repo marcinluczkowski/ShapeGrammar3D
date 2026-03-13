@@ -26,13 +26,12 @@ namespace ShapeGrammar3D.Classes.Rules
         {
         }
 
-        //public SG_AutoRule060_3D(string _eName, int[] _domain)
-        public SG_AutoRule061_3D(string _eName)
+        public SG_AutoRule061_3D(string _eName, int[] _domain)
         {
             RuleState = State.alpha;
-            Name = "SG_AutoRule060-3D";
+            Name = "SG_AutoRule061-3D";
             ElemName = _eName;
-            // Domain = _domain;
+            Domain = _domain;
 
             RuleMarker = UT.RULE061_MARKER;
 
@@ -46,16 +45,18 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 05-3d
+            // algorithm for rule 061-3d
             SH_CrossSection_Beam def_crosec = ss_ref.Elems?
                 .OfType<SG_Elem1D>()
                 .FirstOrDefault()?.CrossSection;
+
             if (def_crosec == null)
             {
                 var fallback = new SH_CrossSection_Rectangle(10, 10);
                 fallback.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
                 def_crosec = fallback;
             }
+
             // find relevant range in genotype
             int sid = -999;
             int eid = -999;
@@ -73,7 +74,7 @@ namespace ShapeGrammar3D.Classes.Rules
             selectedIntGenes = gt.IntGenes.GetRange(sid, eid - sid);
             selectedDGenes = gt.DGenes.GetRange(sid, eid - sid);
 
-            // double range = Domain[1] - Domain[0];
+            double range = Domain[1] - Domain[0]; 
 
             var studElements = new List<SG_Element>();
             for (int i = 0; i < ss_ref.Elems.Count; i++)
@@ -83,17 +84,14 @@ namespace ShapeGrammar3D.Classes.Rules
                     studElements.Add(ss_ref.Elems[i]);
                 }
             }
-
-            RhinoApp.WriteLine("Total Stud Elements {0}", studElements.Count.ToString());
-
-            var initialElems = new List<SG_Element>();
-            if (studElements != null || studElements.Count() != 0)
-            {
-                initialElems = ss_ref.Elems.Where(e => e.Autorule == UT.RULE010_MARKER).ToList();
-            }
-
+            
             for (int i = 0; i < selectedIntGenes.Count; i++)
             {
+
+                if (selectedIntGenes[i] == 0) continue;
+
+                int numLns = (int) (selectedDGenes[i] * range); 
+
                 var stud0 = (SG_Elem1D)studElements[i];
 
                 var iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
@@ -101,35 +99,60 @@ namespace ShapeGrammar3D.Classes.Rules
                 var targetElements = new List<SG_Element>();
                 for (int j = 0; j < studElements.Count; j++)
                 {
+                    if (i == j) continue; // if the same stud, just continue.
+
                     var stud1 = (SG_Elem1D)studElements[j];
+
                     var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
 
-                    if (iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0) // &&
-                                                                                  //iniCrv.PointAtEnd.CompareTo(iniCrv1.PointAtEnd) == -1 &&
-                                                                                  //iniCrv.GetLength() != iniCrv1.GetLength())
+                    if (iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0) 
                     {
                         targetElements.Add(stud1);
-                        RhinoApp.WriteLine("Added element as target.");
+
+                        // this is atm not perfect. if initial lines are split but originated from the same line, the algorithm recognises as separate lines.
                     }
 
                     else
                     {
-                        RhinoApp.WriteLine("Skipped element due to orientation or length. {0}", iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart).ToString());
-                        RhinoApp.WriteLine("iniCrv.PointAtStart: {0}", iniCrv.PointAtStart.ToString());
-                        RhinoApp.WriteLine("iniCrv1.PointAtStart: {0}", iniCrv1.PointAtStart.ToString());
                     }
 
                 }
 
-                Rhino.RhinoApp.WriteLine("numTargetElems {0}", targetElements.Count.ToString());
+                var targetPts = new List<Point3d>();
+                foreach (var elem in targetElements)
+                {
+                    var elem1D = (SG_Elem1D)elem;
+                    foreach (var node in elem1D.Nodes)
+                    {
+                        targetPts.Add(node.Pt);
+                    }
+                }
+                targetPts = targetPts.OrderBy(pt => pt.DistanceTo(stud0.Nodes[1].Pt)).ToList();
 
-                var targetStud = targetElements.OrderBy(t => t.Nodes[0].Pt.DistanceTo(stud0.Nodes[0].Pt)).ToList()[0];
+                for (int j = 0; j < numLns; j++)
+                {
+                    var newLine = new Line(stud0.Nodes[1].Pt, targetPts[j]);
+                    var new_beam = new SG_Elem1D(newLine, -999, "3DAR61", def_crosec) { Autorule = UT.RULE061_MARKER };
 
-                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[0].Pt, targetStud.Nodes[0].Pt), -999, "3DAR5", def_crosec) { Autorule = UT.RULE061_MARKER };
+                    // Check if beam already exists at the same location
+                    bool isDuplicate = ss_ref.Elems.OfType<SG_Elem1D>().Any(existingElem =>
+                    {
+                        var existingLine = new Line(existingElem.Nodes[0].Pt, existingElem.Nodes[1].Pt);
+                        
+                        // Check if lines are the same (in either direction) with tolerance
+                        bool sameDirection = newLine.From.DistanceTo(existingLine.From) < 0.001 && 
+                                           newLine.To.DistanceTo(existingLine.To) < 0.001;
+                        bool reverseDirection = newLine.From.DistanceTo(existingLine.To) < 0.001 && 
+                                              newLine.To.DistanceTo(existingLine.From) < 0.001;
+                        
+                        return sameDirection || reverseDirection;
+                    });
 
-                ss_ref.AddNewElement(newBeam);
-
-
+                    if (!isDuplicate)
+                    {
+                        ss_ref.AddNewElement(new_beam);
+                    }
+                }
             }
 
             return "Auto-rule 061-3D successfully applied.";
