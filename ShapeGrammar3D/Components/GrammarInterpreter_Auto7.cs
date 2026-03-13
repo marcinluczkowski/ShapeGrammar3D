@@ -925,7 +925,7 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("F1A2B3C4-D5E6-4F7A-8B9C-0D1E2F3A4B5C"); }
+            get { return new Guid("A7B8C9D0-E1F2-4A3B-8C5D-6E7F8A9B0C1D"); }
         }
 
         /// <summary>
