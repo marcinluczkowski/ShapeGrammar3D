@@ -32,6 +32,7 @@ namespace ShapeGrammar3D.Classes.Elements
         public Line Ln { get; set; }
         public Curve Crv { get; set; }
         public Curve Init_Crv { get; set; }
+        public Curve Joined_Init_Crv { get; set; }
         public Plane EPln { get; set; }
         public SH_CrossSection_Beam CrossSection { get; set; }
 
@@ -258,6 +259,7 @@ namespace ShapeGrammar3D.Classes.Elements
                 Ln = Ln,
                 Crv = Crv?.DuplicateCurve(),
                 Init_Crv = Init_Crv?.DuplicateCurve(),
+                Joined_Init_Crv = Joined_Init_Crv?.DuplicateCurve(),
                 EPln = EPln,
                 CrossSection = CrossSection // if mutable, add its own clone
             };
