@@ -117,6 +117,8 @@ namespace ShapeGrammar3D.Components
                 }
             }
 
+
+
             foreach (var sup in sups)
             {
                 // find the index of the node where the support applies
@@ -130,6 +132,9 @@ namespace ShapeGrammar3D.Components
                 }
             }
             
+            // join Init_Crv where possible
+            JoinInitialCurves(renumberedElems);
+
             // add the loads to the simple shape            
             SortLoads(loads, out List<SG_LineLoad> l_loads, out List<SG_PointLoad> p_loads);
 
@@ -171,6 +176,83 @@ namespace ShapeGrammar3D.Components
             }
             line_loads = ll;
             point_loads = pl;
+        }
+
+        private void JoinInitialCurves(List<SG_Element> elements)
+        {
+            var elem1DList = elements.OfType<SG_Elem1D>().Where(e => e.Init_Crv != null).ToList();
+
+            if (elem1DList.Count == 0) return;
+
+            var processed = new HashSet<int>();
+
+            foreach (var elem in elem1DList)
+            {
+                if (processed.Contains(elem.ID)) continue;
+
+                var curvesToJoin = new List<Curve> { elem.Init_Crv };
+                var groupedElements = new List<SG_Elem1D> { elem };
+                processed.Add(elem.ID);
+
+                bool foundConnection = true;
+                while (foundConnection)
+                {
+                    foundConnection = false;
+
+                    foreach (var otherElem in elem1DList)
+                    {
+                        if (processed.Contains(otherElem.ID)) continue;
+
+                        bool canJoin = false;
+                        foreach (var existingCrv in curvesToJoin.ToList())
+                        {
+                            if (AreCurvesConnectable(existingCrv, otherElem.Init_Crv))
+                            {
+                                canJoin = true;
+                                break;
+                            }
+                        }
+
+                        if (canJoin)
+                        {
+                            curvesToJoin.Add(otherElem.Init_Crv);
+                            groupedElements.Add(otherElem);
+                            processed.Add(otherElem.ID);
+                            foundConnection = true;
+                        }
+                    }
+                }
+
+                if (curvesToJoin.Count > 1)
+                {
+                    var joinedCurves = Curve.JoinCurves(curvesToJoin, UT.PRES);
+
+                    if (joinedCurves != null && joinedCurves.Length > 0)
+                    {
+                        var joinedNurbsCurve = joinedCurves[0].ToNurbsCurve();
+                        foreach (var groupedElem in groupedElements)
+                        {
+                            groupedElem.Joined_Init_Crv = joinedNurbsCurve;
+                        }
+                    }
+                }
+                else
+                {
+                    elem.Joined_Init_Crv = elem.Init_Crv?.ToNurbsCurve();
+                }
+            }
+        }
+
+        private bool AreCurvesConnectable(Curve crv1, Curve crv2)
+        {
+            if (crv1 == null || crv2 == null) return false;
+
+            double tolerance = UT.PRES;
+
+            return crv1.PointAtStart.DistanceTo(crv2.PointAtStart) < tolerance ||
+                   crv1.PointAtStart.DistanceTo(crv2.PointAtEnd) < tolerance ||
+                   crv1.PointAtEnd.DistanceTo(crv2.PointAtStart) < tolerance ||
+                   crv1.PointAtEnd.DistanceTo(crv2.PointAtEnd) < tolerance;
         }
 
 

@@ -94,22 +94,20 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var stud0 = (SG_Elem1D)studElements[i];
 
-                var iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                var joinedIniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Joined_Init_Crv;
 
                 var targetElements = new List<SG_Element>();
                 for (int j = 0; j < studElements.Count; j++)
                 {
                     if (i == j) continue; // if the same stud, just continue.
 
-                    var stud1 = (SG_Elem1D)studElements[j];
+                    var stud1 = (SG_Elem1D) studElements[j];
 
-                    var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                    var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Joined_Init_Crv;
 
-                    if (iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0) 
+                    if (joinedIniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0) 
                     {
                         targetElements.Add(stud1);
-
-                        // this is atm not perfect. if initial lines are split but originated from the same line, the algorithm recognises as separate lines.
                     }
 
                     else
