@@ -176,7 +176,7 @@ namespace ShapeGrammar3D.Components
         {
             pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);                          // 0
             pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list); // 1
-            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 2
+            pManager.AddBooleanParameter("Run", "Run", "Run GA (false = skip execution to avoid re-running on every solve)", GH_ParamAccess.item, false);  // 2
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
                 "All GA/interpreter analysis settings packed in one object from GI_Settings component",
                 GH_ParamAccess.item);                                                                                                     // 3
@@ -249,11 +249,26 @@ namespace ShapeGrammar3D.Components
 
             SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
-            bool reset = false;
+            bool run = false;
 
             if (!DA.GetData(0, ref ini_Shape)) return;
             if (!DA.GetDataList(1, rls)) return;
-            if (!DA.GetData(2, ref reset)) return;
+            if (!DA.GetData(2, ref run)) return;
+
+            if (!run)
+            {
+                DA.SetData(0, "GA skipped. Set Run to true to execute.");
+                DA.SetDataList(1, new List<SG_Shape>());
+                DA.SetDataList(2, new List<SG_Shape>());
+                DA.SetDataList(3, new List<Color>());
+                DA.SetDataList(4, new List<Color>());
+                DA.SetDataTree(5, new GH_Structure<GH_Number>());
+                DA.SetDataTree(6, new GH_Structure<GH_Number>());
+                DA.SetDataTree(7, new GH_Structure<GH_Number>());
+                DA.SetDataTree(8, new GH_Structure<GH_Line>());
+                DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                return;
+            }
 
             // --- Settings bundle ---
             var settings = new GrammarInterpreterSettings
@@ -350,7 +365,7 @@ namespace ShapeGrammar3D.Components
             _gravityDir = settings.GravityDir;
 
             // --- init GA ---
-            if (_ga == null || reset)
+            if (_ga == null)
             {
                 InitializeGA();
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "GA initialized");

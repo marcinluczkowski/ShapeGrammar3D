@@ -87,7 +87,7 @@ namespace ShapeGrammar3D.Classes.Rules
             
             for (int i = 0; i < selectedIntGenes.Count; i++)
             {
-
+                if (i >= studElements.Count) break;
                 if (selectedIntGenes[i] == 0) continue;
 
                 int numLns = (int) (selectedDGenes[i] * range); 
@@ -126,8 +126,10 @@ namespace ShapeGrammar3D.Classes.Rules
                     }
                 }
                 targetPts = targetPts.OrderBy(pt => pt.DistanceTo(stud0.Nodes[1].Pt)).ToList();
+                if (targetPts.Count == 0) continue;
 
-                for (int j = 0; j < numLns; j++)
+                int numBeams = Math.Min(numLns, targetPts.Count);
+                for (int j = 0; j < numBeams; j++)
                 {
                     var newLine = new Line(stud0.Nodes[1].Pt, targetPts[j]);
                     var new_beam = new SG_Elem1D(newLine, -999, "3DAR61", def_crosec) { Autorule = UT.RULE061_MARKER };

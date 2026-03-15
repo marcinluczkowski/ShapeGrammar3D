@@ -104,7 +104,7 @@ namespace ShapeGrammar3D.Classes
             if (ruleId == UT.RULE010_MARKER)
                 return 0.40 + 0.30 * t;
             if (ruleId == UT.RULE031_MARKER)
-                return 0.20 + 0.40 * t;
+                return 0.45 + 0.40 * t;  // Rotation: 45%-85%
             return 0.30 + 0.60 * t;
         }
 

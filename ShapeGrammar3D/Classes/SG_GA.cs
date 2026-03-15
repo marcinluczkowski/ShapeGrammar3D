@@ -313,7 +313,7 @@ namespace ShapeGrammar3D.Classes
         /// - Rule 041 (bars) and Rule 051: high activation (70%-90%).
         /// - Rule 01 (subdivision): moderate-high (40%-70%) to ensure enough
         ///   node diversity for strut attachment.
-        /// - Rule 031 (rotation): lower activation (20%-60%).
+        /// - Rule 031 (rotation): higher activation (45%-85%) to favour finding good directions.
         /// - Other rules use the default range (30%-90%).
         /// The population is shuffled after generation to avoid ordering bias.
         /// </summary>
@@ -364,8 +364,8 @@ namespace ShapeGrammar3D.Classes
                     }
                     else if (ruleId == UT.RULE031_MARKER)
                     {
-                        // Rotation: 20% to 60%
-                        activationProb = 0.20 + 0.40 * t;
+                        // Rotation: 45% to 85% — higher so algorithm tries more directions
+                        activationProb = 0.45 + 0.40 * t;
                     }
                     else
                     {

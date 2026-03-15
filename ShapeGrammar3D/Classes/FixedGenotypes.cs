@@ -80,7 +80,7 @@ namespace ShapeGrammar3D.Classes
                     else if (ruleId == UT.RULE010_MARKER)
                         activationProb = 0.40 + 0.30 * t;
                     else if (ruleId == UT.RULE031_MARKER)
-                        activationProb = 0.20 + 0.40 * t;
+                        activationProb = 0.45 + 0.40 * t;  // Rotation: 45%-85%
                     else
                         activationProb = 0.30 + 0.60 * t;
 
