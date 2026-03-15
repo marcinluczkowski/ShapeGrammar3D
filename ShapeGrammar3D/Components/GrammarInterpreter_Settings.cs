@@ -51,7 +51,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
                 "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
                 "0=TotalLength, 1=AvgLength, 2=MaxLength, 3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
-                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=HullAreaXY, 11=HullAspectXY, 12=MeshArea(from lines)",
+                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=HullAreaXY, 11=HullAspectXY, 12=MeshArea(from lines), 13=Convex Hull Volume",
                 GH_ParamAccess.list);                                                                                              // 12
             pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
                 "Use a deterministic pre-generated population (same genotypes every run) for controlled metric comparison experiments.",
