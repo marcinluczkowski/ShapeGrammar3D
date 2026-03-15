@@ -117,14 +117,8 @@ namespace ShapeGrammar3D.Components
                 "All GA/interpreter analysis settings packed in one object from GI_Settings component",
                 GH_ParamAccess.item);                                                                                                     // 3
             pManager.AddIntegerParameter("N Top", "N", "Number of top individuals per cluster to show in First/Last outputs. 0 = all.", GH_ParamAccess.item, 5);  // 4
-            pManager.AddPointParameter("Insert Pt", "Pt", "Base point for convergence graph", GH_ParamAccess.item, Point3d.Origin);        // 5
-            pManager.AddNumberParameter("Graph W", "dX", "Convergence graph width in model units", GH_ParamAccess.item, 15.0);             // 6
-            pManager.AddNumberParameter("Graph H", "dY", "Convergence graph height in model units", GH_ParamAccess.item, 8.0);             // 7
             pManager[3].Optional = true;
             pManager[4].Optional = true;
-            pManager[5].Optional = true;
-            pManager[6].Optional = true;
-            pManager[7].Optional = true;
         }
 
         /// <summary>
@@ -137,16 +131,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_TB_Model(), "Models", "Models", "TB_Model data tree {generation}(individual). Same structure as Shapes.", GH_ParamAccess.tree);  // 2
             pManager.AddIntegerParameter("Cluster", "Cluster", "Cluster index per structure. Tree path {generation}(individual), same as Shapes.", GH_ParamAccess.tree);  // 3
             pManager.AddColourParameter("Colours", "Col", "Cluster colour per structure. Tree path {generation}(individual). Wire to GI_ShapePreviewBIG.", GH_ParamAccess.tree);  // 4
-            pManager.AddNumberParameter("Conv Best", "CBest", "Convergence: best per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree);  // 5
-            pManager.AddNumberParameter("Conv Worst", "CWorst", "Convergence: worst per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree); // 6
-            pManager.AddNumberParameter("Conv Avg", "CAvg", "Convergence: average per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree);   // 7
-            pManager.AddLineParameter("Conv Lines", "CLn", "Convergence graph lines (axes, grid, curves)", GH_ParamAccess.tree);  // 8
-            pManager.AddColourParameter("Conv Colours", "CCol", "Colours for Conv Lines", GH_ParamAccess.tree);                   // 9
-            pManager.AddParameter(new Param_TB_Model(), "TB_models", "TB_models", "Same as Models tree. Backward compatibility.", GH_ParamAccess.tree);  // 10
-            pManager.AddNumberParameter("Fitness", "Fitness", "Fitness per structure. Tree path {generation}(individual).", GH_ParamAccess.tree);  // 11
-            pManager.AddNumberParameter("Topo", "Topo", "Topological metrics per structure. Tree path {generation}(individual); branch = list of values.", GH_ParamAccess.tree);  // 12
-            pManager.AddNumberParameter("Shpe", "Shpe", "Shape metrics per structure. Tree path {generation}(individual); branch = list of values.", GH_ParamAccess.tree);   // 13
-            pManager.AddParameter(new Param_ResultAssembly(), "Result Assembly", "Results", "Per-generation, per-cluster metrics (disp/util/feas best/worst/avg). Wire to GI_ResultAssemblyReader.", GH_ParamAccess.item);  // 14
+            pManager.AddNumberParameter("Fitness", "Fitness", "Fitness per structure. Tree path {generation}(individual).", GH_ParamAccess.tree);  // 5
+            pManager.AddNumberParameter("Topo", "Topo", "Topological metrics per structure. Tree path {generation}(individual); branch = list of values.", GH_ParamAccess.tree);  // 6
+            pManager.AddParameter(new Param_ResultAssembly(), "Result Assembly", "Results", "Per-generation, per-cluster metrics (disp/util/feas best/worst/avg). Wire to GI_ResultAssemblyReader.", GH_ParamAccess.item);  // 7
         }
 
         public override void CreateAttributes() { m_attributes = new GI_Auto7Attributes(this); }
@@ -184,14 +171,7 @@ namespace ShapeGrammar3D.Components
                 DA.SetDataTree(4, new GH_Structure<GH_Colour>());
                 DA.SetDataTree(5, new GH_Structure<GH_Number>());
                 DA.SetDataTree(6, new GH_Structure<GH_Number>());
-                DA.SetDataTree(7, new GH_Structure<GH_Number>());
-                DA.SetDataTree(8, new GH_Structure<GH_Line>());
-                DA.SetDataTree(9, new GH_Structure<GH_Colour>());
-                DA.SetDataTree(10, new GH_Structure<GH_TB_Model>());
-                DA.SetDataTree(11, new GH_Structure<GH_Number>());
-                DA.SetDataTree(12, new GH_Structure<GH_Number>());
-                DA.SetDataTree(13, new GH_Structure<GH_Number>());
-                DA.SetData(14, new GH_ResultAssembly(null));
+                DA.SetData(7, new GH_ResultAssembly(null));
                 return;
             }
 
@@ -299,15 +279,13 @@ namespace ShapeGrammar3D.Components
                 if (_isRunning)
             {
                 DA.SetData(0, "GA is currently running. Please wait for completion.");
-                DA.SetDataList(1, new List<SG_Shape>());
-                DA.SetDataList(2, new List<SG_Shape>());
-                DA.SetDataList(3, new List<Color>());
-                DA.SetDataList(4, new List<Color>());
+                DA.SetDataTree(1, new GH_Structure<IGH_Goo>());
+                DA.SetDataTree(2, new GH_Structure<GH_TB_Model>());
+                DA.SetDataTree(3, new GH_Structure<GH_Integer>());
+                DA.SetDataTree(4, new GH_Structure<GH_Colour>());
                 DA.SetDataTree(5, new GH_Structure<GH_Number>());
                 DA.SetDataTree(6, new GH_Structure<GH_Number>());
-                DA.SetDataTree(7, new GH_Structure<GH_Number>());
-                DA.SetDataTree(8, new GH_Structure<GH_Line>());
-                DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                DA.SetData(7, new GH_ResultAssembly(null));
                 return;
             }
 
@@ -337,15 +315,8 @@ namespace ShapeGrammar3D.Components
             }
 
             int topCount = 20;
-            Point3d insertPt = Point3d.Origin;
-            double graphW = 15.0, graphH = 8.0;
             DA.GetData(4, ref topCount);
-            DA.GetData(5, ref insertPt);
-            DA.GetData(6, ref graphW);
-            DA.GetData(7, ref graphH);
             if (topCount < 0) topCount = 0;  // 0 = show all
-            graphW = Math.Max(1.0, graphW);
-            graphH = Math.Max(1.0, graphH);
 
             List<GAIndividual> evaluatedPop = null;
             List<SG_Shape> evaluatedShapes = null;
@@ -439,7 +410,7 @@ namespace ShapeGrammar3D.Components
                     break;
             }
 
-            OutputFirstLastAndConvergence(DA, lastClusterLog, topCount, insertPt, graphW, graphH);
+                OutputFirstLastAndConvergence(DA, lastClusterLog, topCount);
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
         }
@@ -1022,10 +993,9 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Outputs first/last generation shapes (filtered by top N), TB_models, fitness/metrics, colours, convergence trees, and graph.
+        /// Outputs first/last generation shapes (filtered by top N), Models, fitness/topo, colours, and Result Assembly.
         /// </summary>
-        private void OutputFirstLastAndConvergence(IGH_DataAccess DA, string lastClusterLog,
-            int topCount, Point3d insertPt, double graphW, double graphH)
+        private void OutputFirstLastAndConvergence(IGH_DataAccess DA, string lastClusterLog, int topCount)
         {
             var rawFirst = _firstGenData ?? new List<(SG_Shape, int, double, TB_Model, List<double>, List<double>)>();
             var rawLast = _lastGenData ?? new List<(SG_Shape, int, double, TB_Model, List<double>, List<double>)>();
@@ -1039,7 +1009,6 @@ namespace ShapeGrammar3D.Components
             var coloursTree = new GH_Structure<GH_Colour>();
             var fitnessTree = new GH_Structure<GH_Number>();
             var topoTree = new GH_Structure<GH_Number>();
-            var shpeTree = new GH_Structure<GH_Number>();
 
             int genIdx = 0;
             foreach (var filtered in new[] { firstFiltered, lastFiltered })
@@ -1056,8 +1025,6 @@ namespace ShapeGrammar3D.Components
                     GH_Path indPath = new GH_Path(genIdx, i);
                     foreach (double v in x.TopoValues ?? new List<double>())
                         topoTree.Append(new GH_Number(v), indPath);
-                    foreach (double v in x.ShpeValues ?? new List<double>())
-                        shpeTree.Append(new GH_Number(v), indPath);
                 }
                 genIdx++;
             }
@@ -1066,44 +1033,18 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(2, modelsTree);
             DA.SetDataTree(3, clusterTree);
             DA.SetDataTree(4, coloursTree);
-            DA.SetDataTree(10, modelsTree);
-
-            DA.SetDataTree(11, fitnessTree);
-            DA.SetDataTree(12, topoTree);
-            DA.SetDataTree(13, shpeTree);
+            DA.SetDataTree(5, fitnessTree);
+            DA.SetDataTree(6, topoTree);
 
             if (_resultAssembly != null)
-                DA.SetData(14, new GH_ResultAssembly(_resultAssembly));
+                DA.SetData(7, new GH_ResultAssembly(_resultAssembly));
             else
-                DA.SetData(14, new GH_ResultAssembly(null));
-
-            var convBest = new GH_Structure<GH_Number>();
-            var convWorst = new GH_Structure<GH_Number>();
-            var convAvg = new GH_Structure<GH_Number>();
-            if (_convergenceData != null)
-            {
-                foreach (var (gen, cluster, best, worst, avg) in _convergenceData)
-                {
-                    var path = new GH_Path(gen, cluster);
-                    convBest.Append(new GH_Number(best), path);
-                    convWorst.Append(new GH_Number(worst), path);
-                    convAvg.Append(new GH_Number(avg), path);
-                }
-            }
-            DA.SetDataTree(5, convBest);
-            DA.SetDataTree(6, convWorst);
-            DA.SetDataTree(7, convAvg);
-
-            var linesTree = new GH_Structure<GH_Line>();
-            var colorsTree = new GH_Structure<GH_Colour>();
-            DA.SetDataTree(8, linesTree);
-            DA.SetDataTree(9, colorsTree);
+                DA.SetData(7, new GH_ResultAssembly(null));
 
             string info = string.Format(
-                "GI_Auto7: {0} pop × {1} gen. Shapes/Models tree {{0}}=first gen, {{1}}=last gen (top {2} per cluster). Convergence: {3} entries.\n\n{4}",
+                "GI_Auto7: {0} pop × {1} gen. Shapes/Models tree {{0}}=first gen, {{1}}=last gen (top {2} per cluster).\n\n{3}",
                 _populationSize, _numGenerations,
                 topCount <= 0 ? "all" : topCount.ToString(),
-                _convergenceData?.Count ?? 0,
                 lastClusterLog);
             DA.SetData(0, info);
         }

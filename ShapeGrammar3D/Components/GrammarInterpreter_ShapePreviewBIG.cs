@@ -1,4 +1,7 @@
+using Grasshopper.GUI;
+using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
@@ -8,10 +11,96 @@ using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
+    #region GI_ShapePreviewBIG Attributes
+
+    public class GI_ShapePreviewBIGAttributes : GH_ComponentAttributes
+    {
+        private RectangleF _panelBounds, _btnTable;
+        private const float BTN_H = 22f, PAD = 4f, MIN_W = 160f;
+        private GI_ShapePreviewBIG Comp => (GI_ShapePreviewBIG)Owner;
+
+        public GI_ShapePreviewBIGAttributes(GI_ShapePreviewBIG owner) : base(owner) { }
+
+        protected override void Layout()
+        {
+            base.Layout();
+            float w = Math.Max(Bounds.Width, MIN_W);
+            float x = Bounds.X - (w - Bounds.Width) * 0.5f;
+            float y = Bounds.Bottom + PAD * 2;
+            _btnTable = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
+            _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, BTN_H + PAD * 2);
+            Bounds = new RectangleF(x, Bounds.Y, w, y + BTN_H + PAD - Bounds.Y);
+        }
+
+        protected override void Render(GH_Canvas canvas, Graphics g, GH_CanvasChannel channel)
+        {
+            base.Render(canvas, g, channel);
+            if (channel != GH_CanvasChannel.Objects) return;
+            using (var path = RoundRect(_panelBounds, 5))
+            {
+                g.FillPath(new SolidBrush(Color.FromArgb(220, 245, 245, 245)), path);
+                g.DrawPath(new Pen(Color.FromArgb(140, 160, 160, 160), 0.8f), path);
+            }
+            DrawToggle(g, _btnTable, "Preview Table", Comp.ShowSummaryTable);
+        }
+
+        private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
+        {
+            Color bg = on ? Color.FromArgb(230, 76, 175, 80) : Color.FromArgb(210, 200, 200, 200);
+            Color border = on ? Color.FromArgb(56, 142, 60) : Color.FromArgb(165, 165, 165);
+            using (var path = RoundRect(r, 4))
+            {
+                g.FillPath(new SolidBrush(bg), path);
+                g.DrawPath(new Pen(border, 0.8f), path);
+            }
+            float chk = 13f;
+            var box = new RectangleF(r.X + 6, r.Y + (r.Height - chk) / 2f, chk, chk);
+            g.FillRectangle(new SolidBrush(on ? Color.White : Color.FromArgb(230, 230, 230)), box);
+            if (on)
+            {
+                using (var pen = new Pen(Color.FromArgb(46, 125, 50), 2f))
+                {
+                    g.DrawLine(pen, box.X + 2, box.Y + chk * 0.5f, box.X + chk * 0.35f, box.Bottom - 2);
+                    g.DrawLine(pen, box.X + chk * 0.35f, box.Bottom - 2, box.Right - 2, box.Y + 2);
+                }
+            }
+            var txt = new RectangleF(box.Right + 6, r.Y, r.Width - chk - 18, r.Height);
+            g.DrawString(text, GH_FontServer.Standard, new SolidBrush(on ? Color.White : Color.FromArgb(70, 70, 70)), txt,
+                new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center });
+        }
+
+        public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
+        {
+            if (e.Button == System.Windows.Forms.MouseButtons.Left && _btnTable.Contains(e.CanvasLocation))
+            {
+                Owner.RecordUndoEvent("Toggle Preview Table");
+                Comp.ShowSummaryTable = !Comp.ShowSummaryTable;
+                Owner.ExpireSolution(true);
+                return GH_ObjectResponse.Handled;
+            }
+            return base.RespondToMouseDown(sender, e);
+        }
+
+        private static GraphicsPath RoundRect(RectangleF r, float rad)
+        {
+            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            var p = new GraphicsPath();
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+    }
+
+    #endregion
+
     /// <summary>
     /// Big preview: SG_Shape with deformation, section meshes (gray + utilization-coloured),
     /// utilization labels, and a single summary string per structure for text tags.
@@ -20,10 +109,16 @@ namespace ShapeGrammar3D.Components
     public class GI_ShapePreviewBIG : GH_Component
     {
         private struct DotMark { public Point3d Position; public Color Colour; }
+        private struct TableTextLabel { public Point3d Position; public string Text; }
         private List<DotMark> _angleDots = new List<DotMark>();
         private List<DotMark> _intersectDots = new List<DotMark>();
         private List<DotMark> _danglingDots = new List<DotMark>();
+        private List<TableTextLabel> _summaryTableLabels = new List<TableTextLabel>();
         private double _dotRadius = 0.15;
+        private double _summaryTableTextHeight = 0.3;
+        private double _summaryTableLineHeight = 0.4;
+
+        public bool ShowSummaryTable { get; set; } = false;
 
         public GI_ShapePreviewBIG()
           : base("GI_ShapePreviewBIG", "GI_ShapeBIG",
@@ -31,6 +126,8 @@ namespace ShapeGrammar3D.Components
               UT.CAT, UT.GR_DATA_PREVIEW)
         {
         }
+
+        public override void CreateAttributes() => m_attributes = new GI_ShapePreviewBIGAttributes(this);
 
         public override bool IsPreviewCapable => true;
 
@@ -44,6 +141,16 @@ namespace ShapeGrammar3D.Components
                 args.Display.DrawSphere(new Sphere(d.Position, r), d.Colour);
             foreach (var d in _danglingDots)
                 args.Display.DrawSphere(new Sphere(d.Position, r), d.Colour);
+            if (ShowSummaryTable && _summaryTableLabels != null && _summaryTableLabels.Count > 0)
+            {
+                Color textColor = Color.Black;
+                float h = (float)_summaryTableTextHeight;
+                foreach (var lbl in _summaryTableLabels)
+                {
+                    Plane pl = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
+                    args.Display.Draw3dText(lbl.Text, textColor, pl, h, "Arial");
+                }
+            }
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
@@ -67,6 +174,8 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Fitness", "Fitness", "Fitness per structure (tree, same path). Optional; for summary.", GH_ParamAccess.tree);
             pManager.AddNumberParameter("Topo", "Topo", "Topological metrics per structure (tree, same path). Optional; for summary.", GH_ParamAccess.tree);
             pManager.AddNumberParameter("Shpe", "Shpe", "Shape metrics per structure (tree, same path). Optional; for summary.", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("Table Text H", "TblH", "Text height for summary table preview (model units).", GH_ParamAccess.item, 0.3);
+            pManager.AddNumberParameter("Table Line H", "TblLn", "Line height for summary table preview (model units).", GH_ParamAccess.item, 0.4);
             pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[9].Optional = true;
@@ -79,6 +188,8 @@ namespace ShapeGrammar3D.Components
             pManager[16].Optional = true;
             pManager[17].Optional = true;
             pManager[18].Optional = true;
+            pManager[19].Optional = true;
+            pManager[20].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -89,6 +200,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddPointParameter("Deformed Nodes", "DefPt", "Deformed node points {gen}(ind)(node)", GH_ParamAccess.tree);
             pManager.AddTextParameter("Deformation", "DispTxt", "Deformation summary per structure for text tag (e.g. max displacement)", GH_ParamAccess.tree);
             pManager.AddTextParameter("Summary", "Summary", "One descriptive string per structure: Individual, gen, max disp, util %, VDang, VAng, VIntersect, FeasTotal, Topo/Shpe. For text tag.", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Summary Pt", "SumPt", "Insert point per structure for summary text tag (same X/Y spacing as layout, one point per individual).", GH_ParamAccess.tree);
             pManager.AddMeshParameter("Mesh", "Mesh", "Section meshes (gray, no utilization) {gen}(ind)(element)", GH_ParamAccess.tree);
             pManager.AddMeshParameter("Mesh Util", "MeshU", "Section meshes coloured by utilization {gen}(ind)(element)", GH_ParamAccess.tree);
             pManager.AddPointParameter("Util Label Pts", "UtilPt", "Point at mid-element for utilization text tag {gen}(ind)(element)", GH_ParamAccess.tree);
@@ -101,6 +213,7 @@ namespace ShapeGrammar3D.Components
             _angleDots.Clear();
             _intersectDots.Clear();
             _danglingDots.Clear();
+            _summaryTableLabels.Clear();
 
             GH_Structure<IGH_Goo> shapesTree = new GH_Structure<IGH_Goo>();
             if (!DA.GetDataTree(0, out shapesTree)) return;
@@ -136,6 +249,11 @@ namespace ShapeGrammar3D.Components
             DA.GetData(14, ref insertPt);
             DA.GetData(15, ref dotR);
             _dotRadius = Math.Max(0.01, dotR);
+            double tableTextH = 0.3, tableLineH = 0.4;
+            DA.GetData(19, ref tableTextH);
+            DA.GetData(20, ref tableLineH);
+            _summaryTableTextHeight = Math.Max(0.01, tableTextH);
+            _summaryTableLineHeight = Math.Max(0.01, tableLineH);
 
             GH_Structure<GH_Number> fitnessTree = new GH_Structure<GH_Number>();
             GH_Structure<GH_Number> topoTree = new GH_Structure<GH_Number>();
@@ -156,6 +274,7 @@ namespace ShapeGrammar3D.Components
             var defNodesTree = new GH_Structure<GH_Point>();
             var dispTxtTree = new GH_Structure<GH_String>();
             var summaryTree = new GH_Structure<GH_String>();
+            var summaryPtTree = new GH_Structure<GH_Point>();
             var meshGrayTree = new GH_Structure<GH_Mesh>();
             var meshUtilTree = new GH_Structure<GH_Mesh>();
             var utilLabelPtsTree = new GH_Structure<GH_Point>();
@@ -310,19 +429,19 @@ namespace ShapeGrammar3D.Components
                     string dispTxt = string.Format("Max displacement: {0:F4} mm", maxDisp);
                     dispTxtTree.Append(new GH_String(dispTxt), outPath);
 
-                    string topoStr = "";
+                    string topoLine = "";
                     if (hasTopo && topoTree.PathExists(outPath))
                     {
                         var topoBranch = (List<GH_Number>)topoTree.get_Branch(outPath);
                         if (topoBranch != null && topoBranch.Count > 0)
-                            topoStr = ", Topo: [" + string.Join(", ", topoBranch.Take(5).Select(x => x.Value.ToString("F2"))) + (topoBranch.Count > 5 ? "..." : "") + "]";
+                            topoLine = "Topo: [" + string.Join(", ", topoBranch.Take(5).Select(x => x.Value.ToString("F2"))) + (topoBranch.Count > 5 ? "..." : "") + "]";
                     }
-                    string shpeStr = "";
+                    string shpeLine = "";
                     if (hasShpe && shpeTree.PathExists(outPath))
                     {
                         var shpeBranch = (List<GH_Number>)shpeTree.get_Branch(outPath);
                         if (shpeBranch != null && shpeBranch.Count > 0)
-                            shpeStr = ", Shpe: [" + string.Join(", ", shpeBranch.Take(5).Select(x => x.Value.ToString("F2"))) + (shpeBranch.Count > 5 ? "..." : "") + "]";
+                            shpeLine = "Shpe: [" + string.Join(", ", shpeBranch.Take(5).Select(x => x.Value.ToString("F2"))) + (shpeBranch.Count > 5 ? "..." : "") + "]";
                     }
                     double fitnessVal = 0;
                     if (hasFitness && fitnessTree.PathExists(new GH_Path(genIdxPath)))
@@ -331,10 +450,30 @@ namespace ShapeGrammar3D.Components
                         if (fitBranch != null && i < fitBranch.Count && fitBranch[i] != null)
                             fitnessVal = fitBranch[i].Value;
                     }
-                    string summary = string.Format(
-                        "Individual {0} in generation {1}, max displacement: {2:F4} mm, max utilization: {3:F1}%, average utilization: {4:F1}%, VDang: {5:F3}, VAng: {6:F3}, VLen: {7:F3}, VIntersect: {8:F3}, FeasTotal: {9:F3}, Fitness: {10:F4}{11}{12}",
-                        i, genIdxPath, maxDisp, maxUtil * 100.0, avgUtil * 100.0, feas.VDang, feas.VAng, feas.VLen, feas.VIntersect, feas.TotalViolation, fitnessVal, topoStr, shpeStr);
+                    var summaryLines = new List<string>
+                    {
+                        string.Format("Individual {0} in generation {1}", i, genIdxPath),
+                        string.Format("max displacement: {0:F4} mm", maxDisp),
+                        string.Format("max utilization: {0:F1}%", maxUtil * 100.0),
+                        string.Format("average utilization: {0:F1}%", avgUtil * 100.0),
+                        string.Format("VDang: {0:F3}, VAng: {1:F3}, VLen: {2:F3}, VIntersect: {3:F3}", feas.VDang, feas.VAng, feas.VLen, feas.VIntersect),
+                        string.Format("FeasTotal: {0:F3}", feas.TotalViolation),
+                        string.Format("Fitness: {0:F4}", fitnessVal)
+                    };
+                    if (!string.IsNullOrEmpty(topoLine)) summaryLines.Add(topoLine);
+                    if (!string.IsNullOrEmpty(shpeLine)) summaryLines.Add(shpeLine);
+                    string summary = string.Join("\n", summaryLines);
                     summaryTree.Append(new GH_String(summary), outPath);
+                    Point3d summaryPt = new Point3d(insertPt.X + b * xSpacing, insertPt.Y - i * ySpacing, insertPt.Z);
+                    summaryPtTree.Append(new GH_Point(summaryPt), outPath);
+                    for (int lineIdx = 0; lineIdx < summaryLines.Count; lineIdx++)
+                    {
+                        _summaryTableLabels.Add(new TableTextLabel
+                        {
+                            Position = new Point3d(summaryPt.X, summaryPt.Y - lineIdx * _summaryTableLineHeight, summaryPt.Z),
+                            Text = summaryLines[lineIdx]
+                        });
+                    }
 
                     if (showAngle)
                     {
@@ -366,11 +505,12 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(3, defNodesTree);
             DA.SetDataTree(4, dispTxtTree);
             DA.SetDataTree(5, summaryTree);
-            DA.SetDataTree(6, meshGrayTree);
-            DA.SetDataTree(7, meshUtilTree);
-            DA.SetDataTree(8, utilLabelPtsTree);
-            DA.SetDataTree(9, utilLabelTxtTree);
-            DA.SetData(10, string.Format(
+            DA.SetDataTree(6, summaryPtTree);
+            DA.SetDataTree(7, meshGrayTree);
+            DA.SetDataTree(8, meshUtilTree);
+            DA.SetDataTree(9, utilLabelPtsTree);
+            DA.SetDataTree(10, utilLabelTxtTree);
+            DA.SetData(11, string.Format(
                 "GI_ShapePreviewBIG: {0} structures. Mesh: {1}, Mesh Util: {2}, Deformed: {3}.",
                 totalCount, showMesh ? "ON" : "OFF", showUtil ? "ON" : "OFF", useDeformed ? "ON" : "OFF"));
         }
