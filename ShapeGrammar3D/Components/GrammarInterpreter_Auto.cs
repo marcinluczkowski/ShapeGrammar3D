@@ -108,7 +108,7 @@ namespace ShapeGrammar3D.Components
             //{
             if (_currentPopulation == null)
             {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls);
+                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
                 List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
                 _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
                 // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
@@ -206,16 +206,14 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Gets chromosome lengths based on the number of rules
+        /// Gets chromosome lengths based on each rule's iteration target.
         /// </summary>
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape shape)
         {
-            // Allocate genes per rule; adjust as needed per rule complexity
-            var R = new Random();
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(11); // default length per rule
+                lengths.Add(rules[i].GetChromosomeLength(shape));
             }
             return lengths;
         }

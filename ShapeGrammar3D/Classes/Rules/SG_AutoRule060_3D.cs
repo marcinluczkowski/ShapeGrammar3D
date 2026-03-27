@@ -38,6 +38,8 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         // --- methods ---
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {
@@ -94,13 +96,25 @@ namespace ShapeGrammar3D.Classes.Rules
             {
                 var stud0 = (SG_Elem1D)studElements[i];
 
-                var iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                var baseElem0 = stud0.Nodes[0].Elements
+                    .Where(e => e.Autorule == UT.RULE010_MARKER)
+                    .OfType<SG_Elem1D>()
+                    .FirstOrDefault();
+                if (baseElem0 == null) continue;
+                var iniCrv = baseElem0.Init_Crv;
+                if (iniCrv == null) continue;
 
                 var targetElements = new List<SG_Element>();
                 for (int j = 0; j < studElements.Count; j++)
                 {
                     var stud1 = (SG_Elem1D)studElements[j];
-                    var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                    var baseElem1 = stud1.Nodes[0].Elements
+                        .Where(e => e.Autorule == UT.RULE010_MARKER)
+                        .OfType<SG_Elem1D>()
+                        .FirstOrDefault();
+                    if (baseElem1 == null) continue;
+                    var iniCrv1 = baseElem1.Init_Crv;
+                    if (iniCrv1 == null) continue;
 
                     if (iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0)
                     {
