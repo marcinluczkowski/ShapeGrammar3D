@@ -110,12 +110,12 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.BoundingBoxVolume => "BBox Volume",
                 ShapeMetricType.BoundingBoxDiagonal => "BBox Diagonal",
                 ShapeMetricType.TotalStructuralVolume => "Total Structural Volume",
-                ShapeMetricType.MaxNodeSpan => "Max Node Span",
-                ShapeMetricType.Compactness => "Compactness (L/diag)",
-                ShapeMetricType.ConvexHullAreaXY => "Hull Area XY",
-                ShapeMetricType.HullAspectRatioXY => "Hull Aspect XY",
-                ShapeMetricType.MeshAreaFromLines => "Mesh Area (from lines)",
-                ShapeMetricType.ConvexHullVolume => "Convex Hull Volume",
+                ShapeMetricType.MaxNodeSpan           => "Max Node Span",
+                ShapeMetricType.Compactness           => "Compactness (L/diag)",
+                ShapeMetricType.ConvexHullAreaXY      => "Hull Area XY",
+                ShapeMetricType.HullAspectRatioXY     => "Hull Aspect XY",
+                ShapeMetricType.MeshAreaFromLines     => "Mesh Area (from lines)",
+                ShapeMetricType.ConvexHullVolume      => "Convex Hull Volume",
                 _ => "Unknown"
             };
         }
@@ -324,7 +324,7 @@ namespace ShapeGrammar3D.Classes
 
                 // Add all vertices to mesh
                 foreach (var pt in hullPts)
-                    mesh.Vertices.Add(pt);
+                    mesh.Vertices.Add(pt); 
 
                 // Simple convex hull triangulation from centroid
                 var centroid = Point3d.Origin;

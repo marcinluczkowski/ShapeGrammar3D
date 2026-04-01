@@ -41,7 +41,9 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
 
-        // --- methods ---
+    // --- methods ---
+
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
 
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
 

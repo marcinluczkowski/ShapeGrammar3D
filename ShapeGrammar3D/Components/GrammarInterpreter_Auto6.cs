@@ -234,7 +234,7 @@ namespace ShapeGrammar3D.Components
 
             if (_currentPopulation == null)
             {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape.Nodes?.Count ?? 11);
+                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
                 List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
 
                 if (useFixedSeed)
@@ -505,14 +505,14 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Gets chromosome lengths based on the number of rules.
+        /// Gets chromosome lengths based on each rule's iteration target.
         /// </summary>
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules, int nodeCount)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape shape)
         {
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(Math.Max(11, nodeCount + 2));
+                lengths.Add(rules[i].GetChromosomeLength(shape));
             }
             return lengths;
         }

@@ -22,6 +22,18 @@
     <Description>Description of ShapeGrammar3D</Description>
     <BaseOutputPath>bin</BaseOutputPath>
   </PropertyGroup>
+
+  <!-- Auto-copy .gha + dependencies to Grasshopper Libraries after build -->
+  <Target Name="CopyToGrasshopperLibraries" AfterTargets="AfterBuild">
+    <PropertyGroup>
+      <GrasshopperLibDir>$(APPDATA)\Grasshopper\Libraries\ShapeGrammar3D</GrasshopperLibDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(GrasshopperLibDir)" />
+    <ItemGroup>
+      <GhaFiles Include="$(TargetDir)**\*.*" Exclude="$(TargetDir)**\Grasshopper.dll;$(TargetDir)**\RhinoCommon.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GhaFiles)" DestinationFolder="$(GrasshopperLibDir)\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
   
   <ItemGroup>
     <Compile Remove="Properties\AssemblyInfo.cs" />
