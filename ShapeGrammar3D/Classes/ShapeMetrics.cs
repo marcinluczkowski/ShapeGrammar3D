@@ -77,20 +77,20 @@ namespace ShapeGrammar3D.Classes
 
             return (ShapeMetricType)metricType switch
             {
-                ShapeMetricType.TotalLength           => TotalLength(shape),
-                ShapeMetricType.AvgLength             => AvgLength(shape),
-                ShapeMetricType.MaxLength             => MaxLength(shape),
-                ShapeMetricType.MinLength             => MinLength(shape),
-                ShapeMetricType.StdDevLength          => StdDevLength(shape),
-                ShapeMetricType.BoundingBoxVolume     => BoundingBoxVolume(shape),
-                ShapeMetricType.BoundingBoxDiagonal   => BoundingBoxDiagonal(shape),
+                ShapeMetricType.TotalLength => TotalLength(shape),
+                ShapeMetricType.AvgLength => AvgLength(shape),
+                ShapeMetricType.MaxLength => MaxLength(shape),
+                ShapeMetricType.MinLength => MinLength(shape),
+                ShapeMetricType.StdDevLength => StdDevLength(shape),
+                ShapeMetricType.BoundingBoxVolume => BoundingBoxVolume(shape),
+                ShapeMetricType.BoundingBoxDiagonal => BoundingBoxDiagonal(shape),
                 ShapeMetricType.TotalStructuralVolume => TotalStructuralVolume(shape),
-                ShapeMetricType.MaxNodeSpan           => MaxNodeSpan(shape),
-                ShapeMetricType.Compactness           => Compactness(shape),
-                ShapeMetricType.ConvexHullAreaXY      => ConvexHullAreaXY(shape),
-                ShapeMetricType.HullAspectRatioXY     => HullAspectRatioXY(shape),
-                ShapeMetricType.MeshAreaFromLines     => MeshAreaFromLines(shape),
-                ShapeMetricType.ConvexHullVolume      => ConvexHullVolume(shape),
+                ShapeMetricType.MaxNodeSpan => MaxNodeSpan(shape),
+                ShapeMetricType.Compactness => Compactness(shape),
+                ShapeMetricType.ConvexHullAreaXY => ConvexHullAreaXY(shape),
+                ShapeMetricType.HullAspectRatioXY => HullAspectRatioXY(shape),
+                ShapeMetricType.MeshAreaFromLines => MeshAreaFromLines(shape),
+                ShapeMetricType.ConvexHullVolume => ConvexHullVolume(shape),
                 _ => TotalLength(shape)
             };
         }
@@ -102,13 +102,13 @@ namespace ShapeGrammar3D.Classes
         {
             return (ShapeMetricType)metricType switch
             {
-                ShapeMetricType.TotalLength           => "Total Length",
-                ShapeMetricType.AvgLength             => "Avg Length",
-                ShapeMetricType.MaxLength             => "Max Length",
-                ShapeMetricType.MinLength             => "Min Length",
-                ShapeMetricType.StdDevLength          => "StdDev Length",
-                ShapeMetricType.BoundingBoxVolume     => "BBox Volume",
-                ShapeMetricType.BoundingBoxDiagonal   => "BBox Diagonal",
+                ShapeMetricType.TotalLength => "Total Length",
+                ShapeMetricType.AvgLength => "Avg Length",
+                ShapeMetricType.MaxLength => "Max Length",
+                ShapeMetricType.MinLength => "Min Length",
+                ShapeMetricType.StdDevLength => "StdDev Length",
+                ShapeMetricType.BoundingBoxVolume => "BBox Volume",
+                ShapeMetricType.BoundingBoxDiagonal => "BBox Diagonal",
                 ShapeMetricType.TotalStructuralVolume => "Total Structural Volume",
                 ShapeMetricType.MaxNodeSpan           => "Max Node Span",
                 ShapeMetricType.Compactness           => "Compactness (L/diag)",
