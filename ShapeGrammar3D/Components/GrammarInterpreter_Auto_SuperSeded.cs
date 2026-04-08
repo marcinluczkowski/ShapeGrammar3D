@@ -1,5 +1,6 @@
 ﻿using Grasshopper.Kernel;
 using ShapeGrammar3D.Classes;
+using ShapeGrammar3D.Classes.Elements;
 using ShapeGrammar3D.Classes.Rules;
 using System;
 using System.Collections.Generic;
@@ -56,11 +57,28 @@ namespace ShapeGrammar.Components
 
             // --- solve ---
 
-            // Create a deep copy
             SG_Shape shape = UT.DeepCopy(iniShape);
-            SG_Genotype gt = inigt; // Util.DeepCopy(inigt);
+            SG_Genotype gt = inigt;
 
-            // Select relevant elements
+            rls = EnsureInitShapeFirst(rls);
+
+            // Validate genotype: check all rule markers are present
+            var missingMarkers = new List<string>();
+            foreach (var rule in rls)
+            {
+                int sid = -999, eid = -999;
+                gt.FindRange(ref sid, ref eid, rule.RuleMarker);
+                if (sid == -999 || eid == -999)
+                    missingMarkers.Add(string.Format("{0} (marker {1})", rule.Name, rule.RuleMarker));
+            }
+            if (missingMarkers.Count > 0)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    string.Format("Genotype is missing markers for: {0}. "
+                        + "Ensure all rules are also connected to CreateCustomGenotype.",
+                        string.Join(", ", missingMarkers)));
+            }
+
             for (int i = 0; i < rls.Count; i++)
             {
                 try
@@ -68,16 +86,26 @@ namespace ShapeGrammar.Components
                     string message = rls[i].RuleOperation(ref shape, ref gt);
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, message);
                 }
-
                 catch (Exception ex)
                 {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error,
+                        string.Format("Rule {0} threw: {1}", rls[i].Name, ex.Message));
                     return;
                 }
             }
 
             // --- output ---
             DA.SetData(0, shape);
+        }
+
+        private static List<SG_Rule> EnsureInitShapeFirst(List<SG_Rule> rules)
+        {
+            var initRules = rules.Where(r => r is SG_AutoRule_InitShape_3D).ToList();
+            if (initRules.Count == 0) return rules;
+            var otherRules = rules.Where(r => !(r is SG_AutoRule_InitShape_3D)).ToList();
+            var sorted = new List<SG_Rule>(initRules);
+            sorted.AddRange(otherRules);
+            return sorted;
         }
 
         /// <summary>

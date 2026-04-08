@@ -1,13 +1,8 @@
-using Grasshopper.GUI;
-using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
-using System.Drawing;
-using System.Drawing.Drawing2D;
 using ShapeGrammar3D.Classes.Elements;
 using ShapeGrammar3D.Classes.Rules;
 using ShapeGrammar3D.Classes.Toolbox;
@@ -17,103 +12,16 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    #region GI_Auto7 Attributes
-
-    public class GI_Auto7Attributes : GH_ComponentAttributes
+    public class GrammarInterpreter_Auto8 : GH_Component
     {
-        private RectangleF _panelBounds, _btnConv;
-        private const float BTN_H = 22f, PAD = 4f, MIN_W = 200f;
-        private GrammarInterpreter_Auto7 Comp => (GrammarInterpreter_Auto7)Owner;
-
-        public GI_Auto7Attributes(GrammarInterpreter_Auto7 owner) : base(owner) { }
-
-        protected override void Layout()
-        {
-            base.Layout();
-            float w = Math.Max(Bounds.Width, MIN_W);
-            float x = Bounds.X - (w - Bounds.Width) * 0.5f;
-            float y = Bounds.Bottom + PAD * 2;
-            float cx = x + PAD, cw = w - PAD * 2;
-            _btnConv = new RectangleF(cx, y, cw, BTN_H);
-            _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, BTN_H + PAD * 2);
-            Bounds = new RectangleF(x, Bounds.Y, w, y + BTN_H + PAD - Bounds.Y);
-        }
-
-        protected override void Render(GH_Canvas canvas, Graphics g, GH_CanvasChannel channel)
-        {
-            base.Render(canvas, g, channel);
-            if (channel != GH_CanvasChannel.Objects) return;
-            g.SmoothingMode = SmoothingMode.HighQuality;
-            using (var path = RoundRect(_panelBounds, 5))
-            {
-                g.FillPath(new SolidBrush(Color.FromArgb(220, 245, 245, 245)), path);
-                g.DrawPath(new Pen(Color.FromArgb(140, 160, 160, 160), 0.8f), path);
-            }
-            DrawToggle(g, _btnConv, "Show Convergence Graph", Comp.ShowConvergence);
-        }
-
-        private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
-        {
-            Color bg = on ? Color.FromArgb(230, 76, 175, 80) : Color.FromArgb(210, 200, 200, 200);
-            Color border = on ? Color.FromArgb(56, 142, 60) : Color.FromArgb(165, 165, 165);
-            using (var path = RoundRect(r, 4))
-            {
-                g.FillPath(new SolidBrush(bg), path);
-                g.DrawPath(new Pen(border, 0.8f), path);
-            }
-            float chk = 13f;
-            var box = new RectangleF(r.X + 6, r.Y + (r.Height - chk) / 2f, chk, chk);
-            g.FillRectangle(new SolidBrush(on ? Color.White : Color.FromArgb(230, 230, 230)), box);
-            if (on)
-            {
-                using (var pen = new Pen(Color.FromArgb(46, 125, 50), 2f))
-                {
-                    g.DrawLine(pen, box.X + 2, box.Y + chk * 0.5f, box.X + chk * 0.35f, box.Bottom - 2);
-                    g.DrawLine(pen, box.X + chk * 0.35f, box.Bottom - 2, box.Right - 2, box.Y + 2);
-                }
-            }
-            var txt = new RectangleF(box.Right + 6, r.Y, r.Width - chk - 18, r.Height);
-            g.DrawString(text, GH_FontServer.Standard, new SolidBrush(on ? Color.White : Color.FromArgb(70, 70, 70)), txt,
-                new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center });
-        }
-
-        public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
-        {
-            if (e.Button == System.Windows.Forms.MouseButtons.Left && _btnConv.Contains(e.CanvasLocation))
-            {
-                Owner.RecordUndoEvent("Toggle Convergence"); Comp.ShowConvergence = !Comp.ShowConvergence; Owner.ExpireSolution(true);
-                return GH_ObjectResponse.Handled;
-            }
-            return base.RespondToMouseDown(sender, e);
-        }
-
-        private static GraphicsPath RoundRect(RectangleF r, float rad)
-        {
-            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
-            var p = new GraphicsPath();
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
-    }
-
-    #endregion
-
-    public class GrammarInterpreter_Auto7 : GH_Component
-    {
-        // Genetic Algorithm configuration (overridable from GH inputs). Defaults for large runs (1000 pop, 100 gen).
-        private int _populationSize = 1000;
-        private int _numGenerations = 100;
+        private int _populationSize = 5;
+        private int _numGenerations = 3;
         private int _numClusters = 1;
         private double _mutationProbability = 0.10;
         private double _crossoverProbability = 0.9;
         private double _eliteProbability = 0.1;
-        private const bool MAXIMIZE = false; // Minimize displacement
+        private const bool MAXIMIZE = false;
 
-        // Clustering configuration
         private double _topoWeight = 1.0;
         private double _shapeWeight = 1.0;
         private double _fitnessWeight = 0.0;
@@ -122,26 +30,20 @@ namespace ShapeGrammar3D.Components
         private List<int> _topoMetricTypes = new List<int> { 0 };
         private List<int> _shapeMetricTypes = new List<int> { 0 };
 
-        // Feasibility configuration
         private FeasibilitySettings _feasibilitySettings = FeasibilitySettings.Default();
 
-        // Cluster elite: guaranteed survivors per cluster per generation
         private int _clusterEliteCount = 0;
 
-        // Multi-objective configuration
         private int _numObjectives = 1;
-        private int _singleObjType = 0;  // 0=Disp, 1=Feas, 2=AvgUtilDev, 3=MaxUtil
-        private int _utilObjType = 0;    // 0=AvgDev, 1=MaxUtil
+        private int _singleObjType = 0;
+        private int _utilObjType = 0;
 
-        // Self-weight
         private bool _useSelfWeight = false;
         private Vector3d _gravityDir = new Vector3d(0, 0, -1);
 
-        // Cross-section optimization: 0=off, 1=Rect, 2=SHS catalog
         private int _croSecOptMode = 0;
         private int _croSecMaxIter = 40;
 
-        // User-supplied normalization domains (one per metric dimension)
         private List<Rhino.Geometry.Interval> _metricDomains = null;
 
         private SG_GA _ga;
@@ -149,126 +51,68 @@ namespace ShapeGrammar3D.Components
         private int _currentGeneration;
         private List<GAIndividual> _currentPopulation;
         private bool _isRunning;
-        // Memory-optimized: only first and last generation shapes stored with cluster+fitness for filtering.
-        private List<(SG_Shape Shape, int Cluster, double Fitness)> _firstGenData;
-        private List<(SG_Shape Shape, int Cluster, double Fitness)> _lastGenData;
-        /// <summary>Per generation, per cluster: (gen, cluster, best, worst, avg) fitness for convergence plots.</summary>
-        private List<(int gen, int cluster, double best, double worst, double avg)> _convergenceData;
+        private List<List<GAIndividual>> _allGenerations;
+        private List<List<SG_Shape>> _allShapes;
+        private List<List<TB_Model>> _allModels;
+        private GARunStore _runStore;
 
-        public bool ShowConvergence { get; set; } = true;
-        internal List<GraphLabel> _convLabels = new List<GraphLabel>();
-        private const double CONV_TEXT_HEIGHT = 0.12;
-
-        /// <summary>
-        /// Large-scale GA interpreter: 1000 pop × 100 gen by default. Stores only first and last generation shapes and lightweight convergence data per cluster per generation.
-        /// </summary>
-        public GrammarInterpreter_Auto7()
-          : base("GrammarInterpreter_Auto7", "GI_Auto7",
-              "Large-scale GA (e.g. 1000×100). Outputs first and last generation shapes only; convergence data (best/worst/avg per cluster per gen) for plotting.",
+        public GrammarInterpreter_Auto8()
+          : base("GrammarInterpreter_Auto8", "GI_Auto8",
+              "GA Interpreter without SG_Shape input. Requires AutoRule_InitShape_3D as the first rule to build the initial shape.",
               UT.CAT, UT.GR_INT)
         {
         }
 
-        /// <summary>
-        /// Registers all the input parameters for this component.
-        /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);                          // 0
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list); // 1
-            pManager.AddBooleanParameter("Run", "Run", "Run GA (false = skip execution to avoid re-running on every solve)", GH_ParamAccess.item, false);  // 2
+            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter (first rule must be AutoRule_InitShape_3D)", GH_ParamAccess.list); // 0
+            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 1
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
                 "All GA/interpreter analysis settings packed in one object from GI_Settings component",
-                GH_ParamAccess.item);                                                                                                     // 3
-            pManager.AddNumberParameter("% Top", "Pct", "Percent of top individuals per cluster to show in First/Last outputs. 100=all, 10=top 10% per cluster.", GH_ParamAccess.item, 100.0);  // 4
-            pManager.AddPointParameter("Insert Pt", "Pt", "Base point for convergence graph", GH_ParamAccess.item, Point3d.Origin);        // 5
-            pManager.AddNumberParameter("Graph W", "dX", "Convergence graph width in model units", GH_ParamAccess.item, 15.0);             // 6
-            pManager.AddNumberParameter("Graph H", "dY", "Convergence graph height in model units", GH_ParamAccess.item, 8.0);             // 7
-            pManager[3].Optional = true;
-            pManager[4].Optional = true;
-            pManager[5].Optional = true;
-            pManager[6].Optional = true;
-            pManager[7].Optional = true;
+                GH_ParamAccess.item);                                                                                             // 2
+            pManager[2].Optional = true;
         }
 
-        /// <summary>
-        /// Registers all the output parameters for this component.
-        /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);                                   // 0
-            pManager.AddGenericParameter("First Gen", "First", "SG_Shape list (top % per cluster)", GH_ParamAccess.list);       // 1
-            pManager.AddGenericParameter("Last Gen", "Last", "SG_Shape list (top % per cluster)", GH_ParamAccess.list);         // 2
-            pManager.AddColourParameter("First Colours", "FCol", "Cluster colour per First Gen shape (use with geometry preview)", GH_ParamAccess.list);  // 3
-            pManager.AddColourParameter("Last Colours", "LCol", "Cluster colour per Last Gen shape (use with geometry preview)", GH_ParamAccess.list);   // 4
-            pManager.AddNumberParameter("Conv Best", "CBest", "Convergence: best per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree);  // 5
-            pManager.AddNumberParameter("Conv Worst", "CWorst", "Convergence: worst per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree); // 6
-            pManager.AddNumberParameter("Conv Avg", "CAvg", "Convergence: average per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree);   // 7
-            pManager.AddLineParameter("Conv Lines", "CLn", "Convergence graph lines (axes, grid, curves)", GH_ParamAccess.tree);  // 8
-            pManager.AddColourParameter("Conv Colours", "CCol", "Colours for Conv Lines", GH_ParamAccess.tree);                   // 9
+            pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
+                "In-memory GA run assembly (genotypes, fitness, objectives, models) for Data Preview components",
+                GH_ParamAccess.item);
         }
 
-        public override void CreateAttributes() { m_attributes = new GI_Auto7Attributes(this); }
-
-        public override bool Write(GH_IO.Serialization.GH_IWriter writer)
-        {
-            writer.SetBoolean("ShowConvergence", ShowConvergence);
-            return base.Write(writer);
-        }
-        public override bool Read(GH_IO.Serialization.GH_IReader reader)
-        {
-            if (reader.ItemExists("ShowConvergence")) ShowConvergence = reader.GetBoolean("ShowConvergence");
-            return base.Read(reader);
-        }
-
-        public override bool IsPreviewCapable => true;
-
-        public override void DrawViewportWires(IGH_PreviewArgs args)
-        {
-            base.DrawViewportWires(args);
-            if (!ShowConvergence || Hidden || Locked || _convLabels == null) return;
-            foreach (var lbl in _convLabels)
-            {
-                Plane pl = new Plane(lbl.Position, lbl.XDir, lbl.YDir);
-                args.Display.Draw3dText(lbl.Text, lbl.Color, pl, lbl.Height, "Arial");
-            }
-        }
-
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             _ga = null;
             _currentGeneration = 0;
             _currentPopulation = null;
             _isRunning = false;
-            _firstGenData = null;
-            _lastGenData = null;
-            _convergenceData = new List<(int gen, int cluster, double best, double worst, double avg)>();
+            _allGenerations = new List<List<GAIndividual>>();
+            _allShapes = new List<List<SG_Shape>>();
+            _allModels = new List<List<TB_Model>>();
 
-            SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
-            bool run = false;
+            bool reset = false;
 
-            if (!DA.GetData(0, ref ini_Shape)) return;
-            if (!DA.GetDataList(1, rls)) return;
-            if (!DA.GetData(2, ref run)) return;
+            if (!DA.GetDataList(0, rls)) return;
+            if (!DA.GetData(1, ref reset)) return;
 
-            if (!run)
+            if (!rls.OfType<SG_AutoRule_InitShape_3D>().Any())
             {
-                DA.SetData(0, "GA skipped. Set Run to true to execute.");
-                DA.SetDataList(1, new List<SG_Shape>());
-                DA.SetDataList(2, new List<SG_Shape>());
-                DA.SetDataList(3, new List<Color>());
-                DA.SetDataList(4, new List<Color>());
-                DA.SetDataTree(5, new GH_Structure<GH_Number>());
-                DA.SetDataTree(6, new GH_Structure<GH_Number>());
-                DA.SetDataTree(7, new GH_Structure<GH_Number>());
-                DA.SetDataTree(8, new GH_Structure<GH_Line>());
-                DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error,
+                    "The first rule must be AutoRule_InitShape_3D (no SG_Shape input is provided).");
                 return;
             }
+
+            rls = EnsureInitShapeFirst(rls);
+
+            var ini_Shape = new SG_Shape
+            {
+                Nodes = new List<SG_Node>(),
+                Supports = new List<SG_Support>(),
+                PointLoads = new List<SG_PointLoad>(),
+                LineLoads = new List<SG_LineLoad>()
+            };
 
             // --- Settings bundle ---
             var settings = new GrammarInterpreterSettings
@@ -309,7 +153,7 @@ namespace ShapeGrammar3D.Components
             };
 
             GH_GrammarInterpreterSettings ghSettings = null;
-            if (DA.GetData(3, ref ghSettings) && ghSettings?.Value != null)
+            if (DA.GetData(2, ref ghSettings) && ghSettings?.Value != null)
                 settings = ghSettings.Value;
             settings.Sanitize();
 
@@ -365,36 +209,26 @@ namespace ShapeGrammar3D.Components
             _gravityDir = settings.GravityDir;
 
             // --- init GA ---
-            if (_ga == null)
+            if (_ga == null || reset)
             {
                 InitializeGA();
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "GA initialized");
             }
 
-                if (_isRunning)
+            if (_isRunning)
             {
                 DA.SetData(0, "GA is currently running. Please wait for completion.");
-                DA.SetDataList(1, new List<SG_Shape>());
-                DA.SetDataList(2, new List<SG_Shape>());
-                DA.SetDataList(3, new List<Color>());
-                DA.SetDataList(4, new List<Color>());
-                DA.SetDataTree(5, new GH_Structure<GH_Number>());
-                DA.SetDataTree(6, new GH_Structure<GH_Number>());
-                DA.SetDataTree(7, new GH_Structure<GH_Number>());
-                DA.SetDataTree(8, new GH_Structure<GH_Line>());
-                DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
                 return;
             }
 
             _isRunning = true;
 
-            rls = EnsureInitShapeFirst(rls);
-
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
             if (_currentPopulation == null)
             {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
+                List<int> chromosomeLengths = GetChromosomeLengths(rls);
                 List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
 
                 if (useFixedSeed)
@@ -413,21 +247,10 @@ namespace ShapeGrammar3D.Components
                 }
             }
 
-            double pctTop = 100.0;
-            Point3d insertPt = Point3d.Origin;
-            double graphW = 15.0, graphH = 8.0;
-            DA.GetData(4, ref pctTop);
-            DA.GetData(5, ref insertPt);
-            DA.GetData(6, ref graphW);
-            DA.GetData(7, ref graphH);
-            pctTop = Math.Clamp(pctTop, 0.01, 100.0);
-            graphW = Math.Max(1.0, graphW);
-            graphH = Math.Max(1.0, graphH);
-
             List<GAIndividual> evaluatedPop = null;
             List<SG_Shape> evaluatedShapes = null;
             List<TB_Model> evaluatedModels = null;
-            string lastClusterLog = string.Empty;
+            List<string> clusterLogLines = new List<string>();
 
             while (true)
             {
@@ -435,30 +258,10 @@ namespace ShapeGrammar3D.Components
 
                 evaluatedShapes = new List<SG_Shape>();
                 evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
+                _allShapes.Add(evaluatedShapes.Where(s => s != null).Select(s => UT.DeepCopy(s)).ToList());
+                _allModels.Add(evaluatedModels.Where(m => m != null).Select(m => CloneModel(m)).ToList());
 
-                // Cluster so ClustGrp is set before we record convergence (both single- and multi-objective)
-                _ga.ClusterPopulation(evaluatedPop);
-                AppendConvergenceForGeneration(evaluatedPop, _currentGeneration, _numClusters);
-
-                if (_currentGeneration == 0)
-                {
-                    _firstGenData = new List<(SG_Shape, int, double)>();
-                    for (int i = 0; i < evaluatedShapes.Count && i < evaluatedPop.Count; i++)
-                        if (evaluatedShapes[i] != null)
-                            _firstGenData.Add((UT.DeepCopy(evaluatedShapes[i]), evaluatedPop[i].ClustGrp, evaluatedPop[i].Fitness));
-                }
                 bool isLastGeneration = _currentGeneration >= _numGenerations - 1;
-                if (isLastGeneration)
-                {
-                    _lastGenData = new List<(SG_Shape, int, double)>();
-                    for (int i = 0; i < evaluatedShapes.Count && i < evaluatedPop.Count; i++)
-                        if (evaluatedShapes[i] != null)
-                            _lastGenData.Add((UT.DeepCopy(evaluatedShapes[i]), evaluatedPop[i].ClustGrp, evaluatedPop[i].Fitness));
-                }
-
-                lastClusterLog = isMultiObjective
-                    ? BuildMOInfo(evaluatedPop, _currentGeneration)
-                    : BuildClusterInfo(evaluatedPop, _currentGeneration);
 
                 if (!isLastGeneration)
                 {
@@ -487,7 +290,7 @@ namespace ShapeGrammar3D.Components
                 }
 
                 if (isMultiObjective)
-                    _ga.ClusterPopulation(evaluatedPop); // MOGA: cluster again for elite selection
+                    _ga.ClusterPopulation(evaluatedPop);
 
                 if (isMultiObjective && _clusterEliteCount > 0 && !isLastGeneration)
                 {
@@ -495,42 +298,38 @@ namespace ShapeGrammar3D.Components
                         _currentPopulation, evaluatedPop, _numClusters, _clusterEliteCount);
                 }
 
-                // Drop references to current gen data as soon as next gen is built so GC can reclaim memory
-                evaluatedShapes?.Clear();
-                evaluatedShapes = null;
-                evaluatedModels?.Clear();
-                evaluatedModels = null;
-                evaluatedPop = null;
+                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
+                _allGenerations.Add(snapshot);
+
+                _runStore.AppendGeneration(evaluatedPop, _currentGeneration);
+
+                clusterLogLines.Add(isMultiObjective
+                    ? BuildMOInfo(evaluatedPop, _currentGeneration)
+                    : BuildClusterInfo(evaluatedPop, _currentGeneration));
 
                 if (isLastGeneration)
                     break;
             }
 
-            OutputFirstLastAndConvergence(DA, lastClusterLog, pctTop, insertPt, graphW, graphH);
+            string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                string.Format("GA8_run_{0}.json", _runStore.RunId));
+            try
+            {
+                _runStore.SaveToJson(jsonPath);
+            }
+            catch (Exception ex)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    string.Format("Failed to save JSON: {0}", ex.Message));
+                jsonPath = string.Empty;
+            }
+
+            OutputAssemblyResults(DA, evaluatedPop, string.Join("\n", clusterLogLines));
+
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
         }
 
-        /// <summary>Appends best/worst/avg fitness per cluster for this generation to _convergenceData.</summary>
-        private void AppendConvergenceForGeneration(List<GAIndividual> population, int generation, int numClusters)
-        {
-            if (population == null) return;
-            var validFitness = population
-                .Where(ind => !double.IsInfinity(ind.Fitness) && ind.Fitness != double.MaxValue && ind.Fitness != double.MinValue)
-                .ToList();
-            for (int c = 0; c < numClusters; c++)
-            {
-                var inCluster = validFitness.Where(ind => ind.ClustGrp == c).ToList();
-                double best = inCluster.Count > 0 ? inCluster.Min(ind => ind.Fitness) : double.NaN;
-                double worst = inCluster.Count > 0 ? inCluster.Max(ind => ind.Fitness) : double.NaN;
-                double avg = inCluster.Count > 0 ? inCluster.Average(ind => ind.Fitness) : double.NaN;
-                _convergenceData.Add((generation, c, best, worst, avg));
-            }
-        }
-
-        /// <summary>
-        /// Builds a summary string for cluster distribution at a given generation.
-        /// </summary>
         private string BuildClusterInfo(List<GAIndividual> population, int generation)
         {
             var grouped = population.GroupBy(ind => ind.ClustGrp).OrderBy(g => g.Key);
@@ -559,9 +358,6 @@ namespace ShapeGrammar3D.Components
             return string.Join("\n", parts);
         }
 
-        /// <summary>
-        /// Builds a summary string for multi-objective NSGA-II at a given generation.
-        /// </summary>
         private string BuildMOInfo(List<GAIndividual> population, int generation)
         {
             int frontZeroCount = population.Count(ind => ind.Rank == 0);
@@ -590,9 +386,6 @@ namespace ShapeGrammar3D.Components
                 bestDisp, bestUtil, bestFeas);
         }
 
-        /// <summary>
-        /// Initializes the genetic algorithm with current parameters.
-        /// </summary>
         private void InitializeGA()
         {
             _ga = new SG_GA
@@ -628,18 +421,30 @@ namespace ShapeGrammar3D.Components
 
             _currentGeneration = 0;
             _currentPopulation = null;
-            _firstGenData = null;
-            _lastGenData = null;
-            _convergenceData = new List<(int gen, int cluster, double best, double worst, double avg)>();
+            _allGenerations = new List<List<GAIndividual>>();
+            _allShapes = new List<List<SG_Shape>>();
+            _allModels = new List<List<TB_Model>>();
+
+            _runStore = new GARunStore
+            {
+                RunId = Guid.NewGuid().ToString("N").Substring(0, 8),
+                StartedAt = DateTime.Now,
+                PopulationSize = _populationSize,
+                NumGenerations = _numGenerations,
+                NumClusters = _numClusters,
+                MutationProb = _mutationProbability,
+                CrossoverProb = _crossoverProbability,
+                EliteProb = _eliteProbability,
+                NumObjectives = _numObjectives,
+                UseSelfWeight = _useSelfWeight,
+                UseCroSecOpt = _croSecOptMode > 0,
+                TopoMetricTypes = new List<int>(_topoMetricTypes),
+                ShapeMetricTypes = new List<int>(_shapeMetricTypes)
+            };
 
             FixedGenotypes.Reset();
         }
 
-        /// <summary>
-        /// Injects the best N individuals from each cluster (from the evaluated
-        /// population) into the offspring pool, replacing the tail. This
-        /// guarantees every cluster is represented in the next generation.
-        /// </summary>
         private static List<GAIndividual> InjectClusterElites(
             List<GAIndividual> offspring,
             List<GAIndividual> evaluated,
@@ -684,37 +489,22 @@ namespace ShapeGrammar3D.Components
             return sorted;
         }
 
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape inputShape)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules)
         {
-            var lengths = new List<int>();
             var initRule = rules.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            int estimatedNodeCount = initRule?.MaxSupports ?? 11;
 
-            if (initRule == null)
-            {
-                for (int i = 0; i < rules.Count; i++)
-                    lengths.Add(rules[i].GetChromosomeLength(inputShape));
-                return lengths;
-            }
-
-            int estimatedNodeCount = Math.Max(2, initRule.MaxSupports);
-            var emptyShape = new SG_Shape();
-
+            var lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
                 if (rules[i] is SG_AutoRule_InitShape_3D)
-                    lengths.Add(rules[i].GetChromosomeLength(emptyShape));
+                    lengths.Add(rules[i].GetChromosomeLength(new SG_Shape()));
                 else
                     lengths.Add(Math.Max(11, estimatedNodeCount + 2));
             }
-
             return lengths;
         }
 
-        /// <summary>
-        /// Evaluates a population of individuals.
-        /// Feasibility is computed on the graph (cheap) before expensive FEM.
-        /// The penalty is applied multiplicatively: fitness * (1 + totalViolation).
-        /// </summary>
         private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut, out List<TB_Model> modelsOut)
         {
             shapesOut = new List<SG_Shape>();
@@ -755,7 +545,7 @@ namespace ShapeGrammar3D.Components
                     if (_currentGeneration == 0 && i == 0)
                     {
                         var diagParts = new List<string>();
-                        diagParts.Add("=== Individual #0 diagnostics ===");
+                        diagParts.Add(string.Format("=== Individual #0 diagnostics ==="));
                         for (int ri = 0; ri < ruleMessages.Count; ri++)
                             diagParts.Add(string.Format("  Rule {0}: {1}", ri, ruleMessages[ri]));
                         diagParts.Add(string.Format("  Shape: {0} elems, {1} nodes, {2} supports, {3} loads",
@@ -765,7 +555,6 @@ namespace ShapeGrammar3D.Components
                             string.Join("\n", diagParts));
                     }
 
-                    // --- Feasibility check (graph-based, before expensive FEM) ---
                     FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _feasibilitySettings);
 
                     TB_Model tb_mdl = new TB_Model(shape);
@@ -889,9 +678,6 @@ namespace ShapeGrammar3D.Components
             return evaluatedPop;
         }
 
-        /// <summary>
-        /// Creates a genotype from a GA individual.
-        /// </summary>
         private SG_Genotype CreateGenotypeFromIndividual(GAIndividual individual)
         {
             List<int> intGenes = new List<int>(individual.Chromosome);
@@ -900,9 +686,6 @@ namespace ShapeGrammar3D.Components
             return gt;
         }
 
-        /// <summary>
-        /// Calculates the maximum nodal displacement from the analysis results.
-        /// </summary>
         private double CalculateMaxNodalDisplacement(TB_Model model)
         {
             double maxDisplacement = 0.0;
@@ -942,11 +725,6 @@ namespace ShapeGrammar3D.Components
             return maxDisplacement;
         }
 
-        /// <summary>
-        /// Computes the reference span L as the maximum distance between any two
-        /// supported nodes. Falls back to the max distance from any support to
-        /// any node if only one support exists.
-        /// </summary>
         private static double ComputeSpanL(TB_Model model)
         {
             if (model?.Sups == null || model.Sups.Count == 0)
@@ -979,10 +757,6 @@ namespace ShapeGrammar3D.Components
             return maxSpan > 1e-9 ? maxSpan : 1.0;
         }
 
-        /// <summary>
-        /// Computes the average element utilization (EC3 simplified: N/N_Rd + My/My_Rd + Mz/Mz_Rd).
-        /// Returns a value where 1.0 = 100 % utilized on average.
-        /// </summary>
         private static double ComputeAverageUtilization(TB_Model model)
         {
             if (model?.Elem1Ds == null || model.Elem1Ds.Count == 0)
@@ -1003,9 +777,6 @@ namespace ShapeGrammar3D.Components
             return count > 0 ? sum / count : 0.0;
         }
 
-        /// <summary>
-        /// Computes the maximum element utilization. Used for "minimize highest utilization" objective.
-        /// </summary>
         private static double ComputeMaxUtilization(TB_Model model)
         {
             if (model?.Elem1Ds == null || model.Elem1Ds.Count == 0)
@@ -1021,11 +792,6 @@ namespace ShapeGrammar3D.Components
             return maxU;
         }
 
-        /// <summary>
-        /// Adds self-weight as lumped nodal point loads.
-        /// Each element's weight is split 50/50 to its two end nodes, applied along the gravity direction.
-        /// Weight [kN] = length [m] × (Area [mm²] × 1e-6) [m²] × Density [kN/m³].
-        /// </summary>
         private void ApplySelfWeightLoads(SG_Shape shape, Vector3d gravityDir)
         {
             if (shape == null || shape.Nodes == null || shape.Elems == null)
@@ -1074,283 +840,151 @@ namespace ShapeGrammar3D.Components
             }
         }
 
-        /// <summary>
-        /// Filters data by top pctTop% per cluster (by fitness, ascending for minimize).
-        /// </summary>
-        private static List<(SG_Shape Shape, int Cluster, double Fitness)> FilterTopPercent(
-            List<(SG_Shape Shape, int Cluster, double Fitness)> data, double pctTop, bool minimize = true)
+        private void OutputAssemblyResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, string clusterLogLines)
         {
-            if (data == null || data.Count == 0) return new List<(SG_Shape, int, double)>();
-            if (pctTop >= 100.0) return data;
-            var result = new List<(SG_Shape, int, double)>();
-            var byCluster = data.GroupBy(x => x.Cluster);
-            foreach (var grp in byCluster)
+            if (evaluatedPop == null || evaluatedPop.Count == 0)
             {
-                int take = Math.Max(1, (int)Math.Ceiling(grp.Count() * pctTop / 100.0));
-                var ordered = minimize ? grp.OrderBy(x => x.Fitness) : grp.OrderByDescending(x => x.Fitness);
-                result.AddRange(ordered.Take(take));
+                DA.SetData(0, "No evaluated individuals yet");
+                DA.SetData(1, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
+                return;
             }
-            return result;
-        }
 
-        private static Color GetClusterColour(int cluster, int totalClusters)
-        {
-            if (totalClusters <= 1) return Color.FromArgb(0, 150, 255);
-            double t = (double)cluster / Math.Max(1, totalClusters - 1);
-            t = Math.Clamp(t, 0.0, 1.0);
-            int g = t <= 0.5 ? (int)(t / 0.5 * 255) : 255;
-            int b = t <= 0.5 ? 255 : (int)((1.0 - (t - 0.5) / 0.5) * 255);
-            return Color.FromArgb(0, Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
-        }
+            bool isMultiObjective = _numObjectives > 1;
 
-        private static string FormatConvValue(double v)
-        {
-            if (double.IsNaN(v)) return "—";
-            double abs = Math.Abs(v);
-            if (abs >= 1000) return v.ToString("F0");
-            if (abs >= 1) return v.ToString("F2");
-            if (abs >= 0.01) return v.ToString("F4");
-            return v.ToString("E2");
-        }
-
-        /// <summary>
-        /// Outputs first/last generation shapes (filtered by %), colours, convergence trees, and graph.
-        /// </summary>
-        private void OutputFirstLastAndConvergence(IGH_DataAccess DA, string lastClusterLog,
-            double pctTop, Point3d insertPt, double graphW, double graphH)
-        {
-            var rawFirst = _firstGenData ?? new List<(SG_Shape, int, double)>();
-            var rawLast = _lastGenData ?? new List<(SG_Shape, int, double)>();
-
-            var firstFiltered = FilterTopPercent(rawFirst, pctTop, !MAXIMIZE);
-            var lastFiltered = FilterTopPercent(rawLast, pctTop, !MAXIMIZE);
-
-            var firstShapes = firstFiltered.Select(x => x.Shape).ToList();
-            var lastShapes = lastFiltered.Select(x => x.Shape).ToList();
-            var firstColours = firstFiltered.Select(x => GetClusterColour(x.Cluster, _numClusters)).ToList();
-            var lastColours = lastFiltered.Select(x => GetClusterColour(x.Cluster, _numClusters)).ToList();
-
-            DA.SetDataList(1, firstShapes);
-            DA.SetDataList(2, lastShapes);
-            DA.SetDataList(3, firstColours);
-            DA.SetDataList(4, lastColours);
-
-            var convBest = new GH_Structure<GH_Number>();
-            var convWorst = new GH_Structure<GH_Number>();
-            var convAvg = new GH_Structure<GH_Number>();
-            if (_convergenceData != null)
+            GAIndividual best;
+            if (isMultiObjective)
             {
-                foreach (var (gen, cluster, best, worst, avg) in _convergenceData)
-                {
-                    var path = new GH_Path(gen, cluster);
-                    convBest.Append(new GH_Number(best), path);
-                    convWorst.Append(new GH_Number(worst), path);
-                    convAvg.Append(new GH_Number(avg), path);
-                }
+                var frontZero = evaluatedPop.Where(i => i.Rank == 0).ToList();
+                if (frontZero.Count > 0)
+                    best = frontZero.OrderBy(i => i.Fitness).First();
+                else
+                    best = evaluatedPop.OrderBy(i => i.Fitness).First();
             }
-            DA.SetDataTree(5, convBest);
-            DA.SetDataTree(6, convWorst);
-            DA.SetDataTree(7, convAvg);
-
-            _convLabels.Clear();
-            var linesTree = new GH_Structure<GH_Line>();
-            var colorsTree = new GH_Structure<GH_Colour>();
-            if (_convergenceData != null && _convergenceData.Count > 0 && _numClusters > 0)
+            else
             {
-                BuildConvergenceGraph(insertPt, graphW, graphH, linesTree, colorsTree);
+                best = MAXIMIZE
+                    ? evaluatedPop.OrderByDescending(i => i.Fitness).First()
+                    : evaluatedPop.OrderBy(i => i.Fitness).First();
             }
-            DA.SetDataTree(8, linesTree);
-            DA.SetDataTree(9, colorsTree);
 
-            string info = string.Format(
-                "GI_Auto7: {0} pop × {1} gen. First: {2} shapes (top {3:F0}% per cluster), Last: {4} shapes. Convergence: {5} entries.\n\n{6}",
-                _populationSize, _numGenerations,
-                firstShapes.Count, pctTop, lastShapes.Count,
-                _convergenceData?.Count ?? 0,
-                lastClusterLog);
-            DA.SetData(0, info);
-        }
-
-        private void BuildConvergenceGraph(Point3d insertPt, double graphW, double graphH,
-            GH_Structure<GH_Line> linesTree, GH_Structure<GH_Colour> colorsTree)
-        {
-            Plane plane = new Plane(insertPt, Vector3d.XAxis, Vector3d.YAxis);
-            var sortedGens = _convergenceData.Select(x => x.gen).Distinct().OrderBy(g => g).ToList();
-            int numGens = sortedGens.Count;
-            if (numGens < 2) return;
-
-            double subGraphH = (graphH - (_numClusters - 1) * CONV_TEXT_HEIGHT * 2) / Math.Max(1, _numClusters);
-            subGraphH = Math.Max(1.0, subGraphH);
-            Color mainColor = Color.Black;
-            Color gridColor = Color.FromArgb(180, 180, 180);
-            Color bestColor = Color.FromArgb(40, 120, 40);
-            Color worstColor = Color.FromArgb(180, 60, 60);
-            Color avgColor = Color.FromArgb(100, 100, 100);
-
-            for (int ci = 0; ci < _numClusters; ci++)
+            var assembly = new SGShapeGrammar3DAssembly
             {
-                var clusterData = _convergenceData.Where(x => x.cluster == ci).OrderBy(x => x.gen).ToList();
-                if (clusterData.Count == 0) continue;
-
-                double yMin = double.MaxValue, yMax = double.MinValue;
-                foreach (var d in clusterData)
+                Config = new AssemblyConfig
                 {
-                    if (!double.IsNaN(d.best) && d.best < yMin) yMin = d.best;
-                    if (!double.IsNaN(d.best) && d.best > yMax) yMax = d.best;
-                    if (!double.IsNaN(d.worst) && d.worst < yMin) yMin = d.worst;
-                    if (!double.IsNaN(d.worst) && d.worst > yMax) yMax = d.worst;
-                    if (!double.IsNaN(d.avg) && d.avg < yMin) yMin = d.avg;
-                    if (!double.IsNaN(d.avg) && d.avg > yMax) yMax = d.avg;
+                    PopulationSize = _populationSize,
+                    NumGenerations = _numGenerations,
+                    NumClusters = _numClusters,
+                    NumObjectives = _numObjectives,
+                    TopoMetricTypes = new List<int>(_topoMetricTypes),
+                    ShapeMetricTypes = new List<int>(_shapeMetricTypes),
+                    FeasibilityAngleMinDeg = _feasibilitySettings.AngleMinDeg,
+                    FeasibilityAngleOptDeg = _feasibilitySettings.AngleOptDeg,
+                    FeasibilityLenTooShort = _feasibilitySettings.LenTooShort,
+                    FeasibilityLenOptLow = _feasibilitySettings.LenOptLow,
+                    FeasibilityLenOptHigh = _feasibilitySettings.LenOptHigh,
+                    FeasibilityLenTooLong = _feasibilitySettings.LenTooLong
                 }
-                if (yMin >= yMax) yMax = yMin + 1.0;
-                double yRange = yMax - yMin;
-                double yPad = yRange * 0.05;
-                yMin -= yPad;
-                yMax += yPad;
-                yRange = yMax - yMin;
-
-                double yOffset = ci * (subGraphH + CONV_TEXT_HEIGHT * 2);
-                Point3d origin = plane.Origin + plane.YAxis * (graphH - yOffset - subGraphH);
-
-                GH_Path axisPath = new GH_Path(ci, 0);
-                linesTree.Append(new GH_Line(new Line(origin, origin + plane.XAxis * graphW)), axisPath);
-                colorsTree.Append(new GH_Colour(mainColor), axisPath);
-                linesTree.Append(new GH_Line(new Line(origin, origin + plane.YAxis * subGraphH)), axisPath);
-                colorsTree.Append(new GH_Colour(mainColor), axisPath);
-
-                for (int gi = 0; gi < numGens; gi++)
-                {
-                    double xFrac = (double)gi / (numGens - 1);
-                    Point3d tickBase = origin + plane.XAxis * (xFrac * graphW);
-                    Point3d tickEnd = tickBase - plane.YAxis * (CONV_TEXT_HEIGHT * 0.3);
-                    linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
-                    colorsTree.Append(new GH_Colour(mainColor), axisPath);
-                    if (gi > 0)
-                    {
-                        linesTree.Append(new GH_Line(new Line(tickBase, tickBase + plane.YAxis * subGraphH)), axisPath);
-                        colorsTree.Append(new GH_Colour(gridColor), axisPath);
-                    }
-                    _convLabels.Add(new GraphLabel
-                    {
-                        Position = tickEnd - plane.YAxis * (CONV_TEXT_HEIGHT * 1.2),
-                        Text = sortedGens[gi].ToString(),
-                        XDir = plane.XAxis, YDir = plane.YAxis,
-                        Height = CONV_TEXT_HEIGHT * 0.8,
-                        Color = Color.FromArgb(60, 60, 60)
-                    });
-                }
-
-                for (int t = 0; t <= 4; t++)
-                {
-                    double frac = (double)t / 4;
-                    Point3d tickBase = origin + plane.YAxis * (frac * subGraphH);
-                    Point3d tickEnd = tickBase - plane.XAxis * (CONV_TEXT_HEIGHT * 0.3);
-                    linesTree.Append(new GH_Line(new Line(tickBase, tickEnd)), axisPath);
-                    colorsTree.Append(new GH_Colour(mainColor), axisPath);
-                    double yVal = yMin + frac * yRange;
-                    _convLabels.Add(new GraphLabel
-                    {
-                        Position = tickEnd - plane.XAxis * (CONV_TEXT_HEIGHT * 0.5),
-                        Text = FormatConvValue(yVal),
-                        XDir = plane.XAxis, YDir = plane.YAxis,
-                        Height = CONV_TEXT_HEIGHT * 0.8,
-                        Color = Color.FromArgb(60, 60, 60)
-                    });
-                }
-
-                _convLabels.Add(new GraphLabel
-                {
-                    Position = origin - plane.XAxis * (CONV_TEXT_HEIGHT * 4) + plane.YAxis * (subGraphH * 0.5),
-                    Text = "C" + ci,
-                    XDir = plane.YAxis, YDir = -plane.XAxis,
-                    Height = CONV_TEXT_HEIGHT * 1.1,
-                    Color = GetClusterColour(ci, _numClusters)
-                });
-
-                var bestPts = new List<Point3d>();
-                var worstPts = new List<Point3d>();
-                var avgPts = new List<Point3d>();
-                for (int gi = 0; gi < numGens; gi++)
-                {
-                    int gen = sortedGens[gi];
-                    var d = clusterData.FirstOrDefault(x => x.gen == gen);
-                    double xFrac = (double)gi / (numGens - 1);
-                    if (!double.IsNaN(d.best))
-                    {
-                        double yFrac = (d.best - yMin) / yRange;
-                        yFrac = Math.Clamp(yFrac, 0, 1);
-                        bestPts.Add(origin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphH));
-                    }
-                    if (!double.IsNaN(d.worst))
-                    {
-                        double yFrac = (d.worst - yMin) / yRange;
-                        yFrac = Math.Clamp(yFrac, 0, 1);
-                        worstPts.Add(origin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphH));
-                    }
-                    if (!double.IsNaN(d.avg))
-                    {
-                        double yFrac = (d.avg - yMin) / yRange;
-                        yFrac = Math.Clamp(yFrac, 0, 1);
-                        avgPts.Add(origin + plane.XAxis * (xFrac * graphW) + plane.YAxis * (yFrac * subGraphH));
-                    }
-                }
-                GH_Path bestPath = new GH_Path(ci, 1);
-                GH_Path worstPath = new GH_Path(ci, 2);
-                GH_Path avgPath = new GH_Path(ci, 3);
-                for (int i = 1; i < bestPts.Count; i++)
-                {
-                    linesTree.Append(new GH_Line(new Line(bestPts[i - 1], bestPts[i])), bestPath);
-                    colorsTree.Append(new GH_Colour(bestColor), bestPath);
-                }
-                for (int i = 1; i < worstPts.Count; i++)
-                {
-                    linesTree.Append(new GH_Line(new Line(worstPts[i - 1], worstPts[i])), worstPath);
-                    colorsTree.Append(new GH_Colour(worstColor), worstPath);
-                }
-                for (int i = 1; i < avgPts.Count; i++)
-                {
-                    linesTree.Append(new GH_Line(new Line(avgPts[i - 1], avgPts[i])), avgPath);
-                    colorsTree.Append(new GH_Colour(avgColor), avgPath);
-                }
-            }
-        }
-
-        private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
-        {
-            SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-
-            shape = new SG_Shape
-            {
-                nodeCount = iniShape.nodeCount,
-                elementCount = iniShape.elementCount,
-                Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
-                Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
-                Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
-                LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
-                PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
-                SimpleShapeState = iniShape.SimpleShapeState
             };
+            foreach (int t in _topoMetricTypes)
+                assembly.MetricNames.Add("T:" + TopologyMetrics.GetLabel(t));
+            foreach (int s in _shapeMetricTypes)
+                assembly.MetricNames.Add("S:" + ShapeMetrics.GetLabel(s));
 
-            for (int j = 0; j < rules.Count; j++)
+            if (_allShapes != null && _allGenerations != null)
             {
-                string message = rules[j].RuleOperation(ref shape, ref gt);
+                for (int g = 0; g < _allShapes.Count; g++)
+                {
+                    var genShapes = _allShapes[g];
+                    var genModels = (_allModels != null && g < _allModels.Count) ? _allModels[g] : null;
+                    var genInds = (g < _allGenerations.Count) ? _allGenerations[g] : null;
+                    int count = genShapes.Count;
+                    var sortedOrder = (genInds != null && genInds.Count >= count)
+                        ? Enumerable.Range(0, count).OrderBy(i => genInds[i].ClustGrp).ThenBy(i => genInds[i].Fitness).ToList()
+                        : Enumerable.Range(0, count).ToList();
+
+                    var ag = new AssemblyGeneration { Generation = g };
+                    for (int pos = 0; pos < sortedOrder.Count; pos++)
+                    {
+                        int idx = sortedOrder[pos];
+                        var ind = (genInds != null && idx < genInds.Count) ? genInds[idx] : null;
+                        var model = (genModels != null && idx < genModels.Count) ? genModels[idx] : null;
+                        var shape = (idx < genShapes.Count) ? genShapes[idx] : null;
+                        ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(
+                            ind ?? new GAIndividual(new List<int>(), new List<double>(), "?"),
+                            model, shape));
+                    }
+                    assembly.Generations.Add(ag);
+                }
             }
 
-            shape.RegisterElemsToNodes();
-            if (_useSelfWeight)
-                ApplySelfWeightLoads(shape, _gravityDir);
+            string topoLabels = string.Join(", ", _topoMetricTypes.Select(t => TopologyMetrics.GetLabel(t)));
+            string shpeLabels = string.Join(", ", _shapeMetricTypes.Select(s => ShapeMetrics.GetLabel(s)));
+            int clusterDims = _topoMetricTypes.Count + _shapeMetricTypes.Count + (_fitnessWeight > 0 ? 1 : 0);
 
-            model = new TB_Model(shape);
-            SolveLS slv = new SolveLS(ref model);
+            string info;
+            if (isMultiObjective)
+            {
+                int frontZero = evaluatedPop.Count(ind => ind.Rank == 0);
+                string objLabels = _numObjectives == 2
+                    ? "log(1+Disp%SLS), AvgUtil Dev"
+                    : "log(1+Disp%SLS), AvgUtil Dev, RawFeas(avg VDang+VAng+VLen)";
+                info = string.Format(
+                    "Mode: NSGA-II ({0} objectives: {1})\n" +
+                    "Generation: {2}/{3}\n" +
+                    "Population Size: {4}\n" +
+                    "Pareto Front (rank 0) Size: {5}\n" +
+                    "Best Displacement: {6:F6}\n" +
+                    "Best Individual ID: {7}\n" +
+                    "Topology Metrics ({8}D): {9}\n" +
+                    "Shape Metrics ({10}D): {11}\n" +
+                    "Clustering Dimensions: {12}\n\n{13}",
+                    _numObjectives, objLabels,
+                    _currentGeneration, _numGenerations,
+                    evaluatedPop.Count,
+                    frontZero,
+                    best.Fitness,
+                    best.Id,
+                    _topoMetricTypes.Count, topoLabels,
+                    _shapeMetricTypes.Count, shpeLabels,
+                    clusterDims,
+                    clusterLogLines);
+            }
+            else
+            {
+                info = string.Format(
+                    "Mode: Single-Objective\n" +
+                    "Generation: {0}/{1}\n" +
+                    "Population Size: {2}\n" +
+                    "Best Fitness: {3:F6}\n" +
+                    "Worst Fitness: {4:F6}\n" +
+                    "Mean Fitness: {5:F6}\n" +
+                    "Best Individual ID: {6}\n" +
+                    "Clustering: wTopo={7:F2} wShpe={8:F2} wFit={9:F2} KIter={10} ReClust={11}\n" +
+                    "Topology Metrics ({12}D): {13}\n" +
+                    "Shape Metrics ({14}D): {15}\n" +
+                    "Clustering Dimensions: {16}\n" +
+                    "Feasibility: wDang={17:F2}, BestVDang={18:F4}, BestFeas={19:F4}, AvgFeas={20:F4}\n\n{21}",
+                    _currentGeneration,
+                    _numGenerations,
+                    evaluatedPop.Count,
+                    best.Fitness,
+                    (MAXIMIZE ? evaluatedPop.OrderBy(i => i.Fitness).First().Fitness : evaluatedPop.OrderByDescending(i => i.Fitness).First().Fitness),
+                    evaluatedPop.Average(i => i.Fitness),
+                    best.Id,
+                    _topoWeight, _shapeWeight, _fitnessWeight,
+                    _kmeansIterations, _reclusterInterval,
+                    _topoMetricTypes.Count, topoLabels,
+                    _shapeMetricTypes.Count, shpeLabels,
+                    clusterDims,
+                    _feasibilitySettings.WDang,
+                    best.VDang,
+                    best.Feas,
+                    evaluatedPop.Average(i => i.Feas),
+                    clusterLogLines);
+            }
 
-            if (_croSecOptMode == 1)
-                model = OptimizeCrossSections(model);
-            else if (_croSecOptMode == 2)
-                model = OptimizeCrossSections_SHS(model);
-            else if (_croSecOptMode == 3)
-                model = OptimizeCrossSections_Combined(model, heaOnly: true);
-            else if (_croSecOptMode == 4)
-                model = OptimizeCrossSections_Combined(model, heaOnly: false);
+            DA.SetData(0, info);
+            DA.SetData(1, new GH_SGAssembly(assembly));
         }
 
         protected override System.Drawing.Bitmap Icon
@@ -1360,27 +994,18 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("A7B8C9D0-E1F2-4A3B-8C5D-6E7F8A9B0C1D"); }
+            get { return new Guid("A8C1D2E3-F4A5-4B6C-9D0E-1F2A3B4C5D6E"); }
         }
 
-        /// <summary>
-        /// Precomputed section properties for fast utilization evaluation
-        /// during force-based section sizing (avoids creating Section objects).
-        /// </summary>
         private struct PrecomputedSec
         {
-            public double Area; // mm²
-            public double Wy;   // mm³
-            public double Wz;   // mm³
-            public double Iy;   // mm⁴ (strong axis, needed for buckling)
-            public double Iz;   // mm⁴ (weak axis, needed for buckling)
+            public double Area;
+            public double Wy;
+            public double Wz;
+            public double Iy;
+            public double Iz;
         }
 
-        /// <summary>
-        /// Extracts the maximum absolute internal forces (N, My, Mz)
-        /// plus the most compressive axial force Ncomp (negative = compression),
-        /// as an envelope over all load cases for one element.
-        /// </summary>
         private static (double N, double My, double Mz, double Ncomp) GetElementMaxForces(
             TB_Model model, TB_Element_1D elem)
         {
@@ -1401,10 +1026,6 @@ namespace ShapeGrammar3D.Components
             return (maxN, maxMy, maxMz, maxNcomp);
         }
 
-        /// <summary>
-        /// Computes utilization for given internal forces and precomputed section
-        /// properties, INCLUDING a simplified EC3 buckling check for compression.
-        /// </summary>
         private static double ComputeUtilForSection(
             (double N, double My, double Mz, double Ncomp) forces,
             PrecomputedSec sec, double fy, double E, double elemLengthM)
@@ -1433,9 +1054,6 @@ namespace ShapeGrammar3D.Components
             return Math.Max(utilCS, utilBuckling);
         }
 
-        /// <summary>
-        /// Computes the minimum buckling reduction factor Chi across both axes.
-        /// </summary>
         private static double ComputeChiMin(
             double area, double iy_mm4, double iz_mm4,
             double lcrMm, double alphaBuck, double lambda1)
@@ -1465,13 +1083,6 @@ namespace ShapeGrammar3D.Components
             return Math.Min(chiY, chiZ);
         }
 
-        /// <summary>
-        /// Linear scan of the catalog to find the section whose utilization is
-        /// closest to targetUtil without exceeding 1.0.
-        /// Unlike binary search, this handles non-monotonic utilization sequences
-        /// (which occur when the catalog is sorted by area but bending capacity
-        /// doesn't increase monotonically with area).
-        /// </summary>
         private static int FindBestSectionIdx(
             (double N, double My, double Mz, double Ncomp) forces,
             PrecomputedSec[] catalog, double fy, double E,
@@ -1496,10 +1107,6 @@ namespace ShapeGrammar3D.Components
             return bestIdx;
         }
 
-        /// <summary>
-        /// Fully-Stressed-Design (FSD) iteration for rectangular sections.
-        /// Includes simplified EC3 buckling check for compression members.
-        /// </summary>
         private TB_Model OptimizeCrossSections(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1592,9 +1199,6 @@ namespace ShapeGrammar3D.Components
             return finalSlv.Mdl;
         }
 
-        /// <summary>
-        /// Rebuilds the model geometry with new square rectangular sections based on the index array.
-        /// </summary>
         private static TB_Model RebuildModelWithRectSections(TB_Model template, int[] sectionIdx, double stepMm)
         {
             var newElems = new List<TB_Element_1D>();
@@ -1609,12 +1213,6 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
-        /// <summary>
-        /// EC3 utilization with simplified buckling check for compression members.
-        /// Cross-section: N/N_Rd + My/My_Rd + Mz/Mz_Rd.
-        /// Buckling:      N/(Chi*A*fy) + My/My_Rd + Mz/Mz_Rd.
-        /// Returns the maximum across all load cases.
-        /// </summary>
         private static double ComputeElementUtilization(TB_Model model, TB_Element_1D elem)
         {
             const double GAMMA_M0 = 1.0;
@@ -1683,12 +1281,6 @@ namespace ShapeGrammar3D.Components
             return maxUtil;
         }
 
-        /// <summary>
-        /// Fully-Stressed-Design (FSD) iteration for SHS catalog sections.
-        /// Includes simplified EC3 buckling check for compression members.
-        /// Uses linear scan instead of binary search to handle non-monotonic
-        /// utilization in the area-sorted catalog.
-        /// </summary>
         private TB_Model OptimizeCrossSections_SHS(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1808,9 +1400,6 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
-        /// <summary>
-        /// FSD iteration for RHS catalog (mode 5). Sorted by area; each element picks best RHS.
-        /// </summary>
         private TB_Model OptimizeCrossSections_RHS(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1920,20 +1509,14 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
-        /// <summary>
-        /// Combined catalog entry that can represent either SHS or I-section.
-        /// </summary>
         private struct CombinedEntry
         {
             public PrecomputedSec Props;
-            public bool IsI;            // false = SHS/RHS, true = I-section
-            public double H, W, Tw, Tf; // section dimensions (SHS: H=W=Size, Tw=Tf=T)
+            public bool IsI;
+            public double H, W, Tw, Tf;
             public string Tag;
         }
 
-        /// <summary>
-        /// Builds a combined catalog from SHS + (optional RHS) + HEA/HEB, sorted by area.
-        /// </summary>
         private static CombinedEntry[] BuildCombinedCatalog(bool includeRHS = false)
         {
             var entries = new List<CombinedEntry>();
@@ -1997,9 +1580,6 @@ namespace ShapeGrammar3D.Components
             return entries.OrderBy(e => e.Props.Area).ToArray();
         }
 
-        /// <summary>
-        /// Builds a catalog from HEA/HEB profiles only, sorted by area.
-        /// </summary>
         private static CombinedEntry[] BuildHEACatalog()
         {
             var entries = new List<CombinedEntry>();
@@ -2024,11 +1604,6 @@ namespace ShapeGrammar3D.Components
             return entries.OrderBy(e => e.Props.Area).ToArray();
         }
 
-        /// <summary>
-        /// Rebuilds the model with sections from a CombinedEntry catalog.
-        /// Automatically creates Section_RHS for SHS entries and Section_I
-        /// for HEA/HEB entries.
-        /// </summary>
         private static TB_Model RebuildModelWithCombinedSections(
             TB_Model template, int[] secIdx, CombinedEntry[] catalog)
         {
@@ -2050,9 +1625,6 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
-        /// <summary>
-        /// FSD optimization using combined catalog (mode 3 = HEA only, 4 = SHS+HEA, 6 = SHS+RHS+HEA).
-        /// </summary>
         private TB_Model OptimizeCrossSections_Combined(TB_Model solvedModel, bool heaOnly, bool includeRHS = false)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -2134,10 +1706,6 @@ namespace ShapeGrammar3D.Components
             return finalSlv.Mdl;
         }
 
-        /// <summary>
-        /// Writes optimized cross-sections from the solved model back to the shape
-        /// so that stored assembly shapes (and GI Feasibility Preview) show correct column/beam sizes.
-        /// </summary>
         private static void SyncShapeSectionsFromModel(SG_Shape shape, TB_Model model)
         {
             if (shape?.Elems == null || model?.Elem1Ds == null || shape.Elems.Count != model.Elem1Ds.Count)
@@ -2167,11 +1735,6 @@ namespace ShapeGrammar3D.Components
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             return source.DeepCopy();
-        }
-
-        private static double Clamp01(double value)
-        {
-            return Math.Clamp(value, 0.0, 1.0);
         }
     }
 }

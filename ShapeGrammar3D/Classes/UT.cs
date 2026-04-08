@@ -51,6 +51,7 @@ namespace ShapeGrammar3D.Classes
         public static int RULE051_MARKER = -51;
         public static int RULE060_MARKER = -60;
         public static int RULE061_MARKER = -61;
+        public static int RULE_INITSHAPE_MARKER = -5;
 
         public static string CAT = "StructuralGrammar";
         public static string GR_MAT = "01. Material";

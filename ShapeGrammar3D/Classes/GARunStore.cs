@@ -48,20 +48,20 @@ namespace ShapeGrammar3D.Classes
                 {
                     Id = ind.Id,
                     Chromosome = new List<int>(ind.Chromosome),
-                    ChromosomeParam = new List<double>(ind.ChromosomeParam),
-                    Fitness = ind.Fitness,
-                    Topo = ind.Topo,
-                    Shpe = ind.Shpe,
-                    TopoValues = ind.TopoValues != null ? new List<double>(ind.TopoValues) : new List<double>(),
-                    ShpeValues = ind.ShpeValues != null ? new List<double>(ind.ShpeValues) : new List<double>(),
+                    ChromosomeParam = SanitizeList(ind.ChromosomeParam),
+                    Fitness = SanitizeDouble(ind.Fitness),
+                    Topo = SanitizeDouble(ind.Topo),
+                    Shpe = SanitizeDouble(ind.Shpe),
+                    TopoValues = SanitizeList(ind.TopoValues),
+                    ShpeValues = SanitizeList(ind.ShpeValues),
                     ClustGrp = ind.ClustGrp,
-                    Feas = ind.Feas,
-                    VDang = ind.VDang,
-                    VAng = ind.VAng,
-                    VLen = ind.VLen,
+                    Feas = SanitizeDouble(ind.Feas),
+                    VDang = SanitizeDouble(ind.VDang),
+                    VAng = SanitizeDouble(ind.VAng),
+                    VLen = SanitizeDouble(ind.VLen),
                     Rank = ind.Rank,
-                    CrowdingDistance = ind.CrowdingDistance,
-                    ObjectiveValues = ind.ObjectiveValues != null ? new List<double>(ind.ObjectiveValues) : new List<double>()
+                    CrowdingDistance = SanitizeDouble(ind.CrowdingDistance),
+                    ObjectiveValues = SanitizeList(ind.ObjectiveValues)
                 }).ToList()
             };
 
@@ -99,6 +99,19 @@ namespace ShapeGrammar3D.Classes
             {
                 throw new IOException($"Failed to load GA run data from {filePath}: {ex.Message}", ex);
             }
+        }
+
+        private static double SanitizeDouble(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return double.MaxValue;
+            return value;
+        }
+
+        private static List<double> SanitizeList(List<double> values)
+        {
+            if (values == null) return new List<double>();
+            return values.Select(SanitizeDouble).ToList();
         }
     }
 

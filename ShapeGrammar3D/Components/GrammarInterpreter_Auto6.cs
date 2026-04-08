@@ -230,6 +230,8 @@ namespace ShapeGrammar3D.Components
 
             _isRunning = true;
 
+            rls = EnsureInitShapeFirst(rls);
+
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
             if (_currentPopulation == null)
@@ -504,17 +506,40 @@ namespace ShapeGrammar3D.Components
             return result;
         }
 
-        /// <summary>
-        /// Gets chromosome lengths based on each rule's iteration target.
-        /// </summary>
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape shape)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape inputShape)
         {
-            List<int> lengths = new List<int>();
+            var lengths = new List<int>();
+            var initRule = rules.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+
+            if (initRule == null)
+            {
+                for (int i = 0; i < rules.Count; i++)
+                    lengths.Add(rules[i].GetChromosomeLength(inputShape));
+                return lengths;
+            }
+
+            int estimatedNodeCount = Math.Max(2, initRule.MaxSupports);
+            var emptyShape = new SG_Shape();
+
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(rules[i].GetChromosomeLength(shape));
+                if (rules[i] is SG_AutoRule_InitShape_3D)
+                    lengths.Add(rules[i].GetChromosomeLength(emptyShape));
+                else
+                    lengths.Add(Math.Max(11, estimatedNodeCount + 2));
             }
+
             return lengths;
+        }
+
+        private static List<SG_Rule> EnsureInitShapeFirst(List<SG_Rule> rules)
+        {
+            var initRules = rules.Where(r => r is SG_AutoRule_InitShape_3D).ToList();
+            if (initRules.Count == 0) return rules;
+            var otherRules = rules.Where(r => !(r is SG_AutoRule_InitShape_3D)).ToList();
+            var sorted = new List<SG_Rule>(initRules);
+            sorted.AddRange(otherRules);
+            return sorted;
         }
 
         /// <summary>
