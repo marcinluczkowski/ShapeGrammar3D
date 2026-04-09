@@ -47,6 +47,8 @@ namespace ShapeGrammar3D.Classes.Rules
 
         // --- methods ---
         // methods of parent class
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Nodes;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {

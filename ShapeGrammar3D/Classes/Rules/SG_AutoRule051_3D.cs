@@ -40,6 +40,8 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         // --- methods ---
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {
@@ -102,7 +104,13 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var stud0 = (SG_Elem1D)studElements[i];
 
-                var joined_iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Joined_Init_Crv;
+                var iniElem051 = stud0.Nodes[0].Elements
+                    .Where(e => e.Autorule == UT.RULE010_MARKER)
+                    .OfType<SG_Elem1D>()
+                    .FirstOrDefault();
+                if (iniElem051 == null) continue;
+                var joined_iniCrv = iniElem051.Joined_Init_Crv;
+                if (joined_iniCrv == null) continue;
 
                 if (joined_iniCrv.PointAtStart.DistanceTo(stud0.Nodes[0].Pt) < UT.PRES)
                 {
