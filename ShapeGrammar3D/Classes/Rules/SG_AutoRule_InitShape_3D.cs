@@ -194,25 +194,20 @@ namespace ShapeGrammar3D.Classes.Rules
                         continue;
                     foreach (var ln in TriangulateBetweenLines(pointsByLine[i], pointsByLine[j]))
                     {
-                        ss.AddNewElement(new SG_Elem1D(ln, -999, "beam", crosec));
+                        var beam = new SG_Elem1D(ln, -999, "beam", crosec);
+                        beam.Joined_Init_Crv = beam.Init_Crv?.ToNurbsCurve();
+                        ss.AddNewElement(beam);
                         beamCount++;
                     }
                 }
             }
 
-            // ---- Supports at boundary-line endpoints only; loads at every node ----
+            // ---- Supports at ALL active points on required lines; loads at every node ----
             var supportPositions = new List<Point3d>();
             for (int li = 0; li < reqCount; li++)
             {
-                if (pointsByLine[li].Count >= 2)
-                {
-                    supportPositions.Add(pointsByLine[li][0]);
-                    supportPositions.Add(pointsByLine[li][pointsByLine[li].Count - 1]);
-                }
-                else if (pointsByLine[li].Count == 1)
-                {
-                    supportPositions.Add(pointsByLine[li][0]);
-                }
+                foreach (var pt in pointsByLine[li])
+                    supportPositions.Add(pt);
             }
 
             foreach (var nd in ss.Nodes)

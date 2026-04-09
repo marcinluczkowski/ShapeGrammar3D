@@ -493,14 +493,20 @@ namespace ShapeGrammar3D.Components
         {
             var initRule = rules.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
             int estimatedNodeCount = initRule?.MaxSupports ?? 11;
+            int fallbackLen = Math.Max(11, estimatedNodeCount + 2);
 
             var lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
                 if (rules[i] is SG_AutoRule_InitShape_3D)
+                {
                     lengths.Add(rules[i].GetChromosomeLength(new SG_Shape()));
+                }
                 else
-                    lengths.Add(Math.Max(11, estimatedNodeCount + 2));
+                {
+                    int ruleSpecific = rules[i].GetChromosomeLength(new SG_Shape());
+                    lengths.Add(ruleSpecific < 11 ? Math.Max(2, ruleSpecific) : fallbackLen);
+                }
             }
             return lengths;
         }
@@ -523,6 +529,7 @@ namespace ShapeGrammar3D.Components
             for (int i = 0; i < population.Count; i++)
             {
                 GAIndividual individual = population[i];
+                string _dbgStage = "Init";
 
                 try
                 {
@@ -530,15 +537,22 @@ namespace ShapeGrammar3D.Components
 
                     SG_Shape shape = CloneShape(iniShape);
 
+                    _dbgStage = "RuleOps";
                     var ruleMessages = new List<string>();
                     for (int j = 0; j < rules.Count; j++)
                     {
+                        _dbgStage = string.Format("Rule[{0}]={1}", j, rules[j].GetType().Name);
                         string message = rules[j].RuleOperation(ref shape, ref gt);
                         ruleMessages.Add(message);
                     }
 
+                    _dbgStage = "RegisterElemsToNodes";
                     shape.RegisterElemsToNodes();
 
+                    _dbgStage = "RepairSupportsAndLoads";
+                    RepairSupportsAndLoads(shape, rules);
+
+                    _dbgStage = "SelfWeight";
                     if (_useSelfWeight)
                         ApplySelfWeightLoads(shape, _gravityDir);
 
@@ -555,12 +569,16 @@ namespace ShapeGrammar3D.Components
                             string.Join("\n", diagParts));
                     }
 
+                    _dbgStage = "FeasibilityMetrics";
                     FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _feasibilitySettings);
 
+                    _dbgStage = "TB_Model";
                     TB_Model tb_mdl = new TB_Model(shape);
+                    _dbgStage = "SolveLS";
                     SolveLS slv = new SolveLS(ref tb_mdl);
                     TB_Model finalModel = slv.Mdl;
 
+                    _dbgStage = "CroSecOpt";
                     if (_croSecOptMode == 1)
                         finalModel = OptimizeCrossSections(finalModel);
                     else if (_croSecOptMode == 2)
@@ -574,6 +592,7 @@ namespace ShapeGrammar3D.Components
                     else if (_croSecOptMode == 6)
                         finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: false, includeRHS: true);
 
+                    _dbgStage = "Metrics";
                     double rawDisp = CalculateMaxNodalDisplacement(finalModel);
 
                     var topoVals = _topoMetricTypes.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
@@ -639,6 +658,7 @@ namespace ShapeGrammar3D.Components
                     if (finalModel != null && shape.Elems != null && shape.Elems.Count == finalModel.Elem1Ds.Count)
                         SyncShapeSectionsFromModel(shape, finalModel);
 
+                    _dbgStage = "DeepCopy";
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
                     modelsOut.Add(CloneModel(finalModel));
@@ -663,7 +683,7 @@ namespace ShapeGrammar3D.Components
                     modelsOut.Add(null);
 
                     failCount++;
-                    if (firstError == null) firstError = ex.Message;
+                    if (firstError == null) firstError = string.Format("[Stage={0}] {1}", _dbgStage, ex.ToString());
                 }
             }
 
@@ -1723,6 +1743,71 @@ namespace ShapeGrammar3D.Components
                 newRect.Material = mat;
                 sgElem.CrossSection = newRect;
             }
+        }
+
+        /// <summary>
+        /// Rebuild supports from SG_Node.Support data, and ensure every element-endpoint
+        /// node has a point load.  Call after all rules and RegisterElemsToNodes().
+        /// </summary>
+        private static void RepairSupportsAndLoads(SG_Shape shape, List<SG_Rule> rules)
+        {
+            if (shape?.Nodes == null) return;
+
+            // --- Rebuild supports from node-level data ---
+            shape.Supports ??= new List<SG_Support>();
+            shape.Supports.Clear();
+
+            var elemEndpoints = new HashSet<int>();
+            if (shape.Elems != null)
+            {
+                foreach (var e in shape.Elems)
+                {
+                    if (e?.Nodes == null) continue;
+                    foreach (var n in e.Nodes)
+                        if (n != null) elemEndpoints.Add(n.ID);
+                }
+            }
+
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd?.Support == null) continue;
+                if (nd.Support.SupportCondition == 0) continue;
+                if (!elemEndpoints.Contains(nd.ID)) continue;
+
+                nd.Support.Pt = nd.Pt;
+                nd.Support.Node = nd;
+                shape.Supports.Add(nd.Support);
+            }
+
+            // --- Ensure every element-endpoint node has a point load ---
+            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+
+            shape.PointLoads ??= new List<SG_PointLoad>();
+            var loadedPts = new HashSet<long>();
+            foreach (var pl in shape.PointLoads)
+            {
+                long key = HashPt(pl.Position);
+                loadedPts.Add(key);
+            }
+
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                long key = HashPt(nd.Pt);
+                if (loadedPts.Contains(key)) continue;
+
+                shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
+                loadedPts.Add(key);
+            }
+        }
+
+        private static long HashPt(Point3d pt)
+        {
+            int x = (int)Math.Round(pt.X * 1000);
+            int y = (int)Math.Round(pt.Y * 1000);
+            int z = (int)Math.Round(pt.Z * 1000);
+            return ((long)x << 40) ^ ((long)y << 20) ^ (long)z;
         }
 
         private static SG_Shape CloneShape(SG_Shape source)

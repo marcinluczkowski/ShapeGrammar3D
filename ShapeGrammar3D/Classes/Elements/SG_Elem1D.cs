@@ -69,8 +69,9 @@ namespace ShapeGrammar3D.Classes.Elements
             Name = _el_name;
             Ln = _ln;
             CrossSection = _cs;
-            Init_Crv = _ln.ToNurbsCurve().DuplicateCurve(); //UT.DeepCopy<Curve>(_ln.ToNurbsCurve());
-            Crv = _ln.ToNurbsCurve();
+            var ncrv = _ln.ToNurbsCurve();
+            Init_Crv = ncrv?.DuplicateCurve();
+            Crv = ncrv;
 
             SG_Node[] nodes = new SG_Node[2];
             nodes[0] = new SG_Node(Ln.From, -999);

@@ -78,26 +78,17 @@ namespace ShapeGrammar3D.Classes.Rules
 
             double range = Domain[1] - Domain[0];
 
-            var relevantElems = new List<SG_Element>();
-            for (int i = 0; i < ss_ref.Elems.Count; i++)
-            {
-                if (ss_ref.Elems[i].Name == "3DAR2")
-                {
-                    relevantElems.Add(ss_ref.Elems[i]);
-                }
-
-            }
-
-            var initialNodes = new List<SG_Node>();
+            var relevantElems = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
             var initialElems = ss_ref.Elems.Where(e => e.Autorule == UT.RULE010_MARKER).ToList();
+            int geneCount = selectedIntGenes.Count;
+            int addedCount = 0;
 
-            for (int i = 0; i < selectedIntGenes.Count; i++)
+            for (int i = 0; i < relevantElems.Count; i++)
             {
+                int geneIdx = i % geneCount;
+                if (selectedIntGenes[geneIdx] == 0) continue;
 
-                if (i >= relevantElems.Count) break;
-                if (selectedIntGenes[i] == 0) continue;
-
-                double optionDbl = selectedDGenes[i] * range + Domain[0];
+                double optionDbl = selectedDGenes[geneIdx] * range + Domain[0];
                 double roundedOptDbl = Math.Round(optionDbl, 0);
                 int optionNumber = (int)roundedOptDbl;
 
@@ -119,6 +110,7 @@ namespace ShapeGrammar3D.Classes.Rules
                         line = new Line(tip, rightElemPt);
                         SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
+                        addedCount++;
                     }
                 }
                 if (leftElems.Count != 0)
@@ -129,14 +121,12 @@ namespace ShapeGrammar3D.Classes.Rules
                         line = new Line(tip, leftElemPt);
                         SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
+                        addedCount++;
                     }
                 }
-
-
-
             }
 
-            return "Auto-rule 041-3D successfully applied.";
+            return $"Auto-rule 041-3D: {addedCount} diagonals added from {relevantElems.Count} studs";
         }
         public override State GetNextState()
         {

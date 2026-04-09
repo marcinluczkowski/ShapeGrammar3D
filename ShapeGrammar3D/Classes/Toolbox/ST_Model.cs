@@ -219,27 +219,30 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
         private bool CheckSupports()
         {
+            bool allFound = true;
             foreach (TB_Support s in Sups)
             {
                 Node nd = Node.FindNode(s.Pt, Nodes, Bbox);
 
                 if (nd == null)
+                    nd = Nodes.FirstOrDefault(n => n.Pt.DistanceTo(s.Pt) < Common.PRES);
+
+                if (nd == null)
                 {
-                    return false;
+                    allFound = false;
+                    continue;
                 }
 
-                else
-                {
-                    s.Node = nd;
-                    nd.Sup = s;
-                }
+                s.Node = nd;
+                nd.Sup = s;
             }
 
-            return true;
+            return allFound;
         }
 
         private bool CheckLoads()
         {
+            bool allFound = true;
             if (Loads != null)
             {
                 foreach (TB_Load l in Loads)
@@ -249,19 +252,20 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     Node nd = Node.FindNode(pl.Pt, Nodes, Bbox);
 
                     if (nd == null)
+                        nd = Nodes.FirstOrDefault(n => n.Pt.DistanceTo(pl.Pt) < Common.PRES);
+
+                    if (nd == null)
                     {
-                        return false;
+                        allFound = false;
+                        continue;
                     }
 
-                    else
-                    {
-                        pl.Node = nd;
-                    }
+                    pl.Node = nd;
                 }
             
                 LCs = Loads.Select(x => x.Lc.Value).Distinct().ToArray();
             }
-            return true;
+            return allFound;
         }
 
         public TB_Model DeepCopy()

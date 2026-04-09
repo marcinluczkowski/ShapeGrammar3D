@@ -84,20 +84,17 @@ namespace ShapeGrammar3D.Classes.Rules
 
             // collect elements targeted by this rule (only elements with Name == "3DAR2")
             var relevantElems = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
+            double defaultAngle = (Domain[0] + Domain[1]) / 2.0;
+            int geneCount = selectedIntGenes.Count;
 
-            // Iterate through stud elements; cap at available gene count to avoid IndexOutOfRange
-            int iterCount = Math.Min(relevantElems.Count, selectedIntGenes.Count);
-            for (int i = 0; i < iterCount; i++)
+            for (int i = 0; i < relevantElems.Count; i++)
             {
-                double rotationAngle = 0;
+                double rotationAngle;
 
-                if (selectedIntGenes[i] == 0)
-                    rotationAngle = 0.5 * range + Domain[0];
+                if (i >= geneCount || selectedIntGenes[i % geneCount] == 0)
+                    rotationAngle = defaultAngle;
                 else
-                {
-                    // compute rotation angle from D-gene and domain
-                     rotationAngle = selectedDGenes[i] * range + Domain[0];
-                }
+                    rotationAngle = selectedDGenes[i % geneCount] * range + Domain[0];
 
                 var elem = relevantElems[i] as SG_Elem1D;
 
@@ -152,7 +149,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 // (Optional) keep element name unchanged; original code commented out changing it to "3DAR3"
             }
 
-            return "Auto-rule 031-3D successfully applied.";
+            return $"Auto-rule 031-3D: {relevantElems.Count} elems rotated (default={defaultAngle:F2} rad)";
         }
 
 

@@ -43,32 +43,27 @@ namespace ShapeGrammar3D.Classes
 
         public void AddNewElement(SG_Elem1D _e)
         {
-            // element counter
             _e.ID = elementCount;
             elementCount++;
             Elems.Add(_e);
 
-            // search existent nodes
-            foreach (SG_Node nd in _e.Nodes)
+            for (int k = 0; k < _e.Nodes.Length; k++)
             {
-                SG_Node targetNode;
+                SG_Node nd = _e.Nodes[k];
+                SG_Node existing = Nodes.FirstOrDefault(n => n.Pt.DistanceToSquared(nd.Pt) < 0.001);
 
-                // test if there is already a node in this position
-                if (Nodes.Any(n => n.Pt.DistanceToSquared(nd.Pt) < 0.001))
+                if (existing != null)
                 {
-                    targetNode = Nodes.Where(n => n.Pt.DistanceToSquared(nd.Pt) < 0.001).First();
-
-                    targetNode.Elements.Add(_e);
+                    existing.Elements.Add(_e);
+                    _e.Nodes[k] = existing;
                     continue;
                 }
 
-                // in case it is a new node
                 nd.ID = nodeCount;
                 nd.Elements.Add(_e);
                 Nodes.Add(nd);
                 nodeCount++;
             }
-
         }
 
         public void RemoveUnusedNodes()

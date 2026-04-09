@@ -697,14 +697,20 @@ namespace ShapeGrammar3D.Components
             }
 
             int estimatedNodeCount = Math.Max(2, initRule.MaxSupports);
+            int fallbackLen = Math.Max(11, estimatedNodeCount + 2);
             var emptyShape = new SG_Shape();
 
             for (int i = 0; i < rules.Count; i++)
             {
                 if (rules[i] is SG_AutoRule_InitShape_3D)
+                {
                     lengths.Add(rules[i].GetChromosomeLength(emptyShape));
+                }
                 else
-                    lengths.Add(Math.Max(11, estimatedNodeCount + 2));
+                {
+                    int ruleSpecific = rules[i].GetChromosomeLength(emptyShape);
+                    lengths.Add(ruleSpecific < 11 ? Math.Max(2, ruleSpecific) : fallbackLen);
+                }
             }
 
             return lengths;
@@ -748,6 +754,8 @@ namespace ShapeGrammar3D.Components
                     }
 
                     shape.RegisterElemsToNodes();
+
+                    RepairSupportsAndLoads(shape, rules);
 
                     if (_useSelfWeight)
                         ApplySelfWeightLoads(shape, _gravityDir);
@@ -874,7 +882,7 @@ namespace ShapeGrammar3D.Components
                     modelsOut.Add(null);
 
                     failCount++;
-                    if (firstError == null) firstError = ex.Message;
+                    if (firstError == null) firstError = ex.ToString();
                 }
             }
 
@@ -1337,6 +1345,9 @@ namespace ShapeGrammar3D.Components
             }
 
             shape.RegisterElemsToNodes();
+
+            RepairSupportsAndLoads(shape, rules);
+
             if (_useSelfWeight)
                 ApplySelfWeightLoads(shape, _gravityDir);
 
@@ -2155,6 +2166,65 @@ namespace ShapeGrammar3D.Components
                 newRect.Material = mat;
                 sgElem.CrossSection = newRect;
             }
+        }
+
+        private static void RepairSupportsAndLoads(SG_Shape shape, List<SG_Rule> rules)
+        {
+            if (shape?.Nodes == null) return;
+
+            shape.Supports ??= new List<SG_Support>();
+            shape.Supports.Clear();
+
+            var elemEndpoints = new HashSet<int>();
+            if (shape.Elems != null)
+            {
+                foreach (var e in shape.Elems)
+                {
+                    if (e?.Nodes == null) continue;
+                    foreach (var n in e.Nodes)
+                        if (n != null) elemEndpoints.Add(n.ID);
+                }
+            }
+
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd?.Support == null) continue;
+                if (nd.Support.SupportCondition == 0) continue;
+                if (!elemEndpoints.Contains(nd.ID)) continue;
+
+                nd.Support.Pt = nd.Pt;
+                nd.Support.Node = nd;
+                shape.Supports.Add(nd.Support);
+            }
+
+            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+
+            shape.PointLoads ??= new List<SG_PointLoad>();
+            var loadedPts = new HashSet<long>();
+            foreach (var pl in shape.PointLoads)
+            {
+                long key = HashPt(pl.Position);
+                loadedPts.Add(key);
+            }
+
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                long key = HashPt(nd.Pt);
+                if (loadedPts.Contains(key)) continue;
+
+                shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
+                loadedPts.Add(key);
+            }
+        }
+
+        private static long HashPt(Point3d pt)
+        {
+            int x = (int)Math.Round(pt.X * 1000);
+            int y = (int)Math.Round(pt.Y * 1000);
+            int z = (int)Math.Round(pt.Z * 1000);
+            return ((long)x << 40) ^ ((long)y << 20) ^ (long)z;
         }
 
         private static SG_Shape CloneShape(SG_Shape source)

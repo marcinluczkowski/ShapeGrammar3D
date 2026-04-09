@@ -78,31 +78,25 @@ namespace ShapeGrammar3D.Classes.Rules
 
             double range = Domain[1] - Domain[0];
 
-            var studElements = new List<SG_Element>();
-            for (int i = 0; i < ss_ref.Elems.Count; i++)
-            {
-                if (ss_ref.Elems[i].Name == "3DAR2")
-                {
-                    studElements.Add(ss_ref.Elems[i]);
-                }
-            }
+            var studElements = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
+            int geneCount = selectedIntGenes.Count;
+            int addedCount = 0;
 
-            // var initialElems = ss_ref.Elems.Where(e => e.Autorule == UT.RULE010_MARKER).ToList();
-
-            for (int i = 0; i < selectedIntGenes.Count; i++)
+            for (int i = 0; i < studElements.Count; i++)
             {
+                int geneIdx = i % geneCount;
                 bool flg_start_or_end = false;
                 bool flg_start = false;
                 bool flg_end = false;
 
-                if (i >= studElements.Count) break;
-                if (selectedIntGenes[i] == 0) continue;
+                if (selectedIntGenes[geneIdx] == 0) continue;
 
-                double optionDbl = selectedDGenes[i] * range + Domain[0];
+                double optionDbl = selectedDGenes[geneIdx] * range + Domain[0];
                 double roundedOptDbl = Math.Round(optionDbl, 0);
                 int optionNumber = (int)roundedOptDbl;
 
                 var stud0 = (SG_Elem1D)studElements[i];
+                if (stud0.Nodes == null || stud0.Nodes.Length < 2 || stud0.Nodes[0] == null || stud0.Nodes[1] == null) continue;
 
                 var iniElem051 = stud0.Nodes[0].Elements
                     .Where(e => e.Autorule == UT.RULE010_MARKER)
@@ -131,9 +125,10 @@ namespace ShapeGrammar3D.Classes.Rules
                 var targetStudTipNodes = new List<SG_Node>();
                 for (int j = 0; j < studElements.Count; j++) 
                 {
-                    if (j == i) continue; // skip the current stud to avoid zero-length lines
+                    if (j == i) continue;
 
                     var stud = (SG_Elem1D)studElements[j];
+                    if (stud.Crv == null || stud.Nodes == null || stud.Nodes.Length < 2) continue;
 
                     double t;
                     joined_iniCrv.ClosestPoint(stud.Crv.PointAtStart, out t);
@@ -145,10 +140,6 @@ namespace ShapeGrammar3D.Classes.Rules
                     else if (joined_iniCrv.PointAt(t).CompareTo(stud.Crv.PointAtEnd) == 0)
                     {
                         targetStudTipNodes.Add(stud.Nodes[0]);
-                    }
-                    else
-                    { 
-
                     }
                 }
 
@@ -208,26 +199,30 @@ namespace ShapeGrammar3D.Classes.Rules
                         if (optionNumber == 1)
                         {
                             ss_ref.AddNewElement(newElem0);
+                            addedCount++;
                         }
                         else if (optionNumber == 2)
                         {
                             ss_ref.AddNewElement(newElem1);
+                            addedCount++;
                         }
                         else if (optionNumber == 3)
                         {
                             ss_ref.AddNewElement(newElem0);
                             ss_ref.AddNewElement(newElem1);
+                            addedCount += 2;
                         }
                     }
                     else
                     {
                         ss_ref.AddNewElement(newElem0);
+                        addedCount++;
                     }
                 }
 
             }
 
-            return "Auto-rule 051-3D successfully applied.";
+            return $"Auto-rule 051-3D: {addedCount} braces added from {studElements.Count} studs";
         }
         public override State GetNextState()
         {

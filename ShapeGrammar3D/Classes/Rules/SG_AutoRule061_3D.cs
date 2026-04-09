@@ -78,23 +78,19 @@ namespace ShapeGrammar3D.Classes.Rules
 
             double range = Domain[1] - Domain[0]; 
 
-            var studElements = new List<SG_Element>();
-            for (int i = 0; i < ss_ref.Elems.Count; i++)
-            {
-                if (ss_ref.Elems[i].Name == "3DAR2")
-                {
-                    studElements.Add(ss_ref.Elems[i]);
-                }
-            }
-            
-            for (int i = 0; i < selectedIntGenes.Count; i++)
-            {
-                if (i >= studElements.Count) break;
-                if (selectedIntGenes[i] == 0) continue;
+            var studElements = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
+            int geneCount = selectedIntGenes.Count;
+            int addedCount = 0;
 
-                int numLns = (int) (selectedDGenes[i] * range); 
+            for (int i = 0; i < studElements.Count; i++)
+            {
+                int geneIdx = i % geneCount;
+                if (selectedIntGenes[geneIdx] == 0) continue;
+
+                int numLns = (int) (selectedDGenes[geneIdx] * range);
 
                 var stud0 = (SG_Elem1D)studElements[i];
+                if (stud0.Nodes == null || stud0.Nodes.Length < 2 || stud0.Nodes[0] == null || stud0.Nodes[1] == null) continue;
 
                 var iniElem061 = stud0.Nodes[0].Elements
                     .Where(e => e.Autorule == UT.RULE010_MARKER)
@@ -107,21 +103,24 @@ namespace ShapeGrammar3D.Classes.Rules
                 var targetElements = new List<SG_Element>();
                 for (int j = 0; j < studElements.Count; j++)
                 {
-                    if (i == j) continue; // if the same stud, just continue.
+                    if (i == j) continue;
 
                     var stud1 = (SG_Elem1D) studElements[j];
+                    if (stud1.Nodes[0] == null) continue;
 
-                    var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Joined_Init_Crv;
+                    var iniElem1 = stud1.Nodes[0].Elements?
+                        .Where(e => e.Autorule == UT.RULE010_MARKER)
+                        .OfType<SG_Elem1D>()
+                        .FirstOrDefault();
+                    if (iniElem1 == null) continue;
+
+                    var iniCrv1 = iniElem1.Joined_Init_Crv;
+                    if (iniCrv1 == null) continue;
 
                     if (joinedIniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0) 
                     {
                         targetElements.Add(stud1);
                     }
-
-                    else
-                    {
-                    }
-
                 }
 
                 var targetPts = new List<Point3d>();
@@ -140,14 +139,17 @@ namespace ShapeGrammar3D.Classes.Rules
                 for (int j = 0; j < numBeams; j++)
                 {
                     var newLine = new Line(stud0.Nodes[1].Pt, targetPts[j]);
+                    if (!newLine.IsValid || newLine.Length < UT.PRES) continue;
                     var new_beam = new SG_Elem1D(newLine, -999, "3DAR61", def_crosec) { Autorule = UT.RULE061_MARKER };
 
                     // Check if beam already exists at the same location
                     bool isDuplicate = ss_ref.Elems.OfType<SG_Elem1D>().Any(existingElem =>
                     {
+                        if (existingElem.Nodes == null || existingElem.Nodes.Length < 2
+                            || existingElem.Nodes[0] == null || existingElem.Nodes[1] == null)
+                            return false;
                         var existingLine = new Line(existingElem.Nodes[0].Pt, existingElem.Nodes[1].Pt);
                         
-                        // Check if lines are the same (in either direction) with tolerance
                         bool sameDirection = newLine.From.DistanceTo(existingLine.From) < 0.001 && 
                                            newLine.To.DistanceTo(existingLine.To) < 0.001;
                         bool reverseDirection = newLine.From.DistanceTo(existingLine.To) < 0.001 && 
@@ -159,11 +161,12 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (!isDuplicate)
                     {
                         ss_ref.AddNewElement(new_beam);
+                        addedCount++;
                     }
                 }
             }
 
-            return "Auto-rule 061-3D successfully applied.";
+            return $"Auto-rule 061-3D: {addedCount} cross-braces added from {studElements.Count} studs";
 
         }
         public override State GetNextState()

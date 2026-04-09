@@ -27,6 +27,9 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Max Segment Length", "maxSeg",
+                "Maximum beam segment length. Beams longer than this are automatically subdivided into equal parts. Set 0 to use GA gene-based splitting.",
+                GH_ParamAccess.item, 0);
         }
 
         /// <summary>
@@ -43,19 +46,19 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            // --- variables ---
             List<string> eNames = new List<string>();
+            double maxSegLen = 0;
 
-            // --- input ---
             if (!DA.GetDataList(0, eNames)) return;
+            DA.GetData(1, ref maxSegLen);
 
-            // --- solve ---
+            SG_AutoRule01_3D ar1 = new SG_AutoRule01_3D(eNames, maxSegLen);
 
-            SG_AutoRule01_3D ar1 = new SG_AutoRule01_3D(eNames);
+            if (maxSegLen > 0)
+                AddRuntimeMessage(Grasshopper.Kernel.GH_RuntimeMessageLevel.Remark,
+                    $"Deterministic mode: beams will be split into segments ≤ {maxSegLen:F1}");
 
-            // --- output ---
             DA.SetData(0, ar1);
-
         }
 
         /// <summary>

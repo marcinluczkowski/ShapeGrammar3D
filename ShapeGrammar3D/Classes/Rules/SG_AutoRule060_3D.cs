@@ -139,7 +139,9 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var targetStud = targetElements.OrderBy(t => t.Nodes[1].Pt.DistanceTo(stud0.Nodes[1].Pt)).ToList()[0];
 
-                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt), -999, "3DAR5", def_crosec) { Autorule = UT.RULE060_MARKER };
+                var brLine = new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt);
+                if (!brLine.IsValid || brLine.Length < UT.PRES) continue;
+                var newBeam = new SG_Elem1D(brLine, -999, "3DAR5", def_crosec) { Autorule = UT.RULE060_MARKER };
 
                 ss_ref.AddNewElement(newBeam);
             }
