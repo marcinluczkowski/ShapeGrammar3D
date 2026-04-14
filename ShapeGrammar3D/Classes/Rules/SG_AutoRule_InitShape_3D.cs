@@ -30,9 +30,14 @@ namespace ShapeGrammar3D.Classes.Rules
         public int MaxPointsPerLine { get; set; }
         public int MinSupportsPerLine { get; set; }
         public BoundingBox DesignSpace { get; set; }
+        public Brep BoundaryBrep { get; set; }
+        public Mesh BoundaryMesh { get; set; }
         public SH_CrossSection_Beam CrossSection { get; set; }
         public Vector3d LoadVector { get; set; }
         public string SupportCondition { get; set; }
+        public Vector3d AreaLoadVector { get; set; }
+        public bool UseSelfWeight { get; set; }
+        public int BoundaryBeamConstraintMode { get; set; }
 
         /// <summary>Total gene slots – used by GrammarInterpreters for chromosome length estimation.</summary>
         public int MaxSupports => TotalLineCount * MaxPointsPerLine;
@@ -49,12 +54,19 @@ namespace ShapeGrammar3D.Classes.Rules
             int minSupportsPerLine,
             SH_CrossSection_Beam crossSection,
             Vector3d loadVector,
-            string supportCondition)
+            string supportCondition,
+            Vector3d areaLoadVector,
+            bool useSelfWeight = false,
+            Brep boundaryBrep = null,
+            Mesh boundaryMesh = null,
+            int boundaryBeamConstraintMode = 0)
         {
             RuleState = State.alpha;
             Name = "SG_AutoRule_InitShape_3D";
             RuleMarker = UT.RULE_INITSHAPE_MARKER;
             DesignSpace = designSpace;
+            BoundaryBrep = boundaryBrep?.DuplicateBrep();
+            BoundaryMesh = boundaryMesh?.DuplicateMesh();
             RequiredLines = requiredLines ?? new List<Line>();
             OptionalLines = optionalLines ?? new List<Line>();
             MaxPointsPerLine = Math.Max(2, maxPointsPerLine);
@@ -62,6 +74,9 @@ namespace ShapeGrammar3D.Classes.Rules
             CrossSection = crossSection;
             LoadVector = loadVector;
             SupportCondition = supportCondition;
+            AreaLoadVector = areaLoadVector;
+            UseSelfWeight = useSelfWeight;
+            BoundaryBeamConstraintMode = boundaryBeamConstraintMode;
         }
 
         public override RuleIterationTarget IterationTarget => RuleIterationTarget.Nodes;
@@ -84,7 +99,9 @@ namespace ShapeGrammar3D.Classes.Rules
                 src.OptionalLines != null ? new List<Line>(src.OptionalLines) : new List<Line>(),
                 src.MaxPointsPerLine,
                 src.MinSupportsPerLine,
-                src.CrossSection, src.LoadVector, src.SupportCondition);
+                src.CrossSection, src.LoadVector, src.SupportCondition,
+                src.AreaLoadVector, src.UseSelfWeight,
+                src.BoundaryBrep, src.BoundaryMesh, src.BoundaryBeamConstraintMode);
         }
 
         public override State GetNextState() => State.beta;
@@ -107,8 +124,20 @@ namespace ShapeGrammar3D.Classes.Rules
             if (allLines.Count < 2)
                 return "InitShape: need at least 2 boundary lines";
 
+            // ---- Normalize line directions relative to the first line ----
+            if (allLines.Count >= 2)
+            {
+                var refDir = allLines[0].Direction;
+                for (int li = 1; li < allLines.Count; li++)
+                {
+                    if (refDir * allLines[li].Direction < -1e-6)
+                        allLines[li] = new Line(allLines[li].To, allLines[li].From);
+                }
+            }
+
             // ---- Determine active support points per boundary line ----
-            var pointsByLine = new List<List<Point3d>>();
+            // Each point carries its parameter t on the line
+            var pointsByLine = new List<List<(double t, Point3d pt)>>();
 
             for (int li = 0; li < allLines.Count; li++)
             {
@@ -151,22 +180,42 @@ namespace ShapeGrammar3D.Classes.Rules
                     }
                 }
 
-                var linePoints = new List<Point3d>();
+                var linePoints = new List<(double t, Point3d pt)>();
+
+                // Required lines: always include both endpoints (t=0 and t=1)
+                if (isRequired)
+                    linePoints.Add((0.0, line.From));
+
                 for (int k = 0; k < candidates.Count; k++)
                 {
-                    if (activated[k])
-                        linePoints.Add(line.PointAt(candidates[k].t));
+                    if (!activated[k]) continue;
+                    double t = candidates[k].t;
+                    if (isRequired && (t < 0.001 || t > 0.999)) continue;
+                    linePoints.Add((t, line.PointAt(t)));
                 }
 
+                if (isRequired)
+                    linePoints.Add((1.0, line.To));
+
+                linePoints.Sort((a, b) => a.t.CompareTo(b.t));
+                linePoints = linePoints
+                    .Where(lp => IsInsideBoundary(lp.pt))
+                    .ToList();
+
+                // Fill deficit for required lines
                 if (isRequired && linePoints.Count < MinSupportsPerLine)
                 {
                     int deficit = MinSupportsPerLine - linePoints.Count;
                     for (int k = 0; k < deficit; k++)
                     {
                         double t = (k + 1.0) / (deficit + 1.0);
-                        linePoints.Add(line.PointAt(t));
+                        if (!linePoints.Any(lp => Math.Abs(lp.t - t) < 0.001))
+                            linePoints.Add((t, line.PointAt(t)));
                     }
-                    linePoints = SortByLine(linePoints, line);
+                    linePoints.Sort((a, b) => a.t.CompareTo(b.t));
+                    linePoints = linePoints
+                        .Where(lp => IsInsideBoundary(lp.pt))
+                        .ToList();
                 }
 
                 pointsByLine.Add(linePoints);
@@ -183,9 +232,13 @@ namespace ShapeGrammar3D.Classes.Rules
             ss.LineLoads.Clear();
             ss.elementCount = 0;
             ss.nodeCount = 0;
+            ss.BoundaryBrep = BoundaryBrep?.DuplicateBrep();
+            ss.BoundaryMesh = BoundaryMesh?.DuplicateMesh();
 
             // ---- Create beams between DIFFERENT boundary lines ----
             int beamCount = 0;
+            int checkedBeamCount = 0;
+            int outsideBeamCount = 0;
             for (int i = 0; i < pointsByLine.Count; i++)
             {
                 for (int j = i + 1; j < pointsByLine.Count; j++)
@@ -194,6 +247,11 @@ namespace ShapeGrammar3D.Classes.Rules
                         continue;
                     foreach (var ln in TriangulateBetweenLines(pointsByLine[i], pointsByLine[j]))
                     {
+                        if (!ln.IsValid || ln.Length < UT.PRES) continue;
+                        checkedBeamCount++;
+                        bool isOutside = IsLineOutsideBoundary(ln);
+                        if (isOutside) outsideBeamCount++;
+                        if (BoundaryBeamConstraintMode == 1 && isOutside) continue;
                         var beam = new SG_Elem1D(ln, -999, "beam", crosec);
                         beam.Joined_Init_Crv = beam.Init_Crv?.ToNurbsCurve();
                         ss.AddNewElement(beam);
@@ -206,13 +264,14 @@ namespace ShapeGrammar3D.Classes.Rules
             var supportPositions = new List<Point3d>();
             for (int li = 0; li < reqCount; li++)
             {
-                foreach (var pt in pointsByLine[li])
-                    supportPositions.Add(pt);
+                foreach (var tp in pointsByLine[li])
+                    supportPositions.Add(tp.pt);
             }
 
             foreach (var nd in ss.Nodes)
             {
-                ss.PointLoads.Add(new SG_PointLoad(LoadVector, Vector3d.Zero, nd.Pt));
+                if (AreaLoadVector.Length <= 1e-12)
+                    ss.PointLoads.Add(new SG_PointLoad(LoadVector, Vector3d.Zero, nd.Pt));
 
                 bool isSupport = supportPositions.Any(sp => nd.Pt.DistanceToSquared(sp) < 0.001);
                 if (isSupport)
@@ -226,6 +285,10 @@ namespace ShapeGrammar3D.Classes.Rules
 
             ss.RegisterElemsToNodes();
             ss.SimpleShapeState = State.alpha;
+            ss.BoundaryViolationRatio = checkedBeamCount > 0
+                ? (double)outsideBeamCount / checkedBeamCount
+                : 0.0;
+            ss.BoundaryViolationWeight = BoundaryBeamConstraintMode > 1 ? BoundaryBeamConstraintMode : 0.0;
 
             int totalPts = pointsByLine.Sum(pl => pl.Count);
             return $"InitShape: {totalPts} pts on {allLines.Count} lines, {beamCount} beams, {ss.Supports.Count} supports, {ss.Nodes.Count} nodes";
@@ -236,71 +299,47 @@ namespace ShapeGrammar3D.Classes.Rules
         // ----------------------------------------------------------------
 
         /// <summary>
-        /// Greedy triangulation between two sorted point sequences.
-        /// Produces a connected strip of (nA + nB − 1) beams.
-        /// Handles opposing line orientations by checking dot product.
+        /// Pairs points from two parameter-sorted sequences in order.
+        /// A[0]→B[0], A[1]→B[1], ... producing exactly max(nA, nB) beams.
+        /// If counts differ, remaining points connect to the last point on the shorter side.
+        /// Lines are assumed to be pre-oriented consistently.
         /// </summary>
         private static List<Line> TriangulateBetweenLines(
-            List<Point3d> ptsA, List<Point3d> ptsB)
+            List<(double t, Point3d pt)> ptsA, List<(double t, Point3d pt)> ptsB)
         {
             var lines = new List<Line>();
             if (ptsA.Count == 0 || ptsB.Count == 0) return lines;
 
-            var workB = new List<Point3d>(ptsB);
+            var workB = new List<(double t, Point3d pt)>(ptsB);
             if (ptsA.Count >= 2 && workB.Count >= 2)
             {
-                Vector3d dirA = ptsA[ptsA.Count - 1] - ptsA[0];
-                Vector3d dirB = workB[workB.Count - 1] - workB[0];
+                Vector3d dirA = ptsA[ptsA.Count - 1].pt - ptsA[0].pt;
+                Vector3d dirB = workB[workB.Count - 1].pt - workB[0].pt;
                 if (dirA * dirB < 0)
+                {
                     workB.Reverse();
+                    for (int k = 0; k < workB.Count; k++)
+                        workB[k] = (1.0 - workB[k].t, workB[k].pt);
+                }
             }
 
-            int i = 0, j = 0;
-            lines.Add(new Line(ptsA[0], workB[0]));
+            int minCount = Math.Min(ptsA.Count, workB.Count);
 
-            while (i < ptsA.Count - 1 || j < workB.Count - 1)
+            for (int i = 0; i < minCount; i++)
+                lines.Add(new Line(ptsA[i].pt, workB[i].pt));
+
+            if (ptsA.Count > workB.Count)
             {
-                if (i >= ptsA.Count - 1)
-                {
-                    j++;
-                    lines.Add(new Line(ptsA[i], workB[j]));
-                }
-                else if (j >= workB.Count - 1)
-                {
-                    i++;
-                    lines.Add(new Line(ptsA[i], workB[j]));
-                }
-                else
-                {
-                    double d1 = ptsA[i + 1].DistanceToSquared(workB[j]);
-                    double d2 = ptsA[i].DistanceToSquared(workB[j + 1]);
-                    if (d1 <= d2)
-                    {
-                        i++;
-                        lines.Add(new Line(ptsA[i], workB[j]));
-                    }
-                    else
-                    {
-                        j++;
-                        lines.Add(new Line(ptsA[i], workB[j]));
-                    }
-                }
+                for (int i = minCount; i < ptsA.Count; i++)
+                    lines.Add(new Line(ptsA[i].pt, workB[workB.Count - 1].pt));
+            }
+            else if (workB.Count > ptsA.Count)
+            {
+                for (int i = minCount; i < workB.Count; i++)
+                    lines.Add(new Line(ptsA[ptsA.Count - 1].pt, workB[i].pt));
             }
 
             return lines;
-        }
-
-        /// <summary>Sort points by projection parameter along a reference line.</summary>
-        private static List<Point3d> SortByLine(List<Point3d> pts, Line line)
-        {
-            Vector3d dir = line.To - line.From;
-            double lenSq = dir.SquareLength;
-            if (lenSq < 1e-12) return pts;
-            return pts.OrderBy(p =>
-            {
-                Vector3d v = p - line.From;
-                return (v.X * dir.X + v.Y * dir.Y + v.Z * dir.Z) / lenSq;
-            }).ToList();
         }
 
         private SH_CrossSection_Beam InheritCrossSection(SG_Shape ss)
@@ -310,6 +349,30 @@ namespace ShapeGrammar3D.Classes.Rules
             var fb = new SH_CrossSection_Rectangle(10, 10);
             fb.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
             return fb;
+        }
+
+        private bool IsInsideBoundary(Point3d pt)
+        {
+            const double tol = 1e-6;
+
+            if (BoundaryBrep != null)
+                return BoundaryBrep.IsPointInside(pt, tol, false);
+
+            if (BoundaryMesh != null)
+                return BoundaryMesh.IsPointInside(pt, tol, false);
+
+            return true;
+        }
+
+        private bool IsLineOutsideBoundary(Line ln)
+        {
+            var pts = new[]
+            {
+                ln.PointAt(0.25),
+                ln.PointAt(0.5),
+                ln.PointAt(0.75)
+            };
+            return pts.Any(p => !IsInsideBoundary(p));
         }
     }
 }

@@ -111,10 +111,6 @@ namespace ShapeGrammar3D.Components
                 "0 = Avg deviation from 90% (default)\n" +
                 "1 = Max utilization (minimize highest element util)",
                 GH_ParamAccess.item, 0);                                                                                           // 17c
-            pManager.AddBooleanParameter("Self Weight", "SW",
-                "Include self-weight as lumped nodal point loads (half element weight at each end node). " +
-                "Uses element length, cross-section area [mm²], and material density [kN/m³].",
-                GH_ParamAccess.item, false);                                                                                       // 18
             pManager.AddIntegerParameter("CroSec Opt", "CSOpt",
                 "Cross-section optimization mode:\n" +
                 "0 = off\n" +
@@ -145,7 +141,7 @@ namespace ShapeGrammar3D.Components
 
             pManager[11].Optional = true;
             pManager[12].Optional = true;
-            pManager[31].Optional = true;
+            pManager[30].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -184,7 +180,6 @@ namespace ShapeGrammar3D.Components
             double lenOptHigh = settings.LenOptHigh;
             double lenTooLong = settings.LenTooLong;
             int numObjectives = settings.NumObjectives;
-            bool selfWeight = settings.SelfWeight;
             int croSecOpt = settings.CroSecOpt;
             Vector3d gravityDir = settings.GravityDir;
             int clusterElite = settings.ClusterElite;
@@ -226,15 +221,14 @@ namespace ShapeGrammar3D.Components
             int singleObjType = 0, utilObjType = 0;
             DA.GetData(27, ref singleObjType);
             DA.GetData(28, ref utilObjType);
-            DA.GetData(29, ref selfWeight);
-            DA.GetData(30, ref croSecOpt);
+            DA.GetData(29, ref croSecOpt);
 
             var rawDomains = new List<GH_Interval>();
-            if (DA.GetDataList(31, rawDomains) && rawDomains.Count > 0)
+            if (DA.GetDataList(30, rawDomains) && rawDomains.Count > 0)
                 settings.MetricDomains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(32, ref gravityDir);
-            DA.GetData(33, ref clusterElite);
-            DA.GetData(34, ref csOptIterations);
+            DA.GetData(31, ref gravityDir);
+            DA.GetData(32, ref clusterElite);
+            DA.GetData(33, ref csOptIterations);
 
             settings.PopulationSize = populationSize;
             settings.Generations = generations;
@@ -263,7 +257,6 @@ namespace ShapeGrammar3D.Components
             settings.NumObjectives = numObjectives;
             settings.SingleObjType = singleObjType;
             settings.UtilObjType = utilObjType;
-            settings.SelfWeight = selfWeight;
             settings.CroSecOpt = croSecOpt;
             settings.GravityDir = gravityDir;
             settings.ClusterElite = clusterElite;

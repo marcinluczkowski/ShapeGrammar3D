@@ -199,7 +199,8 @@ namespace ShapeGrammar3D.Components
             _utilObjType = settings.UtilObjType;
             bool isMultiObjective = _numObjectives > 1;
 
-            _useSelfWeight = settings.SelfWeight;
+            var initRuleForSelfWeight = rls.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            _useSelfWeight = initRuleForSelfWeight?.UseSelfWeight ?? false;
             _croSecOptMode = settings.CroSecOpt;
             _metricDomains = settings.MetricDomains != null && settings.MetricDomains.Count > 0
                 ? new List<Interval>(settings.MetricDomains)
@@ -620,7 +621,7 @@ namespace ShapeGrammar3D.Components
                         utilDev = (avgUtil - TARGET_UTIL) * 2.0;
                     double maxUtil = ComputeMaxUtilization(finalModel);
 
-                    double rawFeas = (feasResult.VDang + feasResult.VAng + feasResult.VLen) / 3.0;
+                    double rawFeas = (feasResult.VDang + feasResult.VAng + feasResult.VLen + feasResult.VBoundary) / 4.0;
                     rawFeas = Math.Clamp(rawFeas, 0.0, 1.0);
 
                     double utilObj = _utilObjType == 1 ? maxUtil : utilDev;
@@ -947,7 +948,7 @@ namespace ShapeGrammar3D.Components
                 int frontZero = evaluatedPop.Count(ind => ind.Rank == 0);
                 string objLabels = _numObjectives == 2
                     ? "log(1+Disp%SLS), AvgUtil Dev"
-                    : "log(1+Disp%SLS), AvgUtil Dev, RawFeas(avg VDang+VAng+VLen)";
+                    : "log(1+Disp%SLS), AvgUtil Dev, RawFeas(avg VDang+VAng+VLen+VBoundary)";
                 info = string.Format(
                     "Mode: NSGA-II ({0} objectives: {1})\n" +
                     "Generation: {2}/{3}\n" +
@@ -1782,24 +1783,115 @@ namespace ShapeGrammar3D.Components
             // --- Ensure every element-endpoint node has a point load ---
             var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
             Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+            Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
 
             shape.PointLoads ??= new List<SG_PointLoad>();
-            var loadedPts = new HashSet<long>();
-            foreach (var pl in shape.PointLoads)
+            shape.PointLoads.Clear();
+
+            if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                long key = HashPt(pl.Position);
-                loadedPts.Add(key);
+                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
             }
+            else
+            {
+                foreach (var nd in shape.Nodes)
+                {
+                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                    shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
+                }
+            }
+        }
+
+        private static void ApplyVoronoiAreaLoads(
+            SG_Shape shape, SG_AutoRule_InitShape_3D initRule,
+            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec)
+        {
+            var bb = initRule.DesignSpace;
+            double xMin = bb.Min.X, xMax = bb.Max.X;
+            double yMin = bb.Min.Y, yMax = bb.Max.Y;
+            double zTop = bb.Max.Z;
+
+            var studTips = new List<(int nodeId, double x, double y)>();
+            var studTipIds = new HashSet<int>();
+
+            if (shape.Elems != null)
+            {
+                foreach (var e in shape.Elems)
+                {
+                    if (e == null || e.Autorule != UT.RULE020_MARKER) continue;
+                    if (e.Nodes == null || e.Nodes.Length < 2 || e.Nodes[1] == null) continue;
+                    var tipNode = e.Nodes[1];
+                    if (studTipIds.Contains(tipNode.ID)) continue;
+                    studTipIds.Add(tipNode.ID);
+                    studTips.Add((tipNode.ID, tipNode.Pt.X, tipNode.Pt.Y));
+                }
+            }
+
+            var voronoiAreas = new Dictionary<int, double>();
+            if (studTips.Count > 0)
+                voronoiAreas = ComputeVoronoiAreas(studTips, xMin, xMax, yMin, yMax);
 
             foreach (var nd in shape.Nodes)
             {
                 if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
-                long key = HashPt(nd.Pt);
-                if (loadedPts.Contains(key)) continue;
 
-                shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
-                loadedPts.Add(key);
+                if (voronoiAreas.TryGetValue(nd.ID, out double area))
+                {
+                    Vector3d forceVec = area * areaLoadVec;
+                    shape.PointLoads.Add(new SG_PointLoad(
+                        forceVec, Vector3d.Zero, nd.Pt));
+                }
+                else if (fallbackLoadVec.Length > 1e-12)
+                {
+                    shape.PointLoads.Add(new SG_PointLoad(fallbackLoadVec, Vector3d.Zero, nd.Pt));
+                }
             }
+        }
+
+        private static Dictionary<int, double> ComputeVoronoiAreas(
+            List<(int nodeId, double x, double y)> tips,
+            double xMin, double xMax, double yMin, double yMax,
+            int gridRes = 100)
+        {
+            double totalW = xMax - xMin;
+            double totalH = yMax - yMin;
+            if (totalW < 1e-9 || totalH < 1e-9)
+                return tips.ToDictionary(t => t.nodeId, _ => 0.0);
+
+            double totalArea = totalW * totalH;
+            double cellArea = totalArea / (gridRes * gridRes);
+
+            var counts = new Dictionary<int, int>();
+            foreach (var t in tips) counts[t.nodeId] = 0;
+
+            double dx = totalW / gridRes;
+            double dy = totalH / gridRes;
+
+            for (int iy = 0; iy < gridRes; iy++)
+            {
+                double gy = yMin + (iy + 0.5) * dy;
+                for (int ix = 0; ix < gridRes; ix++)
+                {
+                    double gx = xMin + (ix + 0.5) * dx;
+
+                    double bestDistSq = double.MaxValue;
+                    int bestId = tips[0].nodeId;
+                    foreach (var t in tips)
+                    {
+                        double ddx = gx - t.x;
+                        double ddy = gy - t.y;
+                        double dSq = ddx * ddx + ddy * ddy;
+                        if (dSq < bestDistSq)
+                        {
+                            bestDistSq = dSq;
+                            bestId = t.nodeId;
+                        }
+                    }
+                    counts[bestId]++;
+                }
+            }
+
+            return counts.ToDictionary(kv => kv.Key, kv => kv.Value * cellArea);
         }
 
         private static long HashPt(Point3d pt)

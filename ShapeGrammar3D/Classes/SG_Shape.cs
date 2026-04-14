@@ -27,6 +27,10 @@ namespace ShapeGrammar3D.Classes
         public List<SG_LineLoad> LineLoads { get; set; }
         public List<SG_PointLoad> PointLoads { get; set; }
         public State SimpleShapeState { get; set; }
+        public Brep BoundaryBrep { get; set; }
+        public Mesh BoundaryMesh { get; set; }
+        public double BoundaryViolationRatio { get; set; } = 0.0;
+        public double BoundaryViolationWeight { get; set; } = 0.0;
 
         // --- constructors ---
         public SG_Shape()
@@ -125,6 +129,10 @@ namespace ShapeGrammar3D.Classes
                 nodeCount = nodeCount,
                 elementCount = elementCount,
                 SimpleShapeState = SimpleShapeState,
+                BoundaryBrep = BoundaryBrep?.DuplicateBrep(),
+                BoundaryMesh = BoundaryMesh?.DuplicateMesh(),
+                BoundaryViolationRatio = BoundaryViolationRatio,
+                BoundaryViolationWeight = BoundaryViolationWeight,
                 NurbsCurves = NurbsCurves?.Select(curve => curve?.DuplicateCurve() as NurbsCurve).ToList()
             };
 

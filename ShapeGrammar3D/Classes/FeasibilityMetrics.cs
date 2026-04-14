@@ -88,6 +88,8 @@ namespace ShapeGrammar3D.Classes
             var dupResult = ComputeDuplicatePenalty(shape);
             result.VDup = dupResult.VDup;
             result.DuplicateCount = dupResult.DuplicateCount;
+            result.VBoundary = ComputeBoundaryViolationRatio(shape);
+            double wBoundary = Math.Max(0.0, shape?.BoundaryViolationWeight ?? 0.0);
 
             double total = 0.0;
             total += Math.Clamp(s.WDang * result.VDang, 0.0, 1.0);
@@ -96,6 +98,7 @@ namespace ShapeGrammar3D.Classes
             total += Math.Clamp(s.WIntersect * result.VIntersect, 0.0, 1.0);
             total += Math.Clamp(s.WRepet * result.VRepet, 0.0, 1.0);
             total += Math.Clamp(s.WDup * result.VDup, 0.0, 1.0);
+            total += Math.Clamp(wBoundary * result.VBoundary, 0.0, 1.0);
             result.TotalViolation = Math.Clamp(total, 0.0, 1.0);
 
             return result;
@@ -679,6 +682,54 @@ namespace ShapeGrammar3D.Classes
                     vectors.Add(v);
             }
             return vectors;
+        }
+
+        private static double ComputeBoundaryViolationRatio(SG_Shape shape)
+        {
+            if (shape?.Elems == null || shape.Elems.Count == 0) return 0.0;
+            if (shape.BoundaryBrep == null && shape.BoundaryMesh == null) return 0.0;
+
+            int total = 0;
+            int outside = 0;
+
+            foreach (var e in shape.Elems.OfType<Elements.SG_Elem1D>())
+            {
+                if (e?.Nodes == null || e.Nodes.Length < 2 || e.Nodes[0] == null || e.Nodes[1] == null)
+                    continue;
+                Line ln = new Line(e.Nodes[0].Pt, e.Nodes[1].Pt);
+                if (!ln.IsValid || ln.Length < 1e-9) continue;
+
+                total++;
+                if (IsLineOutsideBoundary(ln, shape.BoundaryBrep, shape.BoundaryMesh))
+                    outside++;
+            }
+
+            if (total == 0) return 0.0;
+            return Math.Clamp((double)outside / total, 0.0, 1.0);
+        }
+
+        private static bool IsLineOutsideBoundary(Line ln, Brep brep, Mesh mesh)
+        {
+            var pts = new[]
+            {
+                ln.PointAt(0.25),
+                ln.PointAt(0.5),
+                ln.PointAt(0.75)
+            };
+            foreach (var p in pts)
+            {
+                if (!IsInsideBoundary(p, brep, mesh))
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsInsideBoundary(Point3d pt, Brep brep, Mesh mesh)
+        {
+            const double tol = 1e-6;
+            if (brep != null) return brep.IsPointInside(pt, tol, false);
+            if (mesh != null) return mesh.IsPointInside(pt, tol, false);
+            return true;
         }
 
         // --- Visualization helpers ---

@@ -45,6 +45,9 @@ namespace ShapeGrammar3D.Classes
         /// <summary>Duplicate-element penalty [0..1]. Zero when no duplicates; penalizes elements with identical geometry.</summary>
         public double VDup;
 
+        /// <summary>Boundary-outside beam penalty [0..1].</summary>
+        public double VBoundary;
+
         /// <summary>Number of duplicate element pairs (same line geometry, e.g. from rule 051).</summary>
         public int DuplicateCount;
 
@@ -57,8 +60,8 @@ namespace ShapeGrammar3D.Classes
         public override string ToString()
         {
             return string.Format(
-                "VDang={0:F4} VAng={1:F4} VLen={2:F4} VInt={3:F4} VRepet={4:F4} VDup={5:F4} (dangling={6}, isolated={7}, angleViol={8}, lenViol={9}, intersect={10}, bins={11}, dup={12}), Total={13:F4}",
-                VDang, VAng, VLen, VIntersect, VRepet, VDup, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, IntersectionCount, RepetitivenessBinCount, DuplicateCount, TotalViolation);
+                "VDang={0:F4} VAng={1:F4} VLen={2:F4} VInt={3:F4} VRepet={4:F4} VDup={5:F4} VBoundary={6:F4} (dangling={7}, isolated={8}, angleViol={9}, lenViol={10}, intersect={11}, bins={12}, dup={13}), Total={14:F4}",
+                VDang, VAng, VLen, VIntersect, VRepet, VDup, VBoundary, DanglingEdgeCount, IsolatedEdgeCount, AngleViolationCount, LengthViolationCount, IntersectionCount, RepetitivenessBinCount, DuplicateCount, TotalViolation);
         }
     }
 }

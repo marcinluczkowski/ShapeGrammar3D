@@ -20,8 +20,10 @@ namespace ShapeGrammar3D.Components.RuleComponents
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddBoxParameter("Box", "box",
-                "Design-space bounding box (kept for future domain checking)", GH_ParamAccess.item);
+            pManager.AddBrepParameter("Boundary Brep", "bBrep",
+                "Closed Brep design-space boundary.", GH_ParamAccess.item);
+            pManager.AddMeshParameter("Boundary Mesh", "bMesh",
+                "Closed Mesh design-space boundary. Used when Boundary Brep is not provided.", GH_ParamAccess.item);
             pManager.AddLineParameter("Required Lines", "reqLn",
                 "Boundary lines that must have ≥ minPt support points", GH_ParamAccess.list);
             pManager.AddLineParameter("Optional Lines", "optLn",
@@ -36,7 +38,16 @@ namespace ShapeGrammar3D.Components.RuleComponents
                 "Load vector applied at every support node", GH_ParamAccess.item, new Vector3d(0, 0, -100));
             pManager.AddTextParameter("Support Condition", "supCond",
                 "[Tx,Ty,Tz,Rx,Ry,Rz]", GH_ParamAccess.item, "111111");
-            pManager[2].Optional = true;
+            pManager.AddVectorParameter("Area Load Vector", "areaLoad",
+                "Surface load vector (kN/m2) on Box top face. Tributary area is computed by Voronoi and mapped to AR2 stud tips.",
+                GH_ParamAccess.item, Vector3d.Zero);
+            pManager.AddBooleanParameter("Use Self Weight", "selfW",
+                "Apply self-weight in GrammarInterpreter_Auto8.", GH_ParamAccess.item, false);
+            pManager.AddIntegerParameter("Boundary Beam Constraint", "bConst",
+                "0: no boundary beam constraint, 1: hard constraint (remove outside beams), >=2: soft feasibility weight.",
+                GH_ParamAccess.item, 0);
+            pManager[1].Optional = true;
+            pManager[3].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -46,7 +57,8 @@ namespace ShapeGrammar3D.Components.RuleComponents
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            Box box = Box.Unset;
+            Brep boundaryBrep = null;
+            Mesh boundaryMesh = null;
             var reqLines = new List<Line>();
             var optLines = new List<Line>();
             int maxPt = 4;
@@ -54,15 +66,46 @@ namespace ShapeGrammar3D.Components.RuleComponents
             SH_CrossSection_Beam crossSec = null;
             var loadVec = new Vector3d();
             string supCond = "111111";
+            var areaLoadVec = Vector3d.Zero;
+            bool useSelfWeight = false;
+            int boundaryBeamConstraint = 0;
 
-            if (!DA.GetData(0, ref box)) return;
-            if (!DA.GetDataList(1, reqLines)) return;
-            DA.GetDataList(2, optLines);
-            DA.GetData(3, ref maxPt);
-            DA.GetData(4, ref minPt);
-            if (!DA.GetData(5, ref crossSec)) return;
-            DA.GetData(6, ref loadVec);
-            DA.GetData(7, ref supCond);
+            DA.GetData(0, ref boundaryBrep);
+            DA.GetData(1, ref boundaryMesh);
+            if (!DA.GetDataList(2, reqLines)) return;
+            DA.GetDataList(3, optLines);
+            DA.GetData(4, ref maxPt);
+            DA.GetData(5, ref minPt);
+            if (!DA.GetData(6, ref crossSec)) return;
+            DA.GetData(7, ref loadVec);
+            DA.GetData(8, ref supCond);
+            DA.GetData(9, ref areaLoadVec);
+            DA.GetData(10, ref useSelfWeight);
+            DA.GetData(11, ref boundaryBeamConstraint);
+
+            if (boundaryBrep == null && boundaryMesh == null)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Provide a closed Boundary Brep or Boundary Mesh.");
+                return;
+            }
+
+            if (boundaryBrep != null && !boundaryBrep.IsSolid)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Boundary Brep must be closed (solid).");
+                return;
+            }
+
+            if (boundaryBrep == null && boundaryMesh != null && !boundaryMesh.IsClosed)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Boundary Mesh must be closed.");
+                return;
+            }
+
+            BoundingBox designBb;
+            if (boundaryBrep != null)
+                designBb = boundaryBrep.GetBoundingBox(true);
+            else
+                designBb = boundaryMesh.GetBoundingBox(true);
 
             if (reqLines.Count + optLines.Count < 2)
             {
@@ -72,8 +115,9 @@ namespace ShapeGrammar3D.Components.RuleComponents
             }
 
             var rule = new SG_AutoRule_InitShape_3D(
-                box.BoundingBox, reqLines, optLines, maxPt, minPt,
-                crossSec, loadVec, supCond);
+                designBb, reqLines, optLines, maxPt, minPt,
+                crossSec, loadVec, supCond, areaLoadVec, useSelfWeight,
+                boundaryBrep, boundaryMesh, boundaryBeamConstraint);
 
             DA.SetData(0, rule);
         }
