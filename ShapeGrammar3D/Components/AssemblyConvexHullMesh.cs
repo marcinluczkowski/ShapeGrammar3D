@@ -37,6 +37,12 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("Individual", "Ind",
                 "Individual index within that generation (0-based). -1 = all individuals in the generation.",
                 GH_ParamAccess.item, 0);
+            pManager.AddIntegerParameter("Method", "M",
+                "Mesh method: 0 = Convex Hull (strict metric-13), 1 = ShrinkWrap (follows concavity/detail).",
+                GH_ParamAccess.item, 0);
+            pManager.AddNumberParameter("Detail Ratio", "Det",
+                "Detail level for ShrinkWrap as fraction of bbox diagonal (e.g. 0.01~0.05). Smaller = finer.",
+                GH_ParamAccess.item, 0.02);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -64,8 +70,12 @@ namespace ShapeGrammar3D.Components
 
             int genReq = -1;
             int indReq = 0;
+            int method = 0;
+            double detailRatio = 0.02;
             DA.GetData(1, ref genReq);
             DA.GetData(2, ref indReq);
+            DA.GetData(3, ref method);
+            DA.GetData(4, ref detailRatio);
 
             var asm = ghAsm.Value;
             var gens = asm.Generations;
@@ -106,7 +116,7 @@ namespace ShapeGrammar3D.Components
                 for (int i = 0; i < gen.Individuals.Count; i++)
                 {
                     var path = new GH_Path(i);
-                    if (AppendHullFor(gen.Individuals[i], path, meshTree, volTree)) emitted++;
+                    if (AppendHullFor(gen.Individuals[i], path, meshTree, volTree, method, detailRatio)) emitted++;
                 }
 
                 DA.SetDataTree(0, meshTree);
@@ -128,26 +138,29 @@ namespace ShapeGrammar3D.Components
                 }
 
                 var path = new GH_Path(0);
-                bool ok = AppendHullFor(gen.Individuals[indReq], path, meshTree, volTree);
+                bool ok = AppendHullFor(gen.Individuals[indReq], path, meshTree, volTree, method, detailRatio);
 
                 DA.SetDataTree(0, meshTree);
                 DA.SetDataTree(1, volTree);
                 DA.SetData(2, ok
                     ? string.Format(CultureInfo.InvariantCulture,
-                        "Generation id {0}, individual {1}: hull mesh exported.",
-                        gen.Generation, indReq)
+                        "Generation id {0}, individual {1}: mesh exported (method={2}).",
+                        gen.Generation, indReq, method)
                     : string.Format(CultureInfo.InvariantCulture,
-                        "Generation id {0}, individual {1}: hull could not be computed (fewer than 4 unique nodes or invalid mesh).",
+                        "Generation id {0}, individual {1}: mesh could not be computed (insufficient points or invalid mesh).",
                         gen.Generation, indReq));
             }
         }
 
         private static bool AppendHullFor(AssemblyIndividual ind, GH_Path path,
-            GH_Structure<GH_Mesh> meshTree, GH_Structure<GH_Number> volTree)
+            GH_Structure<GH_Mesh> meshTree, GH_Structure<GH_Number> volTree,
+            int method, double detailRatio)
         {
             if (ind?.Shape == null) return false;
 
-            var mesh = ShapeMetrics.ConvexHullMesh(ind.Shape);
+            Mesh mesh = method == 1
+                ? ShapeMetrics.ShrinkWrapMesh(ind.Shape, detailRatio)
+                : ShapeMetrics.ConvexHullMesh(ind.Shape);
             if (mesh == null || !mesh.IsValid) return false;
 
             meshTree.Append(new GH_Mesh(mesh), path);

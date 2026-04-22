@@ -121,6 +121,7 @@ namespace ShapeGrammar3D.Components
         private int _reclusterInterval = 5;
         private List<int> _topoMetricTypes = new List<int> { 0 };
         private List<int> _shapeMetricTypes = new List<int> { 0 };
+        private double _shapeShrinkWrapDetailRatio = ShapeMetrics.DefaultShrinkWrapDetailRatio;
 
         // Feasibility configuration
         private FeasibilitySettings _feasibilitySettings = FeasibilitySettings.Default();
@@ -286,6 +287,7 @@ namespace ShapeGrammar3D.Components
                 ReclusterInterval = _reclusterInterval,
                 TopologyMetrics = new List<int>(_topoMetricTypes),
                 ShapeMetrics = new List<int>(_shapeMetricTypes),
+                ShapeShrinkWrapDetailRatio = _shapeShrinkWrapDetailRatio,
                 FixedSeed = false,
                 DanglingWeight = _feasibilitySettings.WDang,
                 AngleWeight = _feasibilitySettings.WAng,
@@ -332,6 +334,7 @@ namespace ShapeGrammar3D.Components
             _shapeMetricTypes = settings.ShapeMetrics
                 .Select(v => Math.Clamp(v, 0, ShapeMetrics.Count - 1))
                 .Distinct().ToList();
+            _shapeShrinkWrapDetailRatio = settings.ShapeShrinkWrapDetailRatio;
 
             bool useFixedSeed = settings.FixedSeed;
 
@@ -799,7 +802,9 @@ namespace ShapeGrammar3D.Components
                     double rawDisp = CalculateMaxNodalDisplacement(finalModel);
 
                     var topoVals = _topoMetricTypes.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
-                    var shpeVals = _shapeMetricTypes.Select(mt => ShapeMetrics.Compute(shape, mt)).ToList();
+                    var shpeVals = _shapeMetricTypes
+                        .Select(mt => ShapeMetrics.Compute(shape, mt, _shapeShrinkWrapDetailRatio))
+                        .ToList();
 
                     double spanL = ComputeSpanL(finalModel);
                     double slsLimit = spanL / 300.0;

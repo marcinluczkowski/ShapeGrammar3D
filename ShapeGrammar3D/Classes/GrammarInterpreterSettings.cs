@@ -24,6 +24,7 @@ namespace ShapeGrammar3D.Classes
         public int ReclusterInterval { get; set; } = 5;
         public List<int> TopologyMetrics { get; set; } = new List<int> { 0 };
         public List<int> ShapeMetrics { get; set; } = new List<int> { 0 };
+        public double ShapeShrinkWrapDetailRatio { get; set; } = 0.02;
 
         public bool FixedSeed { get; set; } = false;
 
@@ -67,6 +68,7 @@ namespace ShapeGrammar3D.Classes
             TopologyWeight = Math.Max(0.0, TopologyWeight);
             ShapeWeight = Math.Max(0.0, ShapeWeight);
             FitnessWeight = Math.Max(0.0, FitnessWeight);
+            ShapeShrinkWrapDetailRatio = Math.Clamp(ShapeShrinkWrapDetailRatio, 0.001, 0.2);
             KMeansIterations = Math.Max(1, KMeansIterations);
             ReclusterInterval = Math.Max(0, ReclusterInterval);
             TopologyMetrics = (TopologyMetrics == null || TopologyMetrics.Count == 0) ? new List<int> { 0 } : TopologyMetrics.Distinct().ToList();
@@ -125,6 +127,7 @@ namespace ShapeGrammar3D.Classes
                 ReclusterInterval = Value.ReclusterInterval,
                 TopologyMetrics = Value.TopologyMetrics != null ? new List<int>(Value.TopologyMetrics) : new List<int>(),
                 ShapeMetrics = Value.ShapeMetrics != null ? new List<int>(Value.ShapeMetrics) : new List<int>(),
+                ShapeShrinkWrapDetailRatio = Value.ShapeShrinkWrapDetailRatio,
                 FixedSeed = Value.FixedSeed,
                 DanglingWeight = Value.DanglingWeight,
                 AngleWeight = Value.AngleWeight,

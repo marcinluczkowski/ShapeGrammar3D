@@ -51,8 +51,11 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("Shape Metrics", "ShpeMet",
                 "Shape metric selectors (supply one or many for n-dimensional clustering):\n" +
                 "0=TotalLength, 1=AvgLength, 2=MaxLength, 3=MinLength, 4=StdDevLength, 5=BBoxVolume, 6=BBoxDiagonal, " +
-                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=HullAreaXY, 11=HullAspectXY, 12=MeshArea(from lines), 13=Convex Hull Volume",
+                "7=StructuralVolume, 8=MaxNodeSpan, 9=Compactness, 10=HullAreaXY, 11=HullAspectXY, 12=MeshArea(from lines), 13=Convex Hull Volume, 14=ShrinkWrap Volume",
                 GH_ParamAccess.list);                                                                                              // 12
+            pManager.AddNumberParameter("ShrinkWrap Detail", "ShDet",
+                "Detail level for Shape Metric 14 (ShrinkWrap Volume) as bbox-diagonal ratio. Smaller = finer mesh, slower.",
+                GH_ParamAccess.item, 0.02);                                                                                       // 12b
             pManager.AddBooleanParameter("Fixed Seed", "FixSeed",
                 "Use a deterministic pre-generated population (same genotypes every run) for controlled metric comparison experiments.",
                 GH_ParamAccess.item, false);                                                                                       // 13
@@ -141,7 +144,7 @@ namespace ShapeGrammar3D.Components
 
             pManager[11].Optional = true;
             pManager[12].Optional = true;
-            pManager[30].Optional = true;
+            pManager[31].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -184,6 +187,7 @@ namespace ShapeGrammar3D.Components
             Vector3d gravityDir = settings.GravityDir;
             int clusterElite = settings.ClusterElite;
             int csOptIterations = settings.CSOptIterations;
+            double shrinkWrapDetail = settings.ShapeShrinkWrapDetailRatio;
 
             DA.GetData(0, ref populationSize);
             DA.GetData(1, ref generations);
@@ -204,31 +208,33 @@ namespace ShapeGrammar3D.Components
             var shpe = new List<int>();
             if (DA.GetDataList(12, shpe) && shpe.Count > 0)
                 settings.ShapeMetrics = shpe;
-            DA.GetData(13, ref fixedSeed);
+            DA.GetData(13, ref shrinkWrapDetail);
+            DA.GetData(14, ref fixedSeed);
 
-            DA.GetData(14, ref danglingWeight);
-            DA.GetData(15, ref angleWeight);
-            DA.GetData(16, ref lengthWeight);
-            DA.GetData(17, ref intersectionWeight);
-            DA.GetData(18, ref repetWeight);
-            DA.GetData(19, ref angleMinDeg);
-            DA.GetData(21, ref angleOptDeg);
-            DA.GetData(22, ref lenTooShort);
-            DA.GetData(23, ref lenOptLow);
-            DA.GetData(24, ref lenOptHigh);
-            DA.GetData(25, ref lenTooLong);
-            DA.GetData(26, ref numObjectives);
+            DA.GetData(15, ref danglingWeight);
+            DA.GetData(16, ref angleWeight);
+            DA.GetData(17, ref lengthWeight);
+            DA.GetData(18, ref intersectionWeight);
+            DA.GetData(19, ref repetWeight);
+            DA.GetData(20, ref duplicateWeight);
+            DA.GetData(21, ref angleMinDeg);
+            DA.GetData(22, ref angleOptDeg);
+            DA.GetData(23, ref lenTooShort);
+            DA.GetData(24, ref lenOptLow);
+            DA.GetData(25, ref lenOptHigh);
+            DA.GetData(26, ref lenTooLong);
+            DA.GetData(27, ref numObjectives);
             int singleObjType = 0, utilObjType = 0;
-            DA.GetData(27, ref singleObjType);
-            DA.GetData(28, ref utilObjType);
-            DA.GetData(29, ref croSecOpt);
+            DA.GetData(28, ref singleObjType);
+            DA.GetData(29, ref utilObjType);
+            DA.GetData(30, ref croSecOpt);
 
             var rawDomains = new List<GH_Interval>();
-            if (DA.GetDataList(30, rawDomains) && rawDomains.Count > 0)
+            if (DA.GetDataList(31, rawDomains) && rawDomains.Count > 0)
                 settings.MetricDomains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(31, ref gravityDir);
-            DA.GetData(32, ref clusterElite);
-            DA.GetData(33, ref csOptIterations);
+            DA.GetData(32, ref gravityDir);
+            DA.GetData(33, ref clusterElite);
+            DA.GetData(34, ref csOptIterations);
 
             settings.PopulationSize = populationSize;
             settings.Generations = generations;
@@ -242,6 +248,7 @@ namespace ShapeGrammar3D.Components
             settings.KMeansIterations = kmeansIterations;
             settings.ReclusterInterval = reclusterInterval;
             settings.FixedSeed = fixedSeed;
+            settings.ShapeShrinkWrapDetailRatio = shrinkWrapDetail;
             settings.DanglingWeight = danglingWeight;
             settings.AngleWeight = angleWeight;
             settings.LengthWeight = lengthWeight;

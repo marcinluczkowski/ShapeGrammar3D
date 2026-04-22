@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Rhino.Geometry;
 using Grasshopper.Kernel;
 using ShapeGrammar3D.Classes.Elements;
@@ -53,7 +54,10 @@ namespace ShapeGrammar3D.Classes
         MeshAreaFromLines = 12,
 
         /// <summary>13 – Convex hull volume (3D envelope).</summary>
-        ConvexHullVolume = 13
+        ConvexHullVolume = 13,
+
+        /// <summary>14 – ShrinkWrap volume (detail-following envelope).</summary>
+        ShrinkWrapVolume = 14
     }
 
     /// <summary>
@@ -62,6 +66,7 @@ namespace ShapeGrammar3D.Classes
     /// </summary>
     public static class ShapeMetrics
     {
+        public const double DefaultShrinkWrapDetailRatio = 0.02;
         /// <summary>
         /// Total number of available metrics.
         /// </summary>
@@ -71,6 +76,11 @@ namespace ShapeGrammar3D.Classes
         /// Computes the selected shape metric for a shape.
         /// </summary>
         public static double Compute(SG_Shape shape, int metricType)
+        {
+            return Compute(shape, metricType, DefaultShrinkWrapDetailRatio);
+        }
+
+        public static double Compute(SG_Shape shape, int metricType, double shrinkWrapDetailRatio)
         {
             if (shape == null || shape.Elems == null)
                 return 0.0;
@@ -91,6 +101,7 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.HullAspectRatioXY     => HullAspectRatioXY(shape),
                 ShapeMetricType.MeshAreaFromLines     => MeshAreaFromLines(shape),
                 ShapeMetricType.ConvexHullVolume      => ConvexHullVolume(shape),
+                ShapeMetricType.ShrinkWrapVolume      => ShrinkWrapVolume(shape, shrinkWrapDetailRatio),
                 _ => TotalLength(shape)
             };
         }
@@ -116,6 +127,7 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.HullAspectRatioXY     => "Hull Aspect XY",
                 ShapeMetricType.MeshAreaFromLines     => "Mesh Area (from lines)",
                 ShapeMetricType.ConvexHullVolume      => "Convex Hull Volume",
+                ShapeMetricType.ShrinkWrapVolume      => "ShrinkWrap Volume",
                 _ => "Unknown"
             };
         }
@@ -326,40 +338,44 @@ namespace ShapeGrammar3D.Classes
             try
             {
                 var pts = shape.Nodes
-                    .Where(n => n?.Pt != null)
+                    .Where(n => n != null)
                     .Select(n => n.Pt)
                     .Distinct()
                     .ToList();
 
                 if (pts.Count < 4) return null;
 
-                var hull = Grasshopper.Kernel.Geometry.ConvexHull.Solver.ComputeHull(
-                    (IEnumerable<Grasshopper.Kernel.Types.GH_Point>)pts);
+                // Prefer RhinoCommon native 3D hull builder when available.
+                // Use reflection so this still compiles against older RhinoCommon
+                // versions that do not expose CreateConvexHull3D at compile time.
+                var mi = typeof(Mesh).GetMethod(
+                    "CreateConvexHull3D",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[]
+                    {
+                        typeof(IEnumerable<Point3d>),
+                        typeof(int[][]).MakeByRefType(),
+                        typeof(double),
+                        typeof(double)
+                    },
+                    null);
 
-                if (hull == null || hull.Count < 4) return null;
+                if (mi != null)
+                {
+                    object[] args = { pts, null, 1e-6, Math.PI / 180.0 };
+                    var mesh = mi.Invoke(null, args) as Mesh;
+                    if (mesh != null && mesh.IsValid && mesh.IsClosed)
+                    {
+                        mesh.Normals.ComputeNormals();
+                        mesh.Compact();
+                        return mesh;
+                    }
+                }
 
-                var mesh = new Mesh();
-                var hullPts = hull.ToList();
-
-                foreach (var pt in hullPts)
-                    mesh.Vertices.Add(pt);
-
-                var centroid = Point3d.Origin;
-                foreach (var pt in hullPts)
-                    centroid += pt;
-                centroid /= hullPts.Count;
-
-                int centroidIdx = mesh.Vertices.Add(centroid);
-
-                for (int i = 0; i < hullPts.Count - 1; i++)
-                    mesh.Faces.AddFace(i, i + 1, centroidIdx);
-
-                mesh.Faces.AddFace(hullPts.Count - 1, 0, centroidIdx);
-
-                mesh.Normals.ComputeNormals();
-                mesh.Compact();
-
-                return mesh.IsValid ? mesh : null;
+                // Fallback for environments where CreateConvexHull3D is unavailable:
+                // no robust 3D hull builder is exposed in the referenced API.
+                return null;
             }
             catch
             {
@@ -367,11 +383,67 @@ namespace ShapeGrammar3D.Classes
             }
         }
 
-        /// <summary>14 – ShrinkWrapVolume</summary>
-        public static double ShrinkWrapVolume(SG_Shape shape)
+        /// <summary>14 – ShrinkWrap volume with configurable detail ratio.</summary>
+        public static double ShrinkWrapVolume(SG_Shape shape, double detailRatio = DefaultShrinkWrapDetailRatio)
         {
-            // wip
-            return 0.0;
+            var m = ShrinkWrapMesh(shape, detailRatio);
+            if (m == null || !m.IsValid) return 0.0;
+            try
+            {
+                var vp = VolumeMassProperties.Compute(m);
+                return Math.Abs(vp?.Volume ?? 0.0);
+            }
+            catch { return 0.0; }
+        }
+
+        public static Mesh ShrinkWrapMesh(SG_Shape shape, double detailRatio = DefaultShrinkWrapDetailRatio)
+        {
+            if (shape?.Nodes == null || shape.Nodes.Count < 4) return null;
+            detailRatio = Math.Clamp(detailRatio, 0.001, 0.2);
+
+            var bb = BoundingBox.Empty;
+            foreach (var n in shape.Nodes)
+            {
+                if (n == null) continue;
+                if (!bb.IsValid) bb = new BoundingBox(n.Pt, n.Pt);
+                else bb.Union(n.Pt);
+            }
+            if (!bb.IsValid) return null;
+            double diag = bb.Diagonal.Length;
+            if (diag < 1e-9) return null;
+
+            double targetEdge = Math.Max(1e-6, diag * detailRatio);
+            var pc = new PointCloud();
+            foreach (var n in shape.Nodes)
+            {
+                if (n == null) continue;
+                pc.Add(n.Pt);
+            }
+
+            foreach (var e in shape.Elems.OfType<SG_Elem1D>())
+            {
+                if (e.Nodes == null || e.Nodes.Length < 2 || e.Nodes[0] == null || e.Nodes[1] == null) continue;
+                var ln = new Line(e.Nodes[0].Pt, e.Nodes[1].Pt);
+                if (!ln.IsValid || ln.Length <= 1e-9) continue;
+                int div = Math.Max(1, (int)Math.Ceiling(ln.Length / targetEdge));
+                for (int i = 1; i < div; i++)
+                    pc.Add(ln.PointAt((double)i / div));
+            }
+            if (pc.Count < 4) return null;
+
+            var p = new ShrinkWrapParameters
+            {
+                TargetEdgeLength = targetEdge,
+                Offset = 0.0,
+                SmoothingIterations = 1,
+                FillHolesInInputObjects = true,
+                PolygonOptimization = 20
+            };
+            var m = Mesh.ShrinkWrap(pc, p);
+            if (m == null || !m.IsValid) return null;
+            m.Normals.ComputeNormals();
+            m.Compact();
+            return m;
         }
 
 
