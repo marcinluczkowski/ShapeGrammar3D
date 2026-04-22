@@ -17,15 +17,15 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    #region GI_Auto7 Attributes
+    #region GrammarInterpreter_ForLargeModel attributes
 
-    public class GI_Auto7Attributes : GH_ComponentAttributes
+    public class GrammarInterpreter_ForLargeModelAttributes : GH_ComponentAttributes
     {
         private RectangleF _panelBounds, _btnConv;
         private const float BTN_H = 22f, PAD = 4f, MIN_W = 200f;
-        private GrammarInterpreter_Auto7 Comp => (GrammarInterpreter_Auto7)Owner;
+        private GrammarInterpreter_ForLargeModel Comp => (GrammarInterpreter_ForLargeModel)Owner;
 
-        public GI_Auto7Attributes(GrammarInterpreter_Auto7 owner) : base(owner) { }
+        public GrammarInterpreter_ForLargeModelAttributes(GrammarInterpreter_ForLargeModel owner) : base(owner) { }
 
         protected override void Layout()
         {
@@ -102,7 +102,7 @@ namespace ShapeGrammar3D.Components
 
     #endregion
 
-    public class GrammarInterpreter_Auto7 : GH_Component
+    public class GrammarInterpreter_ForLargeModel : GH_Component
     {
         // Genetic Algorithm configuration (overridable from GH inputs). Defaults for large runs (1000 pop, 100 gen).
         private int _populationSize = 1000;
@@ -162,8 +162,8 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// Large-scale GA interpreter: 1000 pop × 100 gen by default. Stores only first and last generation shapes and lightweight convergence data per cluster per generation.
         /// </summary>
-        public GrammarInterpreter_Auto7()
-          : base("GrammarInterpreter_Auto7", "GI_Auto7",
+        public GrammarInterpreter_ForLargeModel()
+          : base("Grammar Interpreter for Large Model", "GI_Large",
               "Large-scale GA (e.g. 1000×100). Outputs first and last generation shapes only; convergence data (best/worst/avg per cluster per gen) for plotting.",
               UT.CAT, UT.GR_INT)
         {
@@ -208,7 +208,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddColourParameter("Conv Colours", "CCol", "Colours for Conv Lines", GH_ParamAccess.tree);                   // 9
         }
 
-        public override void CreateAttributes() { m_attributes = new GI_Auto7Attributes(this); }
+        public override void CreateAttributes() { m_attributes = new GrammarInterpreter_ForLargeModelAttributes(this); }
 
         public override bool Write(GH_IO.Serialization.GH_IWriter writer)
         {
@@ -756,6 +756,8 @@ namespace ShapeGrammar3D.Components
 
                     shape.RegisterElemsToNodes();
 
+                    EnforceBoundaryConstraints(shape, rules);
+
                     RepairSupportsAndLoads(shape, rules);
 
                     if (_useSelfWeight)
@@ -1172,7 +1174,7 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(9, colorsTree);
 
             string info = string.Format(
-                "GI_Auto7: {0} pop × {1} gen. First: {2} shapes (top {3:F0}% per cluster), Last: {4} shapes. Convergence: {5} entries.\n\n{6}",
+                "GI_Large: {0} pop × {1} gen. First: {2} shapes (top {3:F0}% per cluster), Last: {4} shapes. Convergence: {5} entries.\n\n{6}",
                 _populationSize, _numGenerations,
                 firstShapes.Count, pctTop, lastShapes.Count,
                 _convergenceData?.Count ?? 0,
@@ -1346,6 +1348,8 @@ namespace ShapeGrammar3D.Components
             }
 
             shape.RegisterElemsToNodes();
+
+            EnforceBoundaryConstraints(shape, rules);
 
             RepairSupportsAndLoads(shape, rules);
 
@@ -2169,6 +2173,15 @@ namespace ShapeGrammar3D.Components
             }
         }
 
+        private static void EnforceBoundaryConstraints(SG_Shape shape, List<SG_Rule> rules)
+        {
+            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            if (initRule == null) return;
+            var brep = initRule.BoundaryBrep ?? shape?.BoundaryBrep;
+            var mesh = initRule.BoundaryMesh ?? shape?.BoundaryMesh;
+            BoundaryConstraintUtil.Enforce(shape, brep, mesh, initRule.BoundaryBeamConstraintMode);
+        }
+
         private static void RepairSupportsAndLoads(SG_Shape shape, List<SG_Rule> rules)
         {
             if (shape?.Nodes == null) return;
@@ -2227,40 +2240,15 @@ namespace ShapeGrammar3D.Components
             double xMin = bb.Min.X, xMax = bb.Max.X;
             double yMin = bb.Min.Y, yMax = bb.Max.Y;
 
-            var studTips = new List<(int nodeId, double x, double y)>();
-            var studTipIds = new HashSet<int>();
+            var seedNodes = VoronoiAreaLoadUtil.CollectAreaLoadVoronoiSeedNodes(shape, bb);
+            if (seedNodes.Count == 0) return;
+            var seeds = seedNodes.Select(n => (n.ID, n.Pt.X, n.Pt.Y)).ToList();
+            var voronoiAreas = ComputeVoronoiAreas(seeds, xMin, xMax, yMin, yMax);
 
-            if (shape.Elems != null)
+            foreach (var n in seedNodes)
             {
-                foreach (var e in shape.Elems)
-                {
-                    if (e == null || e.Autorule != UT.RULE020_MARKER) continue;
-                    if (e.Nodes == null || e.Nodes.Length < 2 || e.Nodes[1] == null) continue;
-                    var tipNode = e.Nodes[1];
-                    if (studTipIds.Contains(tipNode.ID)) continue;
-                    studTipIds.Add(tipNode.ID);
-                    studTips.Add((tipNode.ID, tipNode.Pt.X, tipNode.Pt.Y));
-                }
-            }
-
-            var voronoiAreas = new Dictionary<int, double>();
-            if (studTips.Count > 0)
-                voronoiAreas = ComputeVoronoiAreas(studTips, xMin, xMax, yMin, yMax);
-
-            foreach (var nd in shape.Nodes)
-            {
-                if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
-
-                if (voronoiAreas.TryGetValue(nd.ID, out double area))
-                {
-                    Vector3d forceVec = area * areaLoadVec;
-                    shape.PointLoads.Add(new SG_PointLoad(
-                        forceVec, Vector3d.Zero, nd.Pt));
-                }
-                else if (fallbackLoadVec.Length > 1e-12)
-                {
-                    shape.PointLoads.Add(new SG_PointLoad(fallbackLoadVec, Vector3d.Zero, nd.Pt));
-                }
+                if (!voronoiAreas.TryGetValue(n.ID, out double area)) continue;
+                shape.PointLoads.Add(new SG_PointLoad(area * areaLoadVec, Vector3d.Zero, n.Pt));
             }
         }
 

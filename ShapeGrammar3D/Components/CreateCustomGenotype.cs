@@ -37,7 +37,7 @@ namespace ShapeGrammar3D.Components
             int num_of_individuals = 0;
             List<int> max_number_of_rules = new List<int>();
 
-            List<SG_Genotype> genotypes = new List<SG_Genotype>();  
+            List<SG_Genotype> genotypes = new List<SG_Genotype>();   
 
             // --- input ---
             if (!DA.GetDataList(0, rls)) return;

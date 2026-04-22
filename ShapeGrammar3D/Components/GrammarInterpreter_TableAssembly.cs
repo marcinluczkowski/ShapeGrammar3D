@@ -43,7 +43,7 @@ namespace ShapeGrammar3D.Components
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_Auto6", GH_ParamAccess.item);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing between columns", GH_ParamAccess.item, 30.0);
             pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing between rows", GH_ParamAccess.item, 10.0);
             pManager.AddPointParameter("Insert Point", "InsPt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);

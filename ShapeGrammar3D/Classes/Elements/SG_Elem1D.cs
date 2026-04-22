@@ -230,7 +230,9 @@ namespace ShapeGrammar3D.Classes.Elements
             if (autorule == 4 || autorule == 5 || autorule == 6
                 || autorule == UT.RULE040_MARKER || autorule == UT.RULE041_MARKER
                 || autorule == UT.RULE050_MARKER || autorule == UT.RULE051_MARKER
-                || autorule == UT.RULE060_MARKER || autorule == UT.RULE061_MARKER)
+                || autorule == UT.RULE060_MARKER || autorule == UT.RULE061_MARKER
+                || autorule == UT.RULE062_MARKER || autorule == UT.RULE063_MARKER
+                || autorule == UT.RULE064_MARKER)
                 return Elem1DStructuralType.Bar;
             if (autorule == 0 || autorule == UT.RULE_END_MARKER) return GetStructuralTypeFromName(name);
             return Elem1DStructuralType.Other;
@@ -243,7 +245,8 @@ namespace ShapeGrammar3D.Classes.Elements
             if (name == "3DAR2" || name == "AR2") return Elem1DStructuralType.Strut;
             if (name == "3DAR4" || name == "3DAR5" || name == "dg"
                 || name.IndexOf("AR4", StringComparison.OrdinalIgnoreCase) >= 0
-                || name.IndexOf("AR5", StringComparison.OrdinalIgnoreCase) >= 0)
+                || name.IndexOf("AR5", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("AR6", StringComparison.OrdinalIgnoreCase) >= 0)
                 return Elem1DStructuralType.Bar;
             return Elem1DStructuralType.Other;
         }

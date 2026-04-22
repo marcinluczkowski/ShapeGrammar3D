@@ -13,7 +13,8 @@ namespace ShapeGrammar3D.Components.RuleComponents
           : base("Auto rule InitShape-3D", "A-InitShape",
               "GA places support points along boundary lines and creates " +
               "beams between points on different lines. " +
-              "Required lines guarantee ≥ minPt supports; optional lines have no minimum.",
+              "Required lines guarantee ≥ minPt supports; optional lines have no minimum. " +
+              "First two required lines get the same support count; minSpc enforces minimum spacing along each required line.",
               UT.CAT, UT.GR_RLS)
         {
         }
@@ -32,6 +33,9 @@ namespace ShapeGrammar3D.Components.RuleComponents
                 "Maximum candidate support points per boundary line", GH_ParamAccess.item, 4);
             pManager.AddIntegerParameter("Min Points", "minPt",
                 "Minimum active points on each required line (≥2)", GH_ParamAccess.item, 3);
+            pManager.AddNumberParameter("Min Support Spacing", "minSpc",
+                "Minimum chord distance between adjacent support points on each required line (model units). 0 = only merge coincident points.",
+                GH_ParamAccess.item, 0.0);
             pManager.AddGenericParameter("Cross Section", "crossSec",
                 "Default cross section for generated beams", GH_ParamAccess.item);
             pManager.AddVectorParameter("Load", "load",
@@ -42,7 +46,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
                 "Surface load vector (kN/m2) on Box top face. Tributary area is computed by Voronoi and mapped to AR2 stud tips.",
                 GH_ParamAccess.item, Vector3d.Zero);
             pManager.AddBooleanParameter("Use Self Weight", "selfW",
-                "Apply self-weight in GrammarInterpreter_Auto8.", GH_ParamAccess.item, false);
+                "Apply self-weight in Grammar Interpreter from Boundary Shape (GI_FromBnd).", GH_ParamAccess.item, false);
             pManager.AddIntegerParameter("Boundary Beam Constraint", "bConst",
                 "0: no boundary beam constraint, 1: hard constraint (remove outside beams), >=2: soft feasibility weight.",
                 GH_ParamAccess.item, 0);
@@ -63,6 +67,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             var optLines = new List<Line>();
             int maxPt = 4;
             int minPt = 3;
+            double minSupportSpacing = 0.0;
             SH_CrossSection_Beam crossSec = null;
             var loadVec = new Vector3d();
             string supCond = "111111";
@@ -76,12 +81,13 @@ namespace ShapeGrammar3D.Components.RuleComponents
             DA.GetDataList(3, optLines);
             DA.GetData(4, ref maxPt);
             DA.GetData(5, ref minPt);
-            if (!DA.GetData(6, ref crossSec)) return;
-            DA.GetData(7, ref loadVec);
-            DA.GetData(8, ref supCond);
-            DA.GetData(9, ref areaLoadVec);
-            DA.GetData(10, ref useSelfWeight);
-            DA.GetData(11, ref boundaryBeamConstraint);
+            DA.GetData(6, ref minSupportSpacing);
+            if (!DA.GetData(7, ref crossSec)) return;
+            DA.GetData(8, ref loadVec);
+            DA.GetData(9, ref supCond);
+            DA.GetData(10, ref areaLoadVec);
+            DA.GetData(11, ref useSelfWeight);
+            DA.GetData(12, ref boundaryBeamConstraint);
 
             if (boundaryBrep == null && boundaryMesh == null)
             {
@@ -117,7 +123,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             var rule = new SG_AutoRule_InitShape_3D(
                 designBb, reqLines, optLines, maxPt, minPt,
                 crossSec, loadVec, supCond, areaLoadVec, useSelfWeight,
-                boundaryBrep, boundaryMesh, boundaryBeamConstraint);
+                boundaryBrep, boundaryMesh, boundaryBeamConstraint, minSupportSpacing);
 
             DA.SetData(0, rule);
         }

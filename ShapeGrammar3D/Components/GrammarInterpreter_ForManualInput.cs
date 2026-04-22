@@ -6,16 +6,16 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace ShapeGrammar.Components
+namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto_SS  : GH_Component
+    public class GrammarInterpreter_ForManualInput : GH_Component
     {
         /// <summary>
-        /// Initializes a new instance of the GrammerInterpreter_Auto class.
+        /// Initializes a new instance of the GrammarInterpreter_ForManualInput class.
         /// </summary>
-        public GrammarInterpreter_Auto_SS()
-          : base("GrammerInterpreter_Auto_SS", "GI_Auto_SS",
-              "Automatic Grammar Interpreter",
+        public GrammarInterpreter_ForManualInput()
+          : base("Grammar Interpreter for Manual input", "GI_Manual",
+              "Grammar interpreter driven by a supplied genotype (manual / custom chromosome input).",
               UT.CAT, UT.GR_INT)
         {
         }

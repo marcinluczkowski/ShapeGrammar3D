@@ -12,7 +12,7 @@ namespace ShapeGrammar3D.Components
     {
         public GrammarInterpreter_Settings()
           : base("GrammarInterpreter_Settings", "GI_Settings",
-              "Collects all GA/interpreter analysis settings into one object for GI_Auto6.",
+              "Collects all GA/interpreter analysis settings into one object for Grammar Interpreter from SG_Shape (GI_FromSg).",
               UT.CAT, UT.GR_INT)
         {
         }
@@ -147,7 +147,7 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
-                "Interpreter settings object for GI_Auto6", GH_ParamAccess.item);                                                 // 0
+                "Interpreter settings object for GI_FromSg", GH_ParamAccess.item);                                                 // 0
             pManager.AddTextParameter("Info", "Info", "Settings summary", GH_ParamAccess.item);                                   // 1
         }
 

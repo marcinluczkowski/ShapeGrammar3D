@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 	
   <PropertyGroup>
     <!-- Select the framework(s) you wish to target.
@@ -36,6 +36,11 @@
   </Target>
   
   <ItemGroup>
+    <Compile Remove="Components\GrammarInterpreter_Auto.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto2.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto3.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto4.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto5.cs" />
     <Compile Remove="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   

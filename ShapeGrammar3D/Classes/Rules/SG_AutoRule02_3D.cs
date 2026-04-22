@@ -143,9 +143,11 @@ namespace ShapeGrammar3D.Classes.Rules
                     .FirstOrDefault(e => e.Autorule == UT.RULE010_MARKER);
                 if (baseElem == null) continue;
 
+                Vector3d strutDir = ComputeStrutDirectionFromRule010Beams(nd);
+
                 for (int j = 0; j < numStuds; j++)
                 {
-                    Line ln = new Line(nd.Pt, nd.NPln.YAxis, length);
+                    Line ln = new Line(nd.Pt, strutDir, length);
                     SG_Elem1D elem = new SG_Elem1D(ln, -999, "3DAR2", def_crosec)
                     {
                         Autorule = UT.RULE020_MARKER
@@ -172,6 +174,59 @@ namespace ShapeGrammar3D.Classes.Rules
         public override State GetNextState()
         {
             throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Strut direction (unit): default along local Z built from all RULE010 beams at
+        /// <paramref name="nd"/> — local X = average of outward beam tangents,
+        /// local Y = world_Z × local_x, local Z = local_x × local_y.
+        /// If local X is parallel to world Z, returns world +Z.
+        /// </summary>
+        private static Vector3d ComputeStrutDirectionFromRule010Beams(SG_Node nd)
+        {
+            const double parallelDotTol = 1e-10;
+            var zWorld = Vector3d.ZAxis;
+            var sum = Vector3d.Zero;
+
+            foreach (var el in nd.Elements.OfType<SG_Elem1D>())
+            {
+                if (el.Autorule != UT.RULE010_MARKER) continue;
+                if (el.Nodes == null || el.Nodes.Length < 2 || el.Nodes[0] == null || el.Nodes[1] == null)
+                    continue;
+
+                Vector3d away;
+                if (ReferenceEquals(el.Nodes[0], nd))
+                    away = el.Nodes[1].Pt - el.Nodes[0].Pt;
+                else if (ReferenceEquals(el.Nodes[1], nd))
+                    away = el.Nodes[0].Pt - el.Nodes[1].Pt;
+                else
+                    continue;
+
+                if (away.SquareLength < 1e-24) continue;
+                away.Unitize();
+                sum += away;
+            }
+
+            if (sum.SquareLength < 1e-24)
+                return zWorld;
+
+            var localX = sum;
+            if (!localX.Unitize())
+                return zWorld;
+
+            // local_x parallel to world Z → cross undefined; use world Z as local_z.
+            if (Math.Abs(localX * zWorld) >= 1.0 - parallelDotTol)
+                return zWorld;
+
+            var localY = Vector3d.CrossProduct(zWorld, localX);
+            if (localY.SquareLength < 1e-24 || !localY.Unitize())
+                return zWorld;
+
+            var localZ = Vector3d.CrossProduct(localX, localY);
+            if (localZ.SquareLength < 1e-24 || !localZ.Unitize())
+                return zWorld;
+
+            return localZ;
         }
     }
 

@@ -25,7 +25,7 @@ namespace ShapeGrammar3D.Components
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_Auto6", GH_ParamAccess.item);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). Leave empty or -1 = all.", GH_ParamAccess.list,-1);
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). Leave empty or -1 = all.", GH_ParamAccess.list,-1);
             pManager.AddIntegerParameter("Top N per Cluster", "TopN",

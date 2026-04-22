@@ -12,16 +12,18 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto8 : GH_Component
+    public class GrammarInterpreter_FromSgShape : GH_Component
     {
+        // Genetic Algorithm configuration (overridable from GH inputs)
         private int _populationSize = 5;
         private int _numGenerations = 3;
         private int _numClusters = 1;
         private double _mutationProbability = 0.10;
         private double _crossoverProbability = 0.9;
         private double _eliteProbability = 0.1;
-        private const bool MAXIMIZE = false;
+        private const bool MAXIMIZE = false; // Minimize displacement
 
+        // Clustering configuration
         private double _topoWeight = 1.0;
         private double _shapeWeight = 1.0;
         private double _fitnessWeight = 0.0;
@@ -30,20 +32,26 @@ namespace ShapeGrammar3D.Components
         private List<int> _topoMetricTypes = new List<int> { 0 };
         private List<int> _shapeMetricTypes = new List<int> { 0 };
 
+        // Feasibility configuration
         private FeasibilitySettings _feasibilitySettings = FeasibilitySettings.Default();
 
+        // Cluster elite: guaranteed survivors per cluster per generation
         private int _clusterEliteCount = 0;
 
+        // Multi-objective configuration
         private int _numObjectives = 1;
-        private int _singleObjType = 0;
-        private int _utilObjType = 0;
+        private int _singleObjType = 0;  // 0=Disp, 1=Feas, 2=AvgUtilDev, 3=MaxUtil
+        private int _utilObjType = 0;    // 0=AvgDev, 1=MaxUtil
 
+        // Self-weight
         private bool _useSelfWeight = false;
         private Vector3d _gravityDir = new Vector3d(0, 0, -1);
 
+        // Cross-section optimization: 0=off, 1=Rect, 2=SHS catalog
         private int _croSecOptMode = 0;
         private int _croSecMaxIter = 40;
 
+        // User-supplied normalization domains (one per metric dimension)
         private List<Rhino.Geometry.Interval> _metricDomains = null;
 
         private SG_GA _ga;
@@ -56,31 +64,44 @@ namespace ShapeGrammar3D.Components
         private List<List<TB_Model>> _allModels;
         private GARunStore _runStore;
 
-        public GrammarInterpreter_Auto8()
-          : base("GrammarInterpreter_Auto8", "GI_Auto8",
-              "GA Interpreter without SG_Shape input. Requires AutoRule_InitShape_3D as the first rule to build the initial shape.",
+        /// <summary>
+        /// Initializes a new instance of the GrammarInterpreter_FromSgShape class.
+        /// </summary>
+        public GrammarInterpreter_FromSgShape()
+          : base("Grammar Interpreter from SG_Shape", "GI_FromSg",
+              "GA Interpreter with in-memory Assembly output (genotypes, results, models). Use with Data Preview components.",
               UT.CAT, UT.GR_INT)
         {
         }
 
+        /// <summary>
+        /// Registers all the input parameters for this component.
+        /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter (first rule must be AutoRule_InitShape_3D)", GH_ParamAccess.list); // 0
-            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 1
+            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);                          // 0
+            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list); // 1
+            pManager.AddBooleanParameter("Reset", "Reset", "Reset genetic algorithm", GH_ParamAccess.item, false);               // 2
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
                 "All GA/interpreter analysis settings packed in one object from GI_Settings component",
-                GH_ParamAccess.item);                                                                                             // 2
-            pManager[2].Optional = true;
+                GH_ParamAccess.item);                                                                                                     // 3
+            pManager[3].Optional = true;
         }
 
+        /// <summary>
+        /// Registers all the output parameters for this component.
+        /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);
+            pManager.AddTextParameter("Info", "Info", "GA run summary", GH_ParamAccess.item);                                   // 0
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
                 "In-memory GA run assembly (genotypes, fitness, objectives, models) for Data Preview components",
-                GH_ParamAccess.item);
+                GH_ParamAccess.item);                                                                                         // 1
         }
 
+        /// <summary>
+        /// This is the method that actually does the work.
+        /// </summary>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             _ga = null;
@@ -91,28 +112,13 @@ namespace ShapeGrammar3D.Components
             _allShapes = new List<List<SG_Shape>>();
             _allModels = new List<List<TB_Model>>();
 
+            SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
             bool reset = false;
 
-            if (!DA.GetDataList(0, rls)) return;
-            if (!DA.GetData(1, ref reset)) return;
-
-            if (!rls.OfType<SG_AutoRule_InitShape_3D>().Any())
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error,
-                    "The first rule must be AutoRule_InitShape_3D (no SG_Shape input is provided).");
-                return;
-            }
-
-            rls = EnsureInitShapeFirst(rls);
-
-            var ini_Shape = new SG_Shape
-            {
-                Nodes = new List<SG_Node>(),
-                Supports = new List<SG_Support>(),
-                PointLoads = new List<SG_PointLoad>(),
-                LineLoads = new List<SG_LineLoad>()
-            };
+            if (!DA.GetData(0, ref ini_Shape)) return;
+            if (!DA.GetDataList(1, rls)) return;
+            if (!DA.GetData(2, ref reset)) return;
 
             // --- Settings bundle ---
             var settings = new GrammarInterpreterSettings
@@ -153,7 +159,7 @@ namespace ShapeGrammar3D.Components
             };
 
             GH_GrammarInterpreterSettings ghSettings = null;
-            if (DA.GetData(2, ref ghSettings) && ghSettings?.Value != null)
+            if (DA.GetData(3, ref ghSettings) && ghSettings?.Value != null)
                 settings = ghSettings.Value;
             settings.Sanitize();
 
@@ -225,11 +231,13 @@ namespace ShapeGrammar3D.Components
 
             _isRunning = true;
 
+            rls = EnsureInitShapeFirst(rls);
+
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
             if (_currentPopulation == null)
             {
-                List<int> chromosomeLengths = GetChromosomeLengths(rls);
+                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
                 List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
 
                 if (useFixedSeed)
@@ -293,6 +301,9 @@ namespace ShapeGrammar3D.Components
                 if (isMultiObjective)
                     _ga.ClusterPopulation(evaluatedPop);
 
+                // Cluster-elite injection for multi-objective mode:
+                // after clustering, guarantee the best N individuals from
+                // each cluster survive into the next generation's offspring.
                 if (isMultiObjective && _clusterEliteCount > 0 && !isLastGeneration)
                 {
                     _currentPopulation = InjectClusterElites(
@@ -312,8 +323,9 @@ namespace ShapeGrammar3D.Components
                     break;
             }
 
+            // Save JSON
             string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                string.Format("GA8_run_{0}.json", _runStore.RunId));
+                string.Format("GA4_run_{0}.json", _runStore.RunId));
             try
             {
                 _runStore.SaveToJson(jsonPath);
@@ -325,12 +337,16 @@ namespace ShapeGrammar3D.Components
                 jsonPath = string.Empty;
             }
 
+            // Build assembly and output
             OutputAssemblyResults(DA, evaluatedPop, string.Join("\n", clusterLogLines));
 
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
         }
 
+        /// <summary>
+        /// Builds a summary string for cluster distribution at a given generation.
+        /// </summary>
         private string BuildClusterInfo(List<GAIndividual> population, int generation)
         {
             var grouped = population.GroupBy(ind => ind.ClustGrp).OrderBy(g => g.Key);
@@ -359,6 +375,9 @@ namespace ShapeGrammar3D.Components
             return string.Join("\n", parts);
         }
 
+        /// <summary>
+        /// Builds a summary string for multi-objective NSGA-II at a given generation.
+        /// </summary>
         private string BuildMOInfo(List<GAIndividual> population, int generation)
         {
             int frontZeroCount = population.Count(ind => ind.Rank == 0);
@@ -387,6 +406,9 @@ namespace ShapeGrammar3D.Components
                 bestDisp, bestUtil, bestFeas);
         }
 
+        /// <summary>
+        /// Initializes the genetic algorithm with current parameters.
+        /// </summary>
         private void InitializeGA()
         {
             _ga = new SG_GA
@@ -446,6 +468,11 @@ namespace ShapeGrammar3D.Components
             FixedGenotypes.Reset();
         }
 
+        /// <summary>
+        /// Injects the best N individuals from each cluster (from the evaluated
+        /// population) into the offspring pool, replacing the tail. This
+        /// guarantees every cluster is represented in the next generation.
+        /// </summary>
         private static List<GAIndividual> InjectClusterElites(
             List<GAIndividual> offspring,
             List<GAIndividual> evaluated,
@@ -480,6 +507,38 @@ namespace ShapeGrammar3D.Components
             return result;
         }
 
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape inputShape)
+        {
+            var lengths = new List<int>();
+            var initRule = rules.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+
+            if (initRule == null)
+            {
+                for (int i = 0; i < rules.Count; i++)
+                    lengths.Add(rules[i].GetChromosomeLength(inputShape));
+                return lengths;
+            }
+
+            int estimatedNodeCount = Math.Max(2, initRule.MaxSupports);
+            int fallbackLen = Math.Max(11, estimatedNodeCount + 2);
+            var emptyShape = new SG_Shape();
+
+            for (int i = 0; i < rules.Count; i++)
+            {
+                if (rules[i] is SG_AutoRule_InitShape_3D)
+                {
+                    lengths.Add(rules[i].GetChromosomeLength(emptyShape));
+                }
+                else
+                {
+                    int ruleSpecific = rules[i].GetChromosomeLength(emptyShape);
+                    lengths.Add(ruleSpecific < 11 ? Math.Max(2, ruleSpecific) : fallbackLen);
+                }
+            }
+
+            return lengths;
+        }
+
         private static List<SG_Rule> EnsureInitShapeFirst(List<SG_Rule> rules)
         {
             var initRules = rules.Where(r => r is SG_AutoRule_InitShape_3D).ToList();
@@ -490,28 +549,11 @@ namespace ShapeGrammar3D.Components
             return sorted;
         }
 
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules)
-        {
-            var initRule = rules.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
-            int estimatedNodeCount = initRule?.MaxSupports ?? 11;
-            int fallbackLen = Math.Max(11, estimatedNodeCount + 2);
-
-            var lengths = new List<int>();
-            for (int i = 0; i < rules.Count; i++)
-            {
-                if (rules[i] is SG_AutoRule_InitShape_3D)
-                {
-                    lengths.Add(rules[i].GetChromosomeLength(new SG_Shape()));
-                }
-                else
-                {
-                    int ruleSpecific = rules[i].GetChromosomeLength(new SG_Shape());
-                    lengths.Add(ruleSpecific < 11 ? Math.Max(2, ruleSpecific) : fallbackLen);
-                }
-            }
-            return lengths;
-        }
-
+        /// <summary>
+        /// Evaluates a population of individuals.
+        /// Feasibility is computed on the graph (cheap) before expensive FEM.
+        /// The penalty is applied multiplicatively: fitness * (1 + totalViolation).
+        /// </summary>
         private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut, out List<TB_Model> modelsOut)
         {
             shapesOut = new List<SG_Shape>();
@@ -524,13 +566,9 @@ namespace ShapeGrammar3D.Components
                 throw new InvalidOperationException("Population not initialized");
             }
 
-            int failCount = 0;
-            string firstError = null;
-
             for (int i = 0; i < population.Count; i++)
             {
                 GAIndividual individual = population[i];
-                string _dbgStage = "Init";
 
                 try
                 {
@@ -538,48 +576,27 @@ namespace ShapeGrammar3D.Components
 
                     SG_Shape shape = CloneShape(iniShape);
 
-                    _dbgStage = "RuleOps";
-                    var ruleMessages = new List<string>();
                     for (int j = 0; j < rules.Count; j++)
                     {
-                        _dbgStage = string.Format("Rule[{0}]={1}", j, rules[j].GetType().Name);
                         string message = rules[j].RuleOperation(ref shape, ref gt);
-                        ruleMessages.Add(message);
                     }
 
-                    _dbgStage = "RegisterElemsToNodes";
                     shape.RegisterElemsToNodes();
 
-                    _dbgStage = "RepairSupportsAndLoads";
+                    EnforceBoundaryConstraints(shape, rules);
+
                     RepairSupportsAndLoads(shape, rules);
 
-                    _dbgStage = "SelfWeight";
                     if (_useSelfWeight)
                         ApplySelfWeightLoads(shape, _gravityDir);
 
-                    if (_currentGeneration == 0 && i == 0)
-                    {
-                        var diagParts = new List<string>();
-                        diagParts.Add(string.Format("=== Individual #0 diagnostics ==="));
-                        for (int ri = 0; ri < ruleMessages.Count; ri++)
-                            diagParts.Add(string.Format("  Rule {0}: {1}", ri, ruleMessages[ri]));
-                        diagParts.Add(string.Format("  Shape: {0} elems, {1} nodes, {2} supports, {3} loads",
-                            shape.Elems?.Count ?? 0, shape.Nodes?.Count ?? 0,
-                            shape.Supports?.Count ?? 0, shape.PointLoads?.Count ?? 0));
-                        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                            string.Join("\n", diagParts));
-                    }
-
-                    _dbgStage = "FeasibilityMetrics";
+                    // --- Feasibility check (graph-based, before expensive FEM) ---
                     FeasibilityResult feasResult = FeasibilityMetrics.Compute(shape, _feasibilitySettings);
 
-                    _dbgStage = "TB_Model";
                     TB_Model tb_mdl = new TB_Model(shape);
-                    _dbgStage = "SolveLS";
                     SolveLS slv = new SolveLS(ref tb_mdl);
                     TB_Model finalModel = slv.Mdl;
 
-                    _dbgStage = "CroSecOpt";
                     if (_croSecOptMode == 1)
                         finalModel = OptimizeCrossSections(finalModel);
                     else if (_croSecOptMode == 2)
@@ -593,7 +610,6 @@ namespace ShapeGrammar3D.Components
                     else if (_croSecOptMode == 6)
                         finalModel = OptimizeCrossSections_Combined(finalModel, heaOnly: false, includeRHS: true);
 
-                    _dbgStage = "Metrics";
                     double rawDisp = CalculateMaxNodalDisplacement(finalModel);
 
                     var topoVals = _topoMetricTypes.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
@@ -602,17 +618,6 @@ namespace ShapeGrammar3D.Components
                     double spanL = ComputeSpanL(finalModel);
                     double slsLimit = spanL / 300.0;
                     double dispRatio = (slsLimit > 1e-12) ? rawDisp / slsLimit : double.MaxValue;
-
-                    if (_currentGeneration == 0 && i == 0)
-                    {
-                        int tbSupCount = finalModel?.Nodes?.Count(n => n.Sup != null) ?? 0;
-                        int tbFreeCount = finalModel?.Nodes?.Count(n => n.Sup == null) ?? 0;
-                        int hasDisps = finalModel?.Nodes?.Count(n => n.Disps != null && n.Disps.Count > 0) ?? 0;
-                        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                            string.Format("  FEM: TB_Nodes={0} (sup={1}, free={2}), hasDisps={3}, rawDisp={4:E3}, spanL={5:F1}, dispRatio={6:E3}",
-                                finalModel?.Nodes?.Count ?? 0, tbSupCount, tbFreeCount,
-                                hasDisps, rawDisp, spanL, dispRatio));
-                    }
 
                     double avgUtil = ComputeAverageUtilization(finalModel);
                     const double TARGET_UTIL = 0.90;
@@ -659,7 +664,6 @@ namespace ShapeGrammar3D.Components
                     if (finalModel != null && shape.Elems != null && shape.Elems.Count == finalModel.Elem1Ds.Count)
                         SyncShapeSectionsFromModel(shape, finalModel);
 
-                    _dbgStage = "DeepCopy";
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
                     modelsOut.Add(CloneModel(finalModel));
@@ -683,22 +687,17 @@ namespace ShapeGrammar3D.Components
                     shapesOut.Add(null);
                     modelsOut.Add(null);
 
-                    failCount++;
-                    if (firstError == null) firstError = string.Format("[Stage={0}] {1}", _dbgStage, ex.ToString());
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                        string.Format("Individual {0} evaluation failed: {1}", i, ex.Message));
                 }
-            }
-
-            int successCount = population.Count - failCount;
-            if (failCount > 0)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
-                    string.Format("Gen {0}: {1}/{2} succeeded, {3} failed. First error: {4}",
-                        _currentGeneration, successCount, population.Count, failCount, firstError));
             }
 
             return evaluatedPop;
         }
 
+        /// <summary>
+        /// Creates a genotype from a GA individual.
+        /// </summary>
         private SG_Genotype CreateGenotypeFromIndividual(GAIndividual individual)
         {
             List<int> intGenes = new List<int>(individual.Chromosome);
@@ -707,6 +706,9 @@ namespace ShapeGrammar3D.Components
             return gt;
         }
 
+        /// <summary>
+        /// Calculates the maximum nodal displacement from the analysis results.
+        /// </summary>
         private double CalculateMaxNodalDisplacement(TB_Model model)
         {
             double maxDisplacement = 0.0;
@@ -746,6 +748,11 @@ namespace ShapeGrammar3D.Components
             return maxDisplacement;
         }
 
+        /// <summary>
+        /// Computes the reference span L as the maximum distance between any two
+        /// supported nodes. Falls back to the max distance from any support to
+        /// any node if only one support exists.
+        /// </summary>
         private static double ComputeSpanL(TB_Model model)
         {
             if (model?.Sups == null || model.Sups.Count == 0)
@@ -778,6 +785,10 @@ namespace ShapeGrammar3D.Components
             return maxSpan > 1e-9 ? maxSpan : 1.0;
         }
 
+        /// <summary>
+        /// Computes the average element utilization (EC3 simplified: N/N_Rd + My/My_Rd + Mz/Mz_Rd).
+        /// Returns a value where 1.0 = 100 % utilized on average.
+        /// </summary>
         private static double ComputeAverageUtilization(TB_Model model)
         {
             if (model?.Elem1Ds == null || model.Elem1Ds.Count == 0)
@@ -798,6 +809,9 @@ namespace ShapeGrammar3D.Components
             return count > 0 ? sum / count : 0.0;
         }
 
+        /// <summary>
+        /// Computes the maximum element utilization. Used for "minimize highest utilization" objective.
+        /// </summary>
         private static double ComputeMaxUtilization(TB_Model model)
         {
             if (model?.Elem1Ds == null || model.Elem1Ds.Count == 0)
@@ -813,6 +827,153 @@ namespace ShapeGrammar3D.Components
             return maxU;
         }
 
+        /// <summary>
+        /// Applies the boundary constraint defined on the init rule to the entire
+        /// post-rules shape. Mode 1 removes out-of-boundary SG_Elem1D; mode &gt;=2
+        /// records the violation ratio+weight so FeasibilityMetrics can penalize it.
+        /// </summary>
+        private static void EnforceBoundaryConstraints(SG_Shape shape, List<SG_Rule> rules)
+        {
+            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            if (initRule == null) return;
+            var brep = initRule.BoundaryBrep ?? shape?.BoundaryBrep;
+            var mesh = initRule.BoundaryMesh ?? shape?.BoundaryMesh;
+            BoundaryConstraintUtil.Enforce(shape, brep, mesh, initRule.BoundaryBeamConstraintMode);
+        }
+
+        /// <summary>
+        /// Rebuild supports from SG_Node.Support data, and ensure every element-endpoint
+        /// node has a point load.  Call after all rules and RegisterElemsToNodes().
+        /// </summary>
+        private static void RepairSupportsAndLoads(SG_Shape shape, List<SG_Rule> rules)
+        {
+            if (shape?.Nodes == null) return;
+
+            shape.Supports ??= new List<SG_Support>();
+            shape.Supports.Clear();
+
+            var elemEndpoints = new HashSet<int>();
+            if (shape.Elems != null)
+            {
+                foreach (var e in shape.Elems)
+                {
+                    if (e?.Nodes == null) continue;
+                    foreach (var n in e.Nodes)
+                        if (n != null) elemEndpoints.Add(n.ID);
+                }
+            }
+
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd?.Support == null) continue;
+                if (nd.Support.SupportCondition == 0) continue;
+                if (!elemEndpoints.Contains(nd.ID)) continue;
+
+                nd.Support.Pt = nd.Pt;
+                nd.Support.Node = nd;
+                shape.Supports.Add(nd.Support);
+            }
+
+            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
+            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+            Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
+
+            shape.PointLoads ??= new List<SG_PointLoad>();
+            shape.PointLoads.Clear();
+
+            if (areaLoadVec.Length > 1e-12 && initRule != null)
+            {
+                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
+            }
+            else
+            {
+                foreach (var nd in shape.Nodes)
+                {
+                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                    shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
+                }
+            }
+        }
+
+        private static void ApplyVoronoiAreaLoads(
+            SG_Shape shape, SG_AutoRule_InitShape_3D initRule,
+            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec)
+        {
+            var bb = initRule.DesignSpace;
+            double xMin = bb.Min.X, xMax = bb.Max.X;
+            double yMin = bb.Min.Y, yMax = bb.Max.Y;
+
+            var seedNodes = VoronoiAreaLoadUtil.CollectAreaLoadVoronoiSeedNodes(shape, bb);
+            if (seedNodes.Count == 0) return;
+            var seeds = seedNodes.Select(n => (n.ID, n.Pt.X, n.Pt.Y)).ToList();
+            var voronoiAreas = ComputeVoronoiAreas(seeds, xMin, xMax, yMin, yMax);
+
+            foreach (var n in seedNodes)
+            {
+                if (!voronoiAreas.TryGetValue(n.ID, out double area)) continue;
+                shape.PointLoads.Add(new SG_PointLoad(area * areaLoadVec, Vector3d.Zero, n.Pt));
+            }
+        }
+
+        private static Dictionary<int, double> ComputeVoronoiAreas(
+            List<(int nodeId, double x, double y)> tips,
+            double xMin, double xMax, double yMin, double yMax,
+            int gridRes = 100)
+        {
+            double totalW = xMax - xMin;
+            double totalH = yMax - yMin;
+            if (totalW < 1e-9 || totalH < 1e-9)
+                return tips.ToDictionary(t => t.nodeId, _ => 0.0);
+
+            double totalArea = totalW * totalH;
+            double cellArea = totalArea / (gridRes * gridRes);
+
+            var counts = new Dictionary<int, int>();
+            foreach (var t in tips) counts[t.nodeId] = 0;
+
+            double dx = totalW / gridRes;
+            double dy = totalH / gridRes;
+
+            for (int iy = 0; iy < gridRes; iy++)
+            {
+                double gy = yMin + (iy + 0.5) * dy;
+                for (int ix = 0; ix < gridRes; ix++)
+                {
+                    double gx = xMin + (ix + 0.5) * dx;
+
+                    double bestDistSq = double.MaxValue;
+                    int bestId = tips[0].nodeId;
+                    foreach (var t in tips)
+                    {
+                        double ddx = gx - t.x;
+                        double ddy = gy - t.y;
+                        double dSq = ddx * ddx + ddy * ddy;
+                        if (dSq < bestDistSq)
+                        {
+                            bestDistSq = dSq;
+                            bestId = t.nodeId;
+                        }
+                    }
+                    counts[bestId]++;
+                }
+            }
+
+            return counts.ToDictionary(kv => kv.Key, kv => kv.Value * cellArea);
+        }
+
+        private static long HashPt(Point3d pt)
+        {
+            int x = (int)Math.Round(pt.X * 1000);
+            int y = (int)Math.Round(pt.Y * 1000);
+            int z = (int)Math.Round(pt.Z * 1000);
+            return ((long)x << 40) ^ ((long)y << 20) ^ (long)z;
+        }
+
+        /// <summary>
+        /// Adds self-weight as lumped nodal point loads.
+        /// Each element's weight is split 50/50 to its two end nodes, applied along the gravity direction.
+        /// Weight [kN] = length [m] × (Area [mm²] × 1e-6) [m²] × Density [kN/m³].
+        /// </summary>
         private void ApplySelfWeightLoads(SG_Shape shape, Vector3d gravityDir)
         {
             if (shape == null || shape.Nodes == null || shape.Elems == null)
@@ -861,6 +1022,9 @@ namespace ShapeGrammar3D.Components
             }
         }
 
+        /// <summary>
+        /// Builds in-memory assembly and outputs Info + Assembly for Grammar Interpreter from SG_Shape.
+        /// </summary>
         private void OutputAssemblyResults(IGH_DataAccess DA, List<GAIndividual> evaluatedPop, string clusterLogLines)
         {
             if (evaluatedPop == null || evaluatedPop.Count == 0)
@@ -1008,6 +1172,49 @@ namespace ShapeGrammar3D.Components
             DA.SetData(1, new GH_SGAssembly(assembly));
         }
 
+        private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
+        {
+            SG_Genotype gt = CreateGenotypeFromIndividual(individual);
+
+            shape = new SG_Shape
+            {
+                nodeCount = iniShape.nodeCount,
+                elementCount = iniShape.elementCount,
+                Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
+                Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
+                Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
+                LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
+                PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
+                SimpleShapeState = iniShape.SimpleShapeState
+            };
+
+            for (int j = 0; j < rules.Count; j++)
+            {
+                string message = rules[j].RuleOperation(ref shape, ref gt);
+            }
+
+            shape.RegisterElemsToNodes();
+
+            EnforceBoundaryConstraints(shape, rules);
+
+            RepairSupportsAndLoads(shape, rules);
+
+            if (_useSelfWeight)
+                ApplySelfWeightLoads(shape, _gravityDir);
+
+            model = new TB_Model(shape);
+            SolveLS slv = new SolveLS(ref model);
+
+            if (_croSecOptMode == 1)
+                model = OptimizeCrossSections(model);
+            else if (_croSecOptMode == 2)
+                model = OptimizeCrossSections_SHS(model);
+            else if (_croSecOptMode == 3)
+                model = OptimizeCrossSections_Combined(model, heaOnly: true);
+            else if (_croSecOptMode == 4)
+                model = OptimizeCrossSections_Combined(model, heaOnly: false);
+        }
+
         protected override System.Drawing.Bitmap Icon
         {
             get { return Properties.Resources.icons_Generic; }
@@ -1015,18 +1222,27 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("A8C1D2E3-F4A5-4B6C-9D0E-1F2A3B4C5D6E"); }
+            get { return new Guid("F1A2B3C4-D5E6-4F7A-8B9C-0D1E2F3A4B5C"); }
         }
 
+        /// <summary>
+        /// Precomputed section properties for fast utilization evaluation
+        /// during force-based section sizing (avoids creating Section objects).
+        /// </summary>
         private struct PrecomputedSec
         {
-            public double Area;
-            public double Wy;
-            public double Wz;
-            public double Iy;
-            public double Iz;
+            public double Area; // mm²
+            public double Wy;   // mm³
+            public double Wz;   // mm³
+            public double Iy;   // mm⁴ (strong axis, needed for buckling)
+            public double Iz;   // mm⁴ (weak axis, needed for buckling)
         }
 
+        /// <summary>
+        /// Extracts the maximum absolute internal forces (N, My, Mz)
+        /// plus the most compressive axial force Ncomp (negative = compression),
+        /// as an envelope over all load cases for one element.
+        /// </summary>
         private static (double N, double My, double Mz, double Ncomp) GetElementMaxForces(
             TB_Model model, TB_Element_1D elem)
         {
@@ -1047,6 +1263,10 @@ namespace ShapeGrammar3D.Components
             return (maxN, maxMy, maxMz, maxNcomp);
         }
 
+        /// <summary>
+        /// Computes utilization for given internal forces and precomputed section
+        /// properties, INCLUDING a simplified EC3 buckling check for compression.
+        /// </summary>
         private static double ComputeUtilForSection(
             (double N, double My, double Mz, double Ncomp) forces,
             PrecomputedSec sec, double fy, double E, double elemLengthM)
@@ -1075,6 +1295,9 @@ namespace ShapeGrammar3D.Components
             return Math.Max(utilCS, utilBuckling);
         }
 
+        /// <summary>
+        /// Computes the minimum buckling reduction factor Chi across both axes.
+        /// </summary>
         private static double ComputeChiMin(
             double area, double iy_mm4, double iz_mm4,
             double lcrMm, double alphaBuck, double lambda1)
@@ -1104,6 +1327,13 @@ namespace ShapeGrammar3D.Components
             return Math.Min(chiY, chiZ);
         }
 
+        /// <summary>
+        /// Linear scan of the catalog to find the section whose utilization is
+        /// closest to targetUtil without exceeding 1.0.
+        /// Unlike binary search, this handles non-monotonic utilization sequences
+        /// (which occur when the catalog is sorted by area but bending capacity
+        /// doesn't increase monotonically with area).
+        /// </summary>
         private static int FindBestSectionIdx(
             (double N, double My, double Mz, double Ncomp) forces,
             PrecomputedSec[] catalog, double fy, double E,
@@ -1128,6 +1358,10 @@ namespace ShapeGrammar3D.Components
             return bestIdx;
         }
 
+        /// <summary>
+        /// Fully-Stressed-Design (FSD) iteration for rectangular sections.
+        /// Includes simplified EC3 buckling check for compression members.
+        /// </summary>
         private TB_Model OptimizeCrossSections(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1220,6 +1454,9 @@ namespace ShapeGrammar3D.Components
             return finalSlv.Mdl;
         }
 
+        /// <summary>
+        /// Rebuilds the model geometry with new square rectangular sections based on the index array.
+        /// </summary>
         private static TB_Model RebuildModelWithRectSections(TB_Model template, int[] sectionIdx, double stepMm)
         {
             var newElems = new List<TB_Element_1D>();
@@ -1234,6 +1471,12 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
+        /// <summary>
+        /// EC3 utilization with simplified buckling check for compression members.
+        /// Cross-section: N/N_Rd + My/My_Rd + Mz/Mz_Rd.
+        /// Buckling:      N/(Chi*A*fy) + My/My_Rd + Mz/Mz_Rd.
+        /// Returns the maximum across all load cases.
+        /// </summary>
         private static double ComputeElementUtilization(TB_Model model, TB_Element_1D elem)
         {
             const double GAMMA_M0 = 1.0;
@@ -1302,6 +1545,12 @@ namespace ShapeGrammar3D.Components
             return maxUtil;
         }
 
+        /// <summary>
+        /// Fully-Stressed-Design (FSD) iteration for SHS catalog sections.
+        /// Includes simplified EC3 buckling check for compression members.
+        /// Uses linear scan instead of binary search to handle non-monotonic
+        /// utilization in the area-sorted catalog.
+        /// </summary>
         private TB_Model OptimizeCrossSections_SHS(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1421,6 +1670,9 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
+        /// <summary>
+        /// FSD iteration for RHS catalog (mode 5). Sorted by area; each element picks best RHS.
+        /// </summary>
         private TB_Model OptimizeCrossSections_RHS(TB_Model solvedModel)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1530,14 +1782,20 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
+        /// <summary>
+        /// Combined catalog entry that can represent either SHS or I-section.
+        /// </summary>
         private struct CombinedEntry
         {
             public PrecomputedSec Props;
-            public bool IsI;
-            public double H, W, Tw, Tf;
+            public bool IsI;            // false = SHS/RHS, true = I-section
+            public double H, W, Tw, Tf; // section dimensions (SHS: H=W=Size, Tw=Tf=T)
             public string Tag;
         }
 
+        /// <summary>
+        /// Builds a combined catalog from SHS + (optional RHS) + HEA/HEB, sorted by area.
+        /// </summary>
         private static CombinedEntry[] BuildCombinedCatalog(bool includeRHS = false)
         {
             var entries = new List<CombinedEntry>();
@@ -1601,6 +1859,9 @@ namespace ShapeGrammar3D.Components
             return entries.OrderBy(e => e.Props.Area).ToArray();
         }
 
+        /// <summary>
+        /// Builds a catalog from HEA/HEB profiles only, sorted by area.
+        /// </summary>
         private static CombinedEntry[] BuildHEACatalog()
         {
             var entries = new List<CombinedEntry>();
@@ -1625,6 +1886,11 @@ namespace ShapeGrammar3D.Components
             return entries.OrderBy(e => e.Props.Area).ToArray();
         }
 
+        /// <summary>
+        /// Rebuilds the model with sections from a CombinedEntry catalog.
+        /// Automatically creates Section_RHS for SHS entries and Section_I
+        /// for HEA/HEB entries.
+        /// </summary>
         private static TB_Model RebuildModelWithCombinedSections(
             TB_Model template, int[] secIdx, CombinedEntry[] catalog)
         {
@@ -1646,6 +1912,9 @@ namespace ShapeGrammar3D.Components
             return new TB_Model(newElems, template.Sups, template.Loads);
         }
 
+        /// <summary>
+        /// FSD optimization using combined catalog (mode 3 = HEA only, 4 = SHS+HEA, 6 = SHS+RHS+HEA).
+        /// </summary>
         private TB_Model OptimizeCrossSections_Combined(TB_Model solvedModel, bool heaOnly, bool includeRHS = false)
         {
             if (solvedModel == null || solvedModel.Elem1Ds == null || solvedModel.Elem1Ds.Count == 0)
@@ -1727,6 +1996,10 @@ namespace ShapeGrammar3D.Components
             return finalSlv.Mdl;
         }
 
+        /// <summary>
+        /// Writes optimized cross-sections from the solved model back to the shape
+        /// so that stored assembly shapes (and GI Feasibility Preview) show correct column/beam sizes.
+        /// </summary>
         private static void SyncShapeSectionsFromModel(SG_Shape shape, TB_Model model)
         {
             if (shape?.Elems == null || model?.Elem1Ds == null || shape.Elems.Count != model.Elem1Ds.Count)
@@ -1746,162 +2019,6 @@ namespace ShapeGrammar3D.Components
             }
         }
 
-        /// <summary>
-        /// Rebuild supports from SG_Node.Support data, and ensure every element-endpoint
-        /// node has a point load.  Call after all rules and RegisterElemsToNodes().
-        /// </summary>
-        private static void RepairSupportsAndLoads(SG_Shape shape, List<SG_Rule> rules)
-        {
-            if (shape?.Nodes == null) return;
-
-            // --- Rebuild supports from node-level data ---
-            shape.Supports ??= new List<SG_Support>();
-            shape.Supports.Clear();
-
-            var elemEndpoints = new HashSet<int>();
-            if (shape.Elems != null)
-            {
-                foreach (var e in shape.Elems)
-                {
-                    if (e?.Nodes == null) continue;
-                    foreach (var n in e.Nodes)
-                        if (n != null) elemEndpoints.Add(n.ID);
-                }
-            }
-
-            foreach (var nd in shape.Nodes)
-            {
-                if (nd?.Support == null) continue;
-                if (nd.Support.SupportCondition == 0) continue;
-                if (!elemEndpoints.Contains(nd.ID)) continue;
-
-                nd.Support.Pt = nd.Pt;
-                nd.Support.Node = nd;
-                shape.Supports.Add(nd.Support);
-            }
-
-            // --- Ensure every element-endpoint node has a point load ---
-            var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
-            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
-            Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
-
-            shape.PointLoads ??= new List<SG_PointLoad>();
-            shape.PointLoads.Clear();
-
-            if (areaLoadVec.Length > 1e-12 && initRule != null)
-            {
-                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
-            }
-            else
-            {
-                foreach (var nd in shape.Nodes)
-                {
-                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
-                    shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
-                }
-            }
-        }
-
-        private static void ApplyVoronoiAreaLoads(
-            SG_Shape shape, SG_AutoRule_InitShape_3D initRule,
-            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec)
-        {
-            var bb = initRule.DesignSpace;
-            double xMin = bb.Min.X, xMax = bb.Max.X;
-            double yMin = bb.Min.Y, yMax = bb.Max.Y;
-            double zTop = bb.Max.Z;
-
-            var studTips = new List<(int nodeId, double x, double y)>();
-            var studTipIds = new HashSet<int>();
-
-            if (shape.Elems != null)
-            {
-                foreach (var e in shape.Elems)
-                {
-                    if (e == null || e.Autorule != UT.RULE020_MARKER) continue;
-                    if (e.Nodes == null || e.Nodes.Length < 2 || e.Nodes[1] == null) continue;
-                    var tipNode = e.Nodes[1];
-                    if (studTipIds.Contains(tipNode.ID)) continue;
-                    studTipIds.Add(tipNode.ID);
-                    studTips.Add((tipNode.ID, tipNode.Pt.X, tipNode.Pt.Y));
-                }
-            }
-
-            var voronoiAreas = new Dictionary<int, double>();
-            if (studTips.Count > 0)
-                voronoiAreas = ComputeVoronoiAreas(studTips, xMin, xMax, yMin, yMax);
-
-            foreach (var nd in shape.Nodes)
-            {
-                if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
-
-                if (voronoiAreas.TryGetValue(nd.ID, out double area))
-                {
-                    Vector3d forceVec = area * areaLoadVec;
-                    shape.PointLoads.Add(new SG_PointLoad(
-                        forceVec, Vector3d.Zero, nd.Pt));
-                }
-                else if (fallbackLoadVec.Length > 1e-12)
-                {
-                    shape.PointLoads.Add(new SG_PointLoad(fallbackLoadVec, Vector3d.Zero, nd.Pt));
-                }
-            }
-        }
-
-        private static Dictionary<int, double> ComputeVoronoiAreas(
-            List<(int nodeId, double x, double y)> tips,
-            double xMin, double xMax, double yMin, double yMax,
-            int gridRes = 100)
-        {
-            double totalW = xMax - xMin;
-            double totalH = yMax - yMin;
-            if (totalW < 1e-9 || totalH < 1e-9)
-                return tips.ToDictionary(t => t.nodeId, _ => 0.0);
-
-            double totalArea = totalW * totalH;
-            double cellArea = totalArea / (gridRes * gridRes);
-
-            var counts = new Dictionary<int, int>();
-            foreach (var t in tips) counts[t.nodeId] = 0;
-
-            double dx = totalW / gridRes;
-            double dy = totalH / gridRes;
-
-            for (int iy = 0; iy < gridRes; iy++)
-            {
-                double gy = yMin + (iy + 0.5) * dy;
-                for (int ix = 0; ix < gridRes; ix++)
-                {
-                    double gx = xMin + (ix + 0.5) * dx;
-
-                    double bestDistSq = double.MaxValue;
-                    int bestId = tips[0].nodeId;
-                    foreach (var t in tips)
-                    {
-                        double ddx = gx - t.x;
-                        double ddy = gy - t.y;
-                        double dSq = ddx * ddx + ddy * ddy;
-                        if (dSq < bestDistSq)
-                        {
-                            bestDistSq = dSq;
-                            bestId = t.nodeId;
-                        }
-                    }
-                    counts[bestId]++;
-                }
-            }
-
-            return counts.ToDictionary(kv => kv.Key, kv => kv.Value * cellArea);
-        }
-
-        private static long HashPt(Point3d pt)
-        {
-            int x = (int)Math.Round(pt.X * 1000);
-            int y = (int)Math.Round(pt.Y * 1000);
-            int z = (int)Math.Round(pt.Z * 1000);
-            return ((long)x << 40) ^ ((long)y << 20) ^ (long)z;
-        }
-
         private static SG_Shape CloneShape(SG_Shape source)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
@@ -1912,6 +2029,11 @@ namespace ShapeGrammar3D.Components
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             return source.DeepCopy();
+        }
+
+        private static double Clamp01(double value)
+        {
+            return Math.Clamp(value, 0.0, 1.0);
         }
     }
 }

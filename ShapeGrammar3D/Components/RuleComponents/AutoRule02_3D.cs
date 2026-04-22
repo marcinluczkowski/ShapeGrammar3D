@@ -16,7 +16,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// </summary>
         public AutoRule02_3D()
           : base("Auto rule 02-3D", "A-Rule02-3D",
-              "Create a line from an existent node",
+              "Create struts along local Z from RULE010 beam tangents (avg → local X; Z×X→Y; X×Y→Z; if X∥Z use world +Z). Length from Domain × genotype.",
               UT.CAT, UT.GR_RLS)
         {
         }

@@ -7,7 +7,7 @@ using ShapeGrammar3D.Classes.Elements;
 namespace ShapeGrammar3D.Classes.Rules
 {
     [Serializable]
-    public class SG_AutoRule061_3D : SG_Rule
+    public class SG_AutoRule062_3D : SG_Rule
     {
         // --- properties ---
         public string ElemName { get; set; }
@@ -15,18 +15,18 @@ namespace ShapeGrammar3D.Classes.Rules
         public double MinRatio { get; set; }
 
         // --- constructors ---
-        public SG_AutoRule061_3D()
+        public SG_AutoRule062_3D()
         {
         }
 
-        public SG_AutoRule061_3D(string _eName, int[] _domain, double minRatio = 0.0)
+        public SG_AutoRule062_3D(string _eName, int[] _domain, double minRatio = 0.0)
         {
             RuleState = State.alpha;
-            Name = "SG_AutoRule061-3D";
+            Name = "SG_AutoRule062-3D";
             ElemName = _eName;
             Domain = _domain;
             MinRatio = Math.Clamp(minRatio, 0.0, 1.0);
-            RuleMarker = UT.RULE061_MARKER;
+            RuleMarker = UT.RULE062_MARKER;
         }
 
         // --- methods ---
@@ -39,21 +39,26 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         /// <summary>
-        /// Top-chord connector. For every RULE020 strut, only the TWO adjacent
-        /// InitShape base beams (one on each side of the focus base beam) are
-        /// considered. On each adjacent base beam, the strut whose tip is closest
-        /// to the focus strut tip is taken as the candidate. The option gene
-        /// selects which side(s) to link: 1 = left, 2 = right, 3 = both.
+        /// Adds diagonal braces within the top-chord plane defined by the rule061
+        /// ties. For every pair of InitShape base beams (A, B) that are linked by
+        /// rule061 ties, the ties are sorted along A and consecutive tie pairs
+        /// (tie_i, tie_{i+1}) form a quadrilateral A_i-B_i-B_{i+1}-A_{i+1}. X-brace
+        /// diagonals are inserted according to the option value:
+        ///   1 = single diagonal (A_i → B_{i+1})
+        ///   2 = both diagonals (full X brace)
+        /// At the boundary, a virtual tie joining the endpoints of A and B is used
+        /// to brace the first/last rule061 tie.
         /// </summary>
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            return Rule06xShared.ApplyTipOrFootConnector(
+            return Rule06xBraceShared.ApplyTieBrace(
                 ss_ref,
                 gt,
-                UT.RULE061_MARKER,
+                ruleMarker: UT.RULE062_MARKER,
+                sourceMarker: UT.RULE061_MARKER,
                 useTip: true,
-                elemName: "3DAR61",
-                label: "061",
+                elemName: "3DAR62",
+                label: "062",
                 domain: Domain,
                 minRatio: MinRatio);
         }

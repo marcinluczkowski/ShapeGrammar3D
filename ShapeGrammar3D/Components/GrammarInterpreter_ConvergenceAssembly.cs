@@ -42,7 +42,7 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
-                "SG Assembly from GI_Auto6", GH_ParamAccess.item);
+                "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Generation", "Gen",
                 "Which generation(s) to show. Leave empty or -1 = all (default).", GH_ParamAccess.list);
             pManager.AddIntegerParameter("Individual", "Ind",

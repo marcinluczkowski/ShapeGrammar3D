@@ -46,7 +46,7 @@ namespace ShapeGrammar3D.Classes
         public List<int> TopoMetricTypes { get; set; }
         public List<int> ShapeMetricTypes { get; set; }
 
-        /// <summary>Feasibility angle/length limits from the interpreter (GI_Auto6). Used by GI_Feasibility Preview when set.</summary>
+        /// <summary>Feasibility angle/length limits from the interpreter (GI_FromSg). Used by GI_Feasibility Preview when set.</summary>
         public double? FeasibilityAngleMinDeg { get; set; }
         public double? FeasibilityAngleOptDeg { get; set; }
         public double? FeasibilityLenTooShort { get; set; }

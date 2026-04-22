@@ -150,7 +150,7 @@ namespace ShapeGrammar3D.Components
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_Auto6", GH_ParamAccess.item);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddPlaneParameter("Plane", "Pln", "Graph plane (origin = bottom-left)", GH_ParamAccess.item, Plane.WorldXY);
             pManager.AddIntegerParameter("Num Objectives", "nObj", "1=Disp vs Gen, 2=Disp vs Util, 3=Disp x Util x Feas", GH_ParamAccess.item, 1);
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list, -1);
