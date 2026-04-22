@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 
-using ShapeGrammar.Classes;
-using ShapeGrammar.Classes.Rules;
+using ShapeGrammar3D.Classes;
+using ShapeGrammar3D.Classes.Rules;
 
 namespace ShapeGrammar.Components.RuleComponents
 {
@@ -69,7 +69,7 @@ namespace ShapeGrammar.Components.RuleComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return ShapeGrammar3D.Properties.Resources.icons_Generic;
             }
         }
 

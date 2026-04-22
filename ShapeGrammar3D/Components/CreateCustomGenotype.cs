@@ -37,51 +37,51 @@ namespace ShapeGrammar3D.Components
             int num_of_individuals = 0;
             List<int> max_number_of_rules = new List<int>();
 
-            List<int> chromosome = new List<int>();
-            List<double> chromosome_param = new List<double>();
-
-            List<SG_Genotype> genotypes = new List<SG_Genotype>();  
+            List<SG_Genotype> genotypes = new List<SG_Genotype>();   
 
             // --- input ---
             if (!DA.GetDataList(0, rls)) return;
             if (!DA.GetData(1, ref num_of_individuals)) return;
-            if (!DA.GetDataList(2, max_number_of_rules)) return;
+            DA.GetDataList(2, max_number_of_rules);
 
             // --- solve ---
 
+            var rnd = new Random();
             for (int k = 0; k < num_of_individuals; k++)
             {
+                var chromosome = new List<int>();
+                var chromosome_param = new List<double>();
 
                 for (int i = 0; i < rls.Count; i++)
                 {
-                    int len_l = max_number_of_rules[i];
                     SG_Rule rule = rls[i];
                     int rule_marker = rule.RuleMarker;
+                    int segLen = i < max_number_of_rules.Count
+                        ? max_number_of_rules[i]
+                        : rule.GetChromosomeLength(new SG_Shape());
 
                     chromosome.Add(rule_marker);
                     chromosome_param.Add(rule_marker);
 
-                    for (int j = 0; j < max_number_of_rules[i]; j++)
+                    for (int j = 0; j < segLen; j++)
                     {
-                        var rnd = new Random();
-                        var rnd_double = new Random();
-                        int random_value = rnd.Next(0, 2); // integer random value
-                        double double_value = rnd_double.NextDouble(); // double random value
-
-                        chromosome.Add(random_value);
-                        chromosome_param.Add(double_value);
-
+                        chromosome.Add(rnd.Next(0, 2));
+                        chromosome_param.Add(rnd.NextDouble());
                     }
 
-                    chromosome.Add(-1); // end of rule marker
-                    chromosome_param.Add(-1); // end of rule marker
-
+                    chromosome.Add(UT.RULE_END_MARKER);
+                    chromosome_param.Add(UT.RULE_END_MARKER);
                 }
 
                 SG_Genotype gt = new SG_Genotype(chromosome, chromosome_param);
                 genotypes.Add(gt);
-
             }
+
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                string.Format("Created {0} genotypes for {1} rules: [{2}]",
+                    num_of_individuals, rls.Count,
+                    string.Join(", ", rls.Select(r => r.RuleMarker))));
+
             // --- output ---
             DA.SetDataList(0, genotypes);
         }
@@ -90,7 +90,7 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return null; //return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;
             }
         }
         public override Guid ComponentGuid

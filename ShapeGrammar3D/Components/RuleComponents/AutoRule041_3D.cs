@@ -28,9 +28,9 @@ namespace ShapeGrammar3D.Components.RuleComponents
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Rule option", "O", "options: 1 to the left, 2 to the right, 3 for both", GH_ParamAccess.list);
-
-
-
+            pManager.AddNumberParameter("Min Ratio", "minR",
+                "Minimum ratio (0–1) of eligible struts that should generate members.",
+                GH_ParamAccess.item, 0.0);
         }
 
         /// <summary>
@@ -49,17 +49,18 @@ namespace ShapeGrammar3D.Components.RuleComponents
         {
             // --- variables ---
             string eName = "";
-            int option = -999;
             List<int> domain = new List<int>();
+            double minRatio = 0.0;
 
             // --- input ---
             if (!DA.GetData(0, ref eName)) return;
 
             if (!DA.GetDataList(1, domain)) return;
+            DA.GetData(2, ref minRatio);
 
             // --- solve ---
 
-            SG_AutoRule041_3D ar41 = new SG_AutoRule041_3D(eName, domain.ToArray());
+            SG_AutoRule041_3D ar41 = new SG_AutoRule041_3D(eName, domain.ToArray(), minRatio);
 
             // --- output ---
             DA.SetData(0, ar41);

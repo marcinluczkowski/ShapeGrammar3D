@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -39,6 +39,8 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         // --- methods ---
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {
@@ -46,7 +48,10 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 04-3d
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection
+                ?? new SH_CrossSection_Beam();
 
             // find relevant range in genotype
             int sid = -999;
@@ -108,7 +113,7 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (optionNumber == 2 || optionNumber == 3)
                     {
                        line = new Line(tip, rightElemPt);
-                       SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = 4 };
+                       SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = 4 };
                        ss_ref.AddNewElement(newElem);
                     }
                 }
@@ -118,7 +123,7 @@ namespace ShapeGrammar3D.Classes.Rules
                     if (optionNumber == 1 || optionNumber == 3)
                     {
                         line = new Line(tip, leftElemPt);
-                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = 4 };
+                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = 4 };
                         ss_ref.AddNewElement(newElem);
                     }
                 }

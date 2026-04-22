@@ -7,7 +7,7 @@ using ShapeGrammar3D.Classes.Elements;
 namespace ShapeGrammar3D.Classes
 {
     [Serializable] 
-    public class SG_Node
+    public class SG_Node : IDeepCloneable<SG_Node>
     {           
 
         // --- properties ---
@@ -37,6 +37,19 @@ namespace ShapeGrammar3D.Classes
                 Node = this
             };
 
+        }
+
+        public SG_Node DeepClone()
+        {
+            return new SG_Node
+            {
+                ID = ID,
+                Pt = Pt,
+                NPln = NPln,
+                NumStuds = NumStuds,
+                Elements = new List<SG_Element>(), // relink later if needed
+                Support = null
+            };
         }
 
         // --- methods ---

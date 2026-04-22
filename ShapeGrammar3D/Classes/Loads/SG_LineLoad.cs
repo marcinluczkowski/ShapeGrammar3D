@@ -25,5 +25,14 @@ namespace ShapeGrammar3D.Classes
         }
 
         // --- methods ---
+        public override SG_Load DeepClone()
+        {
+            return new SG_LineLoad
+            {
+                ElementId = ElementId,
+                LoadCase = LoadCase,
+                Load = Load
+            };
+        }
     }
 }

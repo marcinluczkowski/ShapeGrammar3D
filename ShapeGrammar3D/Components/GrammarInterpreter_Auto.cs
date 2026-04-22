@@ -15,8 +15,8 @@ namespace ShapeGrammar3D.Components
     {
         // Genetic Algorithm configuration constants
         private const int POPULATION_SIZE = 5;
-        private const int NUM_GENERATIONS = 2;
-        private const int NUM_CLUSTERS = 3;
+        private const int NUM_GENERATIONS = 3;
+        private const int NUM_CLUSTERS = 1;
         private const double MUTATION_PROBABILITY = 0.10;
         private const double CROSSOVER_PROBABILITY = 0.9;
         private const double ELITE_PROBABILITY = 0.1;
@@ -28,6 +28,7 @@ namespace ShapeGrammar3D.Components
         private bool _isRunning;
         private List<List<GAIndividual>> _allGenerations;
         private List<List<SG_Shape>> _allShapes;
+        private List<List<TB_Model>> _allModels;
 
         /// <summary>
         /// Initializes a new instance of the GrammerInterpreter_Auto class.
@@ -59,6 +60,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_TB_Model(), "TBModel", "TBModel", "Best TBModel", GH_ParamAccess.item);
             pManager.AddNumberParameter("Fitness", "Fitness", "Best fitness value (maximal nodal displacement)", GH_ParamAccess.item);
             pManager.AddGenericParameter("All Shapes", "All Shapes", "All evaluated SG Assemblies", GH_ParamAccess.list);
+            pManager.AddParameter(new Param_TB_Model(), "All Models", "All Models", "All evaluated TB Models", GH_ParamAccess.list);
             pManager.AddNumberParameter("All Fitness", "All Fitness", "All fitness values", GH_ParamAccess.list);
             pManager.AddIntegerParameter("Generation", "Gen", "Current generation number", GH_ParamAccess.item);
             pManager.AddTextParameter("Info", "Info", "GA information", GH_ParamAccess.item);
@@ -78,12 +80,13 @@ namespace ShapeGrammar3D.Components
             _isRunning = false;
             _allGenerations = new List<List<GAIndividual>>();
             _allShapes = new List<List<SG_Shape>>();
+            _allModels = new List<List<TB_Model>>();
 
-            SG_Shape iniShape = new SG_Shape();
+            SG_Shape ini_Shape = new SG_Shape();
             List<SG_Rule> rls = new List<SG_Rule>();
             bool reset = false;
 
-            if (!DA.GetData(0, ref iniShape)) return;
+            if (!DA.GetData(0, ref ini_Shape)) return;
             if (!DA.GetDataList(1, rls)) return;
             if (!DA.GetData(2, ref reset)) return;
 
@@ -95,64 +98,87 @@ namespace ShapeGrammar3D.Components
 
             if (_isRunning)
             {
-                DA.SetData(6, "GA is currently running. Please wait for completion.");
+                DA.SetData(7, "GA is currently running. Please wait for completion.");
                 return;
             }
 
             _isRunning = true;
 
-            try
+            //try
+            //{
+            if (_currentPopulation == null)
             {
-                if (_currentPopulation == null)
+                List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
+                List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
+                _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
+                // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
+            }
+
+            List<GAIndividual> evaluatedPop = null;
+            List<SG_Shape> evaluatedShapes = null;
+            List<TB_Model> evaluatedModels = null;
+
+            SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
+
+            while (true)
+            {
+
+                // deep copy function
+
+                //deep_copied_inishape = new SG_Shape
+                //{
+                //    nodeCount = iniShape.nodeCount,
+                //    elementCount = iniShape.elementCount,
+
+                //    Elems = iniShape.Elems,
+                //    Nodes = iniShape.Nodes,
+                //    Supports = iniShape.Supports,
+                //    LineLoads = iniShape.LineLoads,
+                //    PointLoads = iniShape.PointLoads,
+                //    SimpleShapeState = iniShape.SimpleShapeState
+                //};
+
+                evaluatedShapes = new List<SG_Shape>();
+                evaluatedPop = EvaluatePopulation(_currentPopulation, deep_copied_inishape, rls, out evaluatedShapes, out evaluatedModels);
+
+                List<GAIndividual> snapshot = evaluatedPop.Select(ind => ind.Clone()).ToList();
+                _allGenerations.Add(snapshot);
+                _allShapes.Add(evaluatedShapes.Select(s => UT.DeepCopy(s)).ToList());
+                _allModels.Add(evaluatedModels.Select(m => CloneModel(m)).ToList());
+
+
+
+                // Process evaluated individuals and create next generation
+                if (_currentGeneration < NUM_GENERATIONS - 1)
                 {
-                    List<int> chromosomeLengths = GetChromosomeLengths(rls);
-                    List<int> ruleMarkers = rls.Select(r => r.RuleMarker).ToList();
-                    _currentPopulation = _ga.CreateInitialGeneration(POPULATION_SIZE, chromosomeLengths, ruleMarkers);
-                    // AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                    //     string.Format("Created initial population of {0} individuals", _currentPopulation.Count));
+                    _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    _ga.IncrementGeneration();
+                    _currentGeneration = _ga.CurrentGeneration;
                 }
-
-                List<GAIndividual> evaluatedPop = null;
-                List<SG_Shape> evaluatedShapes = null;
-
-                while (true)
+                else
                 {
-                    evaluatedShapes = new List<SG_Shape>();
-                    evaluatedPop = EvaluatePopulation(_currentPopulation, iniShape, rls, out evaluatedShapes);
-
-                    List<GAIndividual> snapshot = UT.DeepCopy(evaluatedPop);
-                    _allGenerations.Add(snapshot);
-                    _allShapes.Add(UT.DeepCopy(evaluatedShapes));
-
-                    // Process evaluated individuals and create next generation
-                    if (_currentGeneration < NUM_GENERATIONS - 1)
-                    {
-                        _currentPopulation = _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                        _ga.IncrementGeneration();
-                        _currentGeneration = _ga.CurrentGeneration;
-                    }
-                    else
-                    {
-                        _ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                            string.Format("Completed all {0} generations", NUM_GENERATIONS));
-                        break;
-                    }
+                    _ga.ProcessEvaluatedIndividuals(evaluatedPop);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                        string.Format("Completed all {0} generations", NUM_GENERATIONS));
+                    break;
                 }
+            }
 
-                // Output results
-                OutputResults(DA, evaluatedPop, iniShape, rls);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                    string.Format("GA completed {0} generations", NUM_GENERATIONS));
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
-            }
-            finally
-            {
-                _isRunning = false;
-            }
+            // Output results
+            OutputResults(DA, evaluatedPop, deep_copied_inishape, rls);
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                string.Format("GA completed {0} generations", NUM_GENERATIONS));
+            // }
+            //catch (Exception ex)
+            //{
+
+            //    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GA error: " + ex.Message);
+            //}
+            //finally
+            //{
+            //    _isRunning = false;
+            //}
         }
 
         /// <summary>
@@ -176,19 +202,18 @@ namespace ShapeGrammar3D.Components
             _currentPopulation = null;
             _allGenerations = new List<List<GAIndividual>>();
             _allShapes = new List<List<SG_Shape>>();
+            _allModels = new List<List<TB_Model>>();
         }
 
         /// <summary>
-        /// Gets chromosome lengths based on the number of rules
+        /// Gets chromosome lengths based on each rule's iteration target.
         /// </summary>
-        private List<int> GetChromosomeLengths(List<SG_Rule> rules)
+        private List<int> GetChromosomeLengths(List<SG_Rule> rules, SG_Shape shape)
         {
-            // Allocate genes per rule; adjust as needed per rule complexity
-            var R = new Random();
             List<int> lengths = new List<int>();
             for (int i = 0; i < rules.Count; i++)
             {
-                lengths.Add(R.Next(2,6)); // default length per rule
+                lengths.Add(rules[i].GetChromosomeLength(shape));
             }
             return lengths;
         }
@@ -196,10 +221,11 @@ namespace ShapeGrammar3D.Components
         /// <summary>
         /// Evaluates a population of individuals
         /// </summary>
-        private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut)
+        private List<GAIndividual> EvaluatePopulation(List<GAIndividual> population, SG_Shape iniShape, List<SG_Rule> rules, out List<SG_Shape> shapesOut, out List<TB_Model> modelsOut)
         {
 
             shapesOut = new List<SG_Shape>();
+            modelsOut = new List<TB_Model>();
 
             List<GAIndividual> evaluatedPop = new List<GAIndividual>();
 
@@ -220,12 +246,15 @@ namespace ShapeGrammar3D.Components
                 try
                 {
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-                    SG_Shape shape = UT.DeepCopy(iniShape);
+
+                    SG_Shape shape = CloneShape(iniShape);
 
                     for (int j = 0; j < rules.Count; j++)
                     {
                         string message = rules[j].RuleOperation(ref shape, ref gt);
                     }
+
+                    shape.RegisterElemsToNodes();
 
                     TB_Model tb_mdl = new TB_Model(shape);
                     SolveLS slv = new SolveLS(ref tb_mdl);
@@ -243,6 +272,7 @@ namespace ShapeGrammar3D.Components
 
                     evaluatedPop.Add(individual);
                     shapesOut.Add(UT.DeepCopy(shape));
+                    modelsOut.Add(CloneModel(tb_mdl));
                 }
                 catch (Exception ex)
                 {
@@ -268,9 +298,9 @@ namespace ShapeGrammar3D.Components
             // SG_Genotype uses IntGenes and DGenes
             List<int> intGenes = new List<int>(individual.Chromosome);
             List<double> dGenes = new List<double>(individual.ChromosomeParam);
-            
+
             SG_Genotype gt = new SG_Genotype(intGenes, dGenes);
-            
+
             return gt;
         }
 
@@ -293,7 +323,7 @@ namespace ShapeGrammar3D.Components
                 {
                     // Get the last displacement result
                     double[] disp = node.Disps.Last();
-                    
+
                     if (disp != null && disp.Length >= 3)
                     {
                         // Calculate total displacement magnitude (ignoring rotations)
@@ -360,7 +390,7 @@ namespace ShapeGrammar3D.Components
         {
             if (evaluatedPop == null || evaluatedPop.Count == 0)
             {
-                DA.SetData(6, "No evaluated individuals yet");
+                DA.SetData(7, "No evaluated individuals yet");
                 return;
             }
 
@@ -369,6 +399,7 @@ namespace ShapeGrammar3D.Components
                 : evaluatedPop.OrderBy(i => i.Fitness).First();
 
             GH_Structure<GH_ObjectWrapper> shapesTree = new GH_Structure<GH_ObjectWrapper>();
+            GH_Structure<GH_TB_Model> modelsTree = new GH_Structure<GH_TB_Model>();
             GH_Structure<GH_Number> fitnessTree = new GH_Structure<GH_Number>();
 
             if (_allShapes != null && _allShapes.Count > 0)
@@ -377,11 +408,17 @@ namespace ShapeGrammar3D.Components
                 {
                     GH_Path path = new GH_Path(g);
                     List<SG_Shape> genShapes = _allShapes[g];
+                    List<TB_Model> genModels = (_allModels != null && g < _allModels.Count) ? _allModels[g] : null;
                     List<GAIndividual> genInds = (g < _allGenerations.Count) ? _allGenerations[g] : null;
 
                     for (int idx = 0; idx < genShapes.Count; idx++)
                     {
                         shapesTree.Append(new GH_ObjectWrapper(genShapes[idx]), path);
+
+                        if (genModels != null && idx < genModels.Count)
+                        {
+                            modelsTree.Append(new GH_TB_Model(genModels[idx]), path);
+                        }
 
                         if (genInds != null && idx < genInds.Count)
                         {
@@ -425,15 +462,31 @@ namespace ShapeGrammar3D.Components
             DA.SetData(1, bestModel != null ? new GH_TB_Model(bestModel) : null);
             DA.SetData(2, best.Fitness);
             DA.SetDataTree(3, shapesTree);
-            DA.SetDataTree(4, fitnessTree);
-            DA.SetData(5, _currentGeneration);
-            DA.SetData(6, info);
+            DA.SetDataTree(4, modelsTree);
+            DA.SetDataTree(5, fitnessTree);
+            DA.SetData(6, _currentGeneration);
+            DA.SetData(7, info);
         }
 
         private void RecreateShapeAndModel(GAIndividual individual, SG_Shape iniShape, List<SG_Rule> rules, out SG_Shape shape, out TB_Model model)
         {
             SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-            shape = UT.DeepCopy(iniShape);
+            // shape = iniShape;
+
+            shape = new SG_Shape
+            {
+                nodeCount = iniShape.nodeCount,
+                elementCount = iniShape.elementCount,
+
+                // deep copy needs update
+                Elems = iniShape.Elems.Select(e => e.DeepClone()).ToList(),
+                Nodes = iniShape.Nodes.Select(n => n.DeepClone()).ToList(),
+                Supports = iniShape.Supports.Select(s => s.DeepClone()).ToList(),
+                LineLoads = iniShape.LineLoads.Select(ll => (SG_LineLoad)ll.DeepClone()).ToList(),
+                PointLoads = iniShape.PointLoads.Select(pl => (SG_PointLoad)pl.DeepClone()).ToList(),
+                SimpleShapeState = iniShape.SimpleShapeState
+
+            };
 
             for (int j = 0; j < rules.Count; j++)
             {
@@ -451,7 +504,7 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return null;// Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;
             }
         }
 
@@ -461,6 +514,18 @@ namespace ShapeGrammar3D.Components
         public override Guid ComponentGuid
         {
             get { return new Guid("38d35ef6-a3b2-44b2-bfa7-23d1292d37f5"); }
+        }
+
+        private static SG_Shape CloneShape(SG_Shape source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            return source.DeepCopy();
+        }
+
+        private static TB_Model CloneModel(TB_Model source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            return source.DeepCopy();
         }
     }
 }

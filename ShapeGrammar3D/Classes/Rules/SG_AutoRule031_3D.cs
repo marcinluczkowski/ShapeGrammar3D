@@ -41,7 +41,9 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
 
-        // --- methods ---
+    // --- methods ---
+
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
 
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
 
@@ -82,26 +84,30 @@ namespace ShapeGrammar3D.Classes.Rules
 
             // collect elements targeted by this rule (only elements with Name == "3DAR2")
             var relevantElems = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
+            double defaultAngle = (Domain[0] + Domain[1]) / 2.0;
+            int geneCount = selectedIntGenes.Count;
 
-            // Iterate through genes and apply rotations where int gene != 0
-            for (int i = 0; i < selectedIntGenes.Count; i++)
+            for (int i = 0; i < relevantElems.Count; i++)
             {
-                if (selectedIntGenes[i] == 0)
-                    continue;
+                double rotationAngle;
 
-                if (i >= relevantElems.Count)
-                    break; // no more elements to process
+                if (i >= geneCount || selectedIntGenes[i % geneCount] == 0)
+                    rotationAngle = defaultAngle;
+                else
+                    rotationAngle = selectedDGenes[i % geneCount] * range + Domain[0];
 
                 var elem = relevantElems[i] as SG_Elem1D;
+
                 if (elem == null)
                     continue;
 
-                var iniElem = elem.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0] as SG_Elem1D;
+                var iniElem = elem.Nodes[0].Elements
+                    .Where(e => e.Autorule == UT.RULE010_MARKER)
+                    .OfType<SG_Elem1D>()
+                    .FirstOrDefault();
 
-                
-
-                // compute rotation angle from D-gene and domain
-                double rotationAngle = selectedDGenes[i] * range + Domain[0];
+                if (iniElem == null || iniElem.Crv == null)
+                    continue;
 
                 // Work with a copy of the element plane
                 Plane epln = elem.EPln;
@@ -111,8 +117,6 @@ namespace ShapeGrammar3D.Classes.Rules
                 double t;
                 elem.Crv.ClosestPoint(startPt, out t);
 
-
-                
 
                 // obtain a perpendicular frame (target plane) at parameter t on the curve
                 Plane targetPln;
@@ -145,7 +149,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 // (Optional) keep element name unchanged; original code commented out changing it to "3DAR3"
             }
 
-            return "Auto-rule 031-3D successfully applied.";
+            return $"Auto-rule 031-3D: {relevantElems.Count} elems rotated (default={defaultAngle:F2} rad)";
         }
 
 

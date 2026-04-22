@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
+using Rhino;
 
 namespace ShapeGrammar3D.Classes
 {
@@ -24,18 +25,53 @@ namespace ShapeGrammar3D.Classes
         public List<int> Chromosome { get; set; }
         public List<double> ChromosomeParam { get; set; }
         public double Fitness { get; set; }
-        public double Topo { get; set; }
-        public double Shpe { get; set; }
+
+        /// <summary>All selected topology metric values (one per chosen metric).</summary>
+        public List<double> TopoValues { get; set; } = new List<double>();
+        /// <summary>All selected shape metric values (one per chosen metric).</summary>
+        public List<double> ShpeValues { get; set; } = new List<double>();
+
+        /// <summary>First topology metric value (backward compatibility).</summary>
+        public double Topo
+        {
+            get => TopoValues != null && TopoValues.Count > 0 ? TopoValues[0] : -999;
+            set { if (TopoValues == null) TopoValues = new List<double>(); if (TopoValues.Count == 0) TopoValues.Add(value); else TopoValues[0] = value; }
+        }
+
+        /// <summary>First shape metric value (backward compatibility).</summary>
+        public double Shpe
+        {
+            get => ShpeValues != null && ShpeValues.Count > 0 ? ShpeValues[0] : -999;
+            set { if (ShpeValues == null) ShpeValues = new List<double>(); if (ShpeValues.Count == 0) ShpeValues.Add(value); else ShpeValues[0] = value; }
+        }
+
+        /// <summary>Total feasibility violation (weighted sum of all components).</summary>
+        public double Feas { get; set; }
+        /// <summary>Raw dangling bar penalty [0..1] before weighting.</summary>
+        public double VDang { get; set; }
+        /// <summary>Raw angle penalty [0..1] before weighting.</summary>
+        public double VAng { get; set; }
+        /// <summary>Raw length penalty [0..1] before weighting.</summary>
+        public double VLen { get; set; }
         public int ClustGrp { get; set; }
         public string Id { get; set; }
+
+        /// <summary>Multi-objective fitness values (one per objective). Used by SG_MOGA / NSGA-II.</summary>
+        public List<double> ObjectiveValues { get; set; } = new List<double>();
+        /// <summary>Non-domination rank (Pareto front level). 0 = first front. Used by SG_MOGA.</summary>
+        public int Rank { get; set; } = -1;
+        /// <summary>Crowding distance within a Pareto front. Used by SG_MOGA.</summary>
+        public double CrowdingDistance { get; set; } = 0.0;
 
         public GAIndividual(List<int> chromosome, List<double> chromosomeParam, string id = null)
         {
             Chromosome = new List<int>(chromosome);
             ChromosomeParam = new List<double>(chromosomeParam);
             Fitness = -999;
-            Topo = -999;
-            Shpe = -999;
+            TopoValues = new List<double>();
+            ShpeValues = new List<double>();
+            Feas = 0.0;
+            VDang = 0.0;
             ClustGrp = -999;
 
             if (id == null)
@@ -62,9 +98,16 @@ namespace ShapeGrammar3D.Classes
                 new List<double>(ChromosomeParam),
                 Id);
             cloned.Fitness = Fitness;
-            cloned.Topo = Topo;
-            cloned.Shpe = Shpe;
+            cloned.TopoValues = new List<double>(TopoValues ?? new List<double>());
+            cloned.ShpeValues = new List<double>(ShpeValues ?? new List<double>());
+            cloned.Feas = Feas;
+            cloned.VDang = VDang;
+            cloned.VAng = VAng;
+            cloned.VLen = VLen;
             cloned.ClustGrp = ClustGrp;
+            cloned.ObjectiveValues = new List<double>(ObjectiveValues);
+            cloned.Rank = Rank;
+            cloned.CrowdingDistance = CrowdingDistance;
             return cloned;
         }
 
@@ -168,14 +211,35 @@ namespace ShapeGrammar3D.Classes
         public double EliteProbability { get; set; } = 0.1;
         public double BlxAlpha { get; set; } = 0.3;
 
+        // Clustering configuration
+        public double TopoWeight { get; set; } = 1.0;
+        public double ShapeWeight { get; set; } = 1.0;
+        public double FitnessWeight { get; set; } = 0.0;
+        public int KMeansMaxIterations { get; set; } = 10;
+        public int ReclusterInterval { get; set; } = 0; // 0 = only at generation 0
+
+        /// <summary>
+        /// Minimum number of best individuals guaranteed to survive per cluster.
+        /// Prevents cluster extinction during evolution. 0 = disabled.
+        /// </summary>
+        public int ClusterEliteCount { get; set; } = 0;
+
+        /// <summary>
+        /// User-supplied [min, max] domains for each clustering dimension.
+        /// Order: topo metrics first, then shape metrics.
+        /// When set, normalization uses (val - min) / (max - min) instead of val / observedMax.
+        /// </summary>
+        public List<Rhino.Geometry.Interval> MetricDomains { get; set; } = null;
+
         // State variables
         private List<GAIndividual> _currentPopulation;
         private List<double> _bestFits;
         private List<double> _worstFits;
         private GAIndividual _bestOfAll;
         private int _currentGeneration;
-        private double _topoDenominator;
-        private double _shapeDenominator;
+        private double[] _topoDenominators;
+        private double[] _shapeDenominators;
+        private double _fitnessDenominator;
 
         // Tracking templates for chromosome generation
         private List<int> _chromosomeTemplateLengths = new List<int>();
@@ -187,6 +251,7 @@ namespace ShapeGrammar3D.Classes
 
         // Clustering
         private SimpleKMeans _kmeans;
+        private bool _clusteringInitialized;
 
         public SG_GA()
         {
@@ -203,6 +268,9 @@ namespace ShapeGrammar3D.Classes
         /// <summary>
         /// Creates initial generation with random chromosome values
         /// </summary>
+        /// 
+        
+        
         public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths)
         {
             List<GAIndividual> generation = new List<GAIndividual>();
@@ -235,9 +303,19 @@ namespace ShapeGrammar3D.Classes
 
             return generation;
         }
+        
 
-        /// <summary>
+        /// <summary>|
         /// Creates initial generation with explicit rule markers.
+        /// Uses stratified activation with per-rule bias:
+        /// - Rule 011 (num struts per node) and Rule 02 (struts): ~80% activation
+        ///   because they are the primary structural drivers.
+        /// - Rule 041 (bars) and Rule 051: high activation (70%-90%).
+        /// - Rule 01 (subdivision): moderate-high (40%-70%) to ensure enough
+        ///   node diversity for strut attachment.
+        /// - Rule 031 (rotation): higher activation (45%-85%) to favour finding good directions.
+        /// - Other rules use the default range (30%-90%).
+        /// The population is shuffled after generation to avoid ordering bias.
         /// </summary>
         public List<GAIndividual> CreateInitialGeneration(int populationCount, List<int> chromosomeLengths, List<int> ruleMarkers)
         {
@@ -255,6 +333,9 @@ namespace ShapeGrammar3D.Classes
 
             for (int cnt = 0; cnt < populationCount; cnt++)
             {
+                // Base stratified activation: linearly spread across the population
+                double t = (double)cnt / Math.Max(1, populationCount - 1);
+
                 List<int> chromosome = new List<int>();
                 List<double> chromosomeParam = new List<double>();
 
@@ -263,12 +344,41 @@ namespace ShapeGrammar3D.Classes
                     int len = chromosomeLengths[i];
                     int ruleId = ruleMarkers[i];
 
+                    // Per-rule activation bias:
+                    double activationProb;
+                    if (ruleId == UT.RULE011_MARKER || ruleId == UT.RULE020_MARKER)
+                    {
+                        // Core structural rules (strut count + strut creation): 75% to 85%
+                        activationProb = 0.75 + 0.10 * t;
+                    }
+                    else if (ruleId == UT.RULE041_MARKER || ruleId == UT.RULE051_MARKER)
+                    {
+                        // Secondary structural rules (bars, rule051): 70% to 90%
+                        activationProb = 0.70 + 0.20 * t;
+                    }
+                    else if (ruleId == UT.RULE010_MARKER)
+                    {
+                        // Subdivision: 40% to 70% — needs to be high enough
+                        // to create diverse node layouts for struts to attach to
+                        activationProb = 0.40 + 0.30 * t;
+                    }
+                    else if (ruleId == UT.RULE031_MARKER)
+                    {
+                        // Rotation: 45% to 85% — higher so algorithm tries more directions
+                        activationProb = 0.45 + 0.40 * t;
+                    }
+                    else
+                    {
+                        // Other rules: 30% to 90%
+                        activationProb = 0.30 + 0.60 * t;
+                    }
+
                     chromosome.Add(ruleId);
                     chromosomeParam.Add(ruleId);
 
                     for (int j = 0; j < len; j++)
                     {
-                        chromosome.Add(GAIndividual._rng.Next(0, 2));
+                        chromosome.Add(GAIndividual._rng.NextDouble() < activationProb ? 1 : 0);
                         chromosomeParam.Add(GAIndividual._rng.NextDouble());
                     }
 
@@ -277,6 +387,13 @@ namespace ShapeGrammar3D.Classes
                 }
 
                 generation.Add(new GAIndividual(chromosome, chromosomeParam));
+            }
+
+            // Shuffle to remove ordering bias from stratified activation
+            for (int i = generation.Count - 1; i > 0; i--)
+            {
+                int j = Random.Shared.Next(i + 1);
+                (generation[i], generation[j]) = (generation[j], generation[i]);
             }
 
             return generation;
@@ -331,36 +448,42 @@ namespace ShapeGrammar3D.Classes
                 string.Format("Generation {0}, Cluster {1}: Best: {2:F3}, Worst: {3:F3}, Mean: {4:F3}",
                     _currentGeneration, clustGroup, best.Fitness, worst.Fitness, mean));
 
-            // Step 2: Selection - keep top 50%
-            List<GAIndividual> selectedIndividuals = individuals
-                .OrderBy(i => i.Fitness)
-                .Take((int)(0.5 * popSize))
-                .Select(i => i.Clone())
-                .ToList();
+            List<GAIndividual> newGeneration = new List<GAIndividual>();
 
-            // Step 3: Crossover
+            // Step 2: Elitism - preserve best evaluated individuals (at least 1)
+            int numElites = Math.Max(1, (int)(popSize * EliteProbability));
+            List<GAIndividual> elites = SelectElite(individuals, numElites);
+            newGeneration.AddRange(elites);
+
+            // Step 3: Crossover - create offspring from evaluated parents
             int numChildren = (int)(popSize * CrossoverProbability);
             List<GAIndividual> children = Crossover(individuals, numChildren);
-            selectedIndividuals.AddRange(children);
+            newGeneration.AddRange(children);
 
-            // Step 4: Elite selection
-            int numElites = (int)(popSize * EliteProbability);
-            List<GAIndividual> elites = SelectElite(selectedIndividuals, numElites);
-            selectedIndividuals.AddRange(elites);
-
-            // Step 5: Mutation
+            // Step 4: Mutation - inject fresh random individuals for diversity
             EnsureTemplatesFromPopulation(individuals);
             int numMutated = (int)(popSize * MutationProbability);
             List<int> mutLengths = _chromosomeTemplateLengths.Count > 0 ? _chromosomeTemplateLengths : new List<int> { 1 };
             List<int> mutMarkers = (_ruleMarkersTemplate.Count == mutLengths.Count && mutLengths.Count > 0)
                 ? _ruleMarkersTemplate
                 : mutLengths.Select((_, idx) => GetRuleId(idx)).ToList();
-            List<GAIndividual> mutated = CreateInitialGeneration(numMutated, mutLengths, mutMarkers);
-            selectedIndividuals.AddRange(mutated);
+            if (numMutated > 0)
+            {
+                List<GAIndividual> mutated = CreateInitialGeneration(numMutated, mutLengths, mutMarkers);
+                newGeneration.AddRange(mutated);
+            }
 
-            // Step 6: Tournament selection for next generation
-            List<GAIndividual> newGeneration = SelectTournament(selectedIndividuals, popSize);
-            newGeneration.Add(best.Clone());
+            // Step 5: Fill remaining spots via tournament on EVALUATED population only
+            if (newGeneration.Count < popSize)
+            {
+                int remaining = popSize - newGeneration.Count;
+                List<GAIndividual> tournamentSelected = SelectTournament(individuals, remaining);
+                newGeneration.AddRange(tournamentSelected);
+            }
+
+            // Trim to exact population size (elites are at the front, so they survive)
+            if (newGeneration.Count > popSize)
+                newGeneration = newGeneration.Take(popSize).ToList();
 
             // Assign cluster group
             foreach (GAIndividual individual in newGeneration)
@@ -372,31 +495,132 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Performs clustering on population based on topology and shape metrics
+        /// Performs clustering on population based on weighted topology, shape, and fitness metrics.
+        /// When <see cref="MetricDomains"/> is set, normalization uses (val - min) / (max - min).
+        /// Otherwise falls back to val / observedMax.
         /// </summary>
         public void ClusterPopulation(List<GAIndividual> individuals)
         {
             if (individuals.Count == 0)
                 return;
 
-            List<double> topoValues = individuals.Select(i => i.Topo).ToList();
-            List<double> shapeValues = individuals.Select(i => i.Shpe).ToList();
+            int numTopo = individuals[0].TopoValues?.Count ?? 0;
+            int numShpe = individuals[0].ShpeValues?.Count ?? 0;
+            bool useFitness = FitnessWeight > 0;
+            int dims = numTopo + numShpe + (useFitness ? 1 : 0);
 
-            if (_currentGeneration == 0)
+            if (dims == 0) dims = 1;
+
+            bool hasDomains = MetricDomains != null && MetricDomains.Count >= numTopo + numShpe;
+
+            double[] topoMaxes = new double[numTopo];
+            double[] shpeMaxes = new double[numShpe];
+
+            if (!hasDomains)
             {
-                _topoDenominator = topoValues.Max();
-                _shapeDenominator = shapeValues.Max();
+                for (int d = 0; d < numTopo; d++)
+                {
+                    double mx = individuals.Max(ind => ind.TopoValues != null && ind.TopoValues.Count > d ? ind.TopoValues[d] : 0);
+                    topoMaxes[d] = mx > 0 ? mx : 1.0;
+                }
+                for (int d = 0; d < numShpe; d++)
+                {
+                    double mx = individuals.Max(ind => ind.ShpeValues != null && ind.ShpeValues.Count > d ? ind.ShpeValues[d] : 0);
+                    shpeMaxes[d] = mx > 0 ? mx : 1.0;
+                }
+            }
+
+            double fitnessMax = individuals
+                .Select(ind => ind.Fitness)
+                .Where(f => !double.IsInfinity(f) && !double.IsNaN(f)
+                         && f != double.MaxValue && f != double.MinValue)
+                .DefaultIfEmpty(1.0)
+                .Max();
+            if (fitnessMax <= 0) fitnessMax = 1.0;
+
+            bool shouldInitialize = !_clusteringInitialized || _kmeans == null;
+
+            if (shouldInitialize)
+            {
+                _topoDenominators = (double[])topoMaxes.Clone();
+                _shapeDenominators = (double[])shpeMaxes.Clone();
+                _fitnessDenominator = fitnessMax;
                 _kmeans = new SimpleKMeans(NumClusters);
             }
 
-            // Normalize values
-            List<double> normalizedTopo = topoValues.Select(t => t / _topoDenominator).ToList();
-            List<double> normalizedShape = shapeValues.Select(s => s / _shapeDenominator).ToList();
+            List<double[]> dataPoints = new List<double[]>(individuals.Count);
+            for (int i = 0; i < individuals.Count; i++)
+            {
+                double[] pt = new double[dims];
+                int idx = 0;
 
-            // Perform clustering
-            List<int> clusters = _kmeans.Cluster(normalizedTopo, normalizedShape, _currentGeneration == 0);
+                for (int d = 0; d < numTopo; d++)
+                {
+                    double val = (individuals[i].TopoValues != null && individuals[i].TopoValues.Count > d)
+                        ? individuals[i].TopoValues[d] : 0;
 
-            // Assign cluster groups
+                    if (hasDomains)
+                    {
+                        var dom = MetricDomains[d];
+                        double range = dom.Max - dom.Min;
+                        pt[idx++] = range > 0
+                            ? (val - dom.Min) / range * TopoWeight
+                            : 0;
+                    }
+                    else
+                    {
+                        double denom = (_topoDenominators != null && _topoDenominators.Length > d && _topoDenominators[d] > 0)
+                            ? _topoDenominators[d] : 1.0;
+                        pt[idx++] = val / denom * TopoWeight;
+                    }
+                }
+
+                for (int d = 0; d < numShpe; d++)
+                {
+                    double val = (individuals[i].ShpeValues != null && individuals[i].ShpeValues.Count > d)
+                        ? individuals[i].ShpeValues[d] : 0;
+
+                    if (hasDomains)
+                    {
+                        var dom = MetricDomains[numTopo + d];
+                        double range = dom.Max - dom.Min;
+                        pt[idx++] = range > 0
+                            ? (val - dom.Min) / range * ShapeWeight
+                            : 0;
+                    }
+                    else
+                    {
+                        double denom = (_shapeDenominators != null && _shapeDenominators.Length > d && _shapeDenominators[d] > 0)
+                            ? _shapeDenominators[d] : 1.0;
+                        pt[idx++] = val / denom * ShapeWeight;
+                    }
+                }
+
+                if (useFitness)
+                {
+                    double f = individuals[i].Fitness;
+                    if (!double.IsInfinity(f) && !double.IsNaN(f)
+                        && f != double.MaxValue && f != double.MinValue
+                        && _fitnessDenominator > 0)
+                    {
+                        pt[idx] = f / _fitnessDenominator * FitnessWeight;
+                    }
+                }
+
+                dataPoints.Add(pt);
+            }
+
+            List<int> clusters;
+            if (shouldInitialize)
+            {
+                clusters = _kmeans.Cluster(dataPoints, true, KMeansMaxIterations);
+                _clusteringInitialized = true;
+            }
+            else
+            {
+                clusters = _kmeans.Cluster(dataPoints, false, 0);
+            }
+
             for (int i = 0; i < clusters.Count && i < individuals.Count; i++)
             {
                 individuals[i].ClustGrp = clusters[i];
@@ -404,7 +628,10 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Processes evaluated individuals and updates population
+        /// Processes evaluated individuals and updates population.
+        /// When ClusterEliteCount > 0 the N best individuals from each cluster
+        /// are guaranteed to survive into the next generation, preventing
+        /// cluster extinction.
         /// </summary>
         public List<GAIndividual> ProcessEvaluatedIndividuals(List<GAIndividual> evaluated)
         {
@@ -412,9 +639,29 @@ namespace ShapeGrammar3D.Classes
             _currentPopulation = evaluated;
             _allEvaluatedIndividuals.AddRange(evaluated);
 
-            List<GAIndividual> newGeneration = new List<GAIndividual>();
+            int totalPop = evaluated.Count;
+            int elitePerCluster = Math.Max(0, ClusterEliteCount);
 
-            // Process each cluster separately
+            var clusterElites = new List<GAIndividual>();
+            if (elitePerCluster > 0)
+            {
+                for (int c = 0; c < NumClusters; c++)
+                {
+                    var best = evaluated
+                        .Where(i => i.ClustGrp == c)
+                        .OrderBy(i => Maximize ? -i.Fitness : i.Fitness)
+                        .Take(elitePerCluster)
+                        .Select(i => i.Clone())
+                        .ToList();
+                    clusterElites.AddRange(best);
+                }
+            }
+
+            int reservedSlots = clusterElites.Count;
+            int slotsForEvolution = Math.Max(0, totalPop - reservedSlots);
+
+            List<GAIndividual> evolvedPart = new List<GAIndividual>();
+
             for (int clustIdx = 0; clustIdx < NumClusters; clustIdx++)
             {
                 List<GAIndividual> clusterIndividuals = evaluated
@@ -424,9 +671,18 @@ namespace ShapeGrammar3D.Classes
                 if (clusterIndividuals.Count > 0)
                 {
                     List<GAIndividual> newClusterGen = SolveOneGeneration(clusterIndividuals);
-                    newGeneration.AddRange(newClusterGen);
+                    evolvedPart.AddRange(newClusterGen);
                 }
             }
+
+            List<GAIndividual> newGeneration = new List<GAIndividual>(clusterElites);
+
+            var eliteIds = new HashSet<string>(clusterElites.Select(e => e.Id));
+            var nonDuplicateEvolved = evolvedPart.Where(e => !eliteIds.Contains(e.Id)).ToList();
+            newGeneration.AddRange(nonDuplicateEvolved);
+
+            if (newGeneration.Count > totalPop)
+                newGeneration = newGeneration.Take(totalPop).ToList();
 
             return newGeneration;
         }
@@ -454,6 +710,7 @@ namespace ShapeGrammar3D.Classes
 
         private GAIndividual FindBest(List<GAIndividual> individuals)
         {
+
             return Maximize
                 ? individuals.OrderByDescending(i => i.Fitness).First()
                 : individuals.OrderBy(i => i.Fitness).First();
@@ -478,20 +735,22 @@ namespace ShapeGrammar3D.Classes
         private List<GAIndividual> SelectTournament(List<GAIndividual> individuals, int count)
         {
             List<GAIndividual> selected = new List<GAIndividual>();
-            Random random = new Random();
 
             for (int i = 0; i < count - 1; i++)
             {
                 int sampleSize = Math.Min(3, individuals.Count);
                 List<GAIndividual> tournament = individuals
-                    .OrderBy(x => random.Next())
+                    .OrderBy(x => Random.Shared.Next())
                     .Take(sampleSize)
                     .ToList();
 
                 GAIndividual winner = FindBest(tournament);
                 selected.Add(winner.Clone());
             }
-
+            if (individuals.Count == 0)
+            {
+                RhinoApp.WriteLine("Individuals are null");
+            }
             selected.Add(FindBest(individuals).Clone());
             return selected;
         }
@@ -499,12 +758,11 @@ namespace ShapeGrammar3D.Classes
         private List<GAIndividual> Crossover(List<GAIndividual> individuals, int numChildren)
         {
             List<GAIndividual> children = new List<GAIndividual>();
-            Random random = new Random();
 
             for (int i = 0; i < numChildren; i++)
             {
                 List<GAIndividual> parents = individuals
-                    .OrderBy(x => random.Next())
+                    .OrderBy(x => Random.Shared.Next())
                     .Take(2)
                     .ToList();
 
@@ -574,12 +832,11 @@ namespace ShapeGrammar3D.Classes
                 return;
             }
 
-            Random random = new Random();
             List<int> chromo1 = new List<int>(parent1.Chromosome);
             List<int> chromo2 = new List<int>(parent2.Chromosome);
 
-            int point1 = random.Next(1, size);
-            int point2 = random.Next(1, size - 1);
+            int point1 = Random.Shared.Next(1, size);
+            int point2 = Random.Shared.Next(1, size - 1);
             if (point2 >= point1)
                 point2++;
             else
@@ -637,9 +894,8 @@ namespace ShapeGrammar3D.Classes
                 double minCx = minX - BlxAlpha * dx;
                 double maxCx = maxX + BlxAlpha * dx;
 
-                Random random = new Random();
-                double gene1 = (maxCx - minCx) * random.NextDouble() + minCx;
-                double gene2 = (maxCx - minCx) * random.NextDouble() + minCx;
+                double gene1 = (maxCx - minCx) * Random.Shared.NextDouble() + minCx;
+                double gene2 = (maxCx - minCx) * Random.Shared.NextDouble() + minCx;
 
                 gene1 = Clamp(gene1, 0.0, 1.0);
                 gene2 = Clamp(gene2, 0.0, 1.0);
@@ -667,101 +923,174 @@ namespace ShapeGrammar3D.Classes
         }
 
         /// <summary>
-        /// Simple K-Means clustering implementation
+        /// K-Means clustering with K-means++ initialization, multi-dimensional support,
+        /// and iterative centroid updates.
         /// </summary>
         private class SimpleKMeans
         {
             private int _numClusters;
-            private List<CentroidPoint> _centroids;
+            private List<double[]> _centroids;
             private Random _random;
-
-            private class CentroidPoint
-            {
-                public double Topo { get; set; }
-                public double Shape { get; set; }
-
-                public CentroidPoint(double topo, double shape)
-                {
-                    Topo = topo;
-                    Shape = shape;
-                }
-            }
 
             public SimpleKMeans(int numClusters)
             {
-                _numClusters = numClusters;
-                _centroids = new List<CentroidPoint>();
+                _numClusters = Math.Max(1, numClusters);
+                _centroids = new List<double[]>();
                 _random = new Random();
             }
 
-            public List<int> Cluster(List<double> topoValues, List<double> shapeValues, bool initialize)
+            /// <summary>
+            /// Clusters the data points. When initialize is true, centroids are
+            /// seeded using K-means++. Runs up to maxIterations of assign-update.
+            /// </summary>
+            public List<int> Cluster(List<double[]> data, bool initialize, int maxIterations)
             {
-                List<CentroidPoint> data = new List<CentroidPoint>();
-                for (int i = 0; i < topoValues.Count; i++)
+                if (data.Count == 0)
+                    return new List<int>();
+
+                if (initialize || _centroids.Count != _numClusters)
                 {
-                    data.Add(new CentroidPoint(topoValues[i], shapeValues[i]));
+                    InitializeCentroidsPlusPlus(data);
                 }
 
-                if (initialize)
-                {
-                    // Initialize centroids with random points
-                    _centroids.Clear();
-                    for (int i = 0; i < _numClusters; i++)
-                    {
-                        int idx = _random.Next(data.Count);
-                        _centroids.Add(new CentroidPoint(data[idx].Topo, data[idx].Shape));
-                    }
-                }
+                List<int> assignments = AssignToClusters(data);
 
-                // Assign points to nearest centroid
-                List<int> assignments = new List<int>();
-                foreach (CentroidPoint point in data)
+                for (int iter = 0; iter < maxIterations; iter++)
                 {
-                    int bestCluster = 0;
-                    double bestDistance = double.MaxValue;
+                    UpdateCentroids(data, assignments);
+                    List<int> newAssignments = AssignToClusters(data);
 
-                    for (int i = 0; i < _centroids.Count; i++)
+                    bool converged = true;
+                    for (int i = 0; i < assignments.Count; i++)
                     {
-                        double dist = EuclideanDistance(point, _centroids[i]);
-                        if (dist < bestDistance)
+                        if (assignments[i] != newAssignments[i])
                         {
-                            bestDistance = dist;
-                            bestCluster = i;
+                            converged = false;
+                            break;
                         }
                     }
 
-                    assignments.Add(bestCluster);
-                }
-
-                // Update centroids (simplified - single iteration)
-                if (initialize)
-                {
-                    for (int i = 0; i < _numClusters; i++)
-                    {
-                        List<CentroidPoint> clusterPoints = new List<CentroidPoint>();
-                        for (int j = 0; j < assignments.Count; j++)
-                        {
-                            if (assignments[j] == i)
-                                clusterPoints.Add(data[j]);
-                        }
-
-                        if (clusterPoints.Count > 0)
-                        {
-                            double avgTopo = clusterPoints.Average(p => p.Topo);
-                            double avgShape = clusterPoints.Average(p => p.Shape);
-                            _centroids[i] = new CentroidPoint(avgTopo, avgShape);
-                        }
-                    }
+                    assignments = newAssignments;
+                    if (converged) break;
                 }
 
                 return assignments;
             }
 
-            private double EuclideanDistance(CentroidPoint p1, CentroidPoint p2)
+            /// <summary>
+            /// K-means++ seeding: first centroid random, subsequent centroids
+            /// chosen with probability proportional to squared distance.
+            /// </summary>
+            private void InitializeCentroidsPlusPlus(List<double[]> data)
             {
-                double dx = p1.Topo - p2.Topo;
-                double dy = p1.Shape - p2.Shape;
-                return Math.Sqrt(dx * dx + dy * dy);
+                _centroids.Clear();
+
+                int firstIdx = _random.Next(data.Count);
+                _centroids.Add((double[])data[firstIdx].Clone());
+
+                for (int c = 1; c < _numClusters; c++)
+                {
+                    double[] distances = new double[data.Count];
+                    double totalDist = 0;
+
+                    for (int i = 0; i < data.Count; i++)
+                    {
+                        double minDist = double.MaxValue;
+                        foreach (double[] centroid in _centroids)
+                        {
+                            double dist = SquaredDistance(data[i], centroid);
+                            if (dist < minDist) minDist = dist;
+                        }
+                        distances[i] = minDist;
+                        totalDist += minDist;
+                    }
+
+                    if (totalDist == 0)
+                    {
+                        _centroids.Add((double[])data[_random.Next(data.Count)].Clone());
+                        continue;
+                    }
+
+                    double r = _random.NextDouble() * totalDist;
+                    double cumulative = 0;
+                    bool added = false;
+                    for (int i = 0; i < data.Count; i++)
+                    {
+                        cumulative += distances[i];
+                        if (cumulative >= r)
+                        {
+                            _centroids.Add((double[])data[i].Clone());
+                            added = true;
+                            break;
+                        }
+                    }
+
+                    if (!added)
+                        _centroids.Add((double[])data[data.Count - 1].Clone());
+                }
+            }
+
+            private List<int> AssignToClusters(List<double[]> data)
+            {
+                List<int> assignments = new List<int>(data.Count);
+                foreach (double[] point in data)
+                {
+                    int bestCluster = 0;
+                    double bestDist = double.MaxValue;
+
+                    for (int c = 0; c < _centroids.Count; c++)
+                    {
+                        double dist = SquaredDistance(point, _centroids[c]);
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            bestCluster = c;
+                        }
+                    }
+
+                    assignments.Add(bestCluster);
+                }
+                return assignments;
+            }
+
+            private void UpdateCentroids(List<double[]> data, List<int> assignments)
+            {
+                int dims = data[0].Length;
+
+                for (int c = 0; c < _numClusters; c++)
+                {
+                    List<double[]> clusterPoints = new List<double[]>();
+                    for (int i = 0; i < assignments.Count; i++)
+                    {
+                        if (assignments[i] == c)
+                            clusterPoints.Add(data[i]);
+                    }
+
+                    if (clusterPoints.Count > 0)
+                    {
+                        double[] newCentroid = new double[dims];
+                        for (int d = 0; d < dims; d++)
+                        {
+                            double sum = 0;
+                            for (int p = 0; p < clusterPoints.Count; p++)
+                                sum += clusterPoints[p][d];
+                            newCentroid[d] = sum / clusterPoints.Count;
+                        }
+                        _centroids[c] = newCentroid;
+                    }
+                }
+            }
+
+            private double SquaredDistance(double[] p1, double[] p2)
+            {
+                double sum = 0;
+                int dims = Math.Min(p1.Length, p2.Length);
+                for (int d = 0; d < dims; d++)
+                {
+                    double diff = p1[d] - p2[d];
+                    sum += diff * diff;
+                }
+                return sum;
             }
         }
 

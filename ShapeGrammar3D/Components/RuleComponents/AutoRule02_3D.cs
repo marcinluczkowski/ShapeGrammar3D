@@ -16,7 +16,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// </summary>
         public AutoRule02_3D()
           : base("Auto rule 02-3D", "A-Rule02-3D",
-              "Create a line from an existent node",
+              "Create struts along local Z from RULE010 beam tangents (avg → local X; Z×X→Y; X×Y→Z; if X∥Z use world +Z). Length from Domain × genotype.",
               UT.CAT, UT.GR_RLS)
         {
         }
@@ -27,7 +27,10 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.list);
-            pManager.AddNumberParameter("Domain", "D", "", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Domain", "D", "Length domain [min, max]", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Min Ratio", "minR",
+                "Minimum ratio (0–1) of eligible nodes that receive struts. 0 = pure GA control, 0.5 = at least 50%.",
+                GH_ParamAccess.item, 0);
         }
 
         /// <summary>
@@ -44,19 +47,20 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            // --- variables ---
             List<string> eNames = new List<string>();
             List<double> domain = new List<double>();
+            double minRatio = 0;
 
-            // --- input ---
             if (!DA.GetDataList(0, eNames)) return;
             if (!DA.GetDataList(1, domain)) return;
+            DA.GetData(2, ref minRatio);
 
-            // --- solve ---
+            SG_AutoRule02_3D ar2 = new SG_AutoRule02_3D(eNames, domain.ToArray(), minRatio);
 
-            SG_AutoRule02_3D ar2 = new SG_AutoRule02_3D(eNames, domain.ToArray());
+            if (minRatio > 0)
+                AddRuntimeMessage(Grasshopper.Kernel.GH_RuntimeMessageLevel.Remark,
+                    $"Min ratio: at least {minRatio:P0} of eligible nodes will receive struts");
 
-            // --- output ---
             DA.SetData(0, ar2);
         }
 

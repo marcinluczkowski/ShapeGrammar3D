@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -21,25 +21,29 @@ namespace ShapeGrammar3D.Classes.Rules
         public string ElemName { get; set; }
         // public int Option { get; set; }
         public int[] Domain { get; set; }
+        public double MinRatio { get; set; }
 
         // --- constructors ---
         public SG_AutoRule041_3D()
         {
         }
 
-        public SG_AutoRule041_3D(string _eName, int[] _domain)
+        public SG_AutoRule041_3D(string _eName, int[] _domain, double minRatio = 0.0)
         {
             RuleState = State.alpha;
-            Name = "SG_AutoRule04-3D";
+            Name = "SG_AutoRule041-3D";
             ElemName = _eName;
             //Option = _opt;
             Domain = _domain;
+            MinRatio = Math.Clamp(minRatio, 0.0, 1.0);
 
             RuleMarker = UT.RULE041_MARKER;
 
         }
 
         // --- methods ---
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {
@@ -47,8 +51,16 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 04-3d
-
+            // inherit cross-section from existing elements; fall back to 10×10 rect
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection;
+            if (def_crosec == null)
+            {
+                var fallback = new SH_CrossSection_Rectangle(10, 10);
+                fallback.Material = (SH_Material)SH_Material_Isotrop.Default_Material();
+                def_crosec = fallback;
+            }
             // find relevant range in genotype
             int sid = -999;
             int eid = -999;
@@ -68,26 +80,17 @@ namespace ShapeGrammar3D.Classes.Rules
 
             double range = Domain[1] - Domain[0];
 
-            var relevantElems = new List<SG_Element>();
-            for (int i = 0; i < ss_ref.Elems.Count; i++)
-            {
-                if (ss_ref.Elems[i].Name == "3DAR2")
-                {
-                    relevantElems.Add(ss_ref.Elems[i]);
-                }
-
-            }
-
-            var initialNodes = new List<SG_Node>();
+            var relevantElems = ss_ref.Elems.Where(e => e.Name == "3DAR2").ToList();
             var initialElems = ss_ref.Elems.Where(e => e.Autorule == UT.RULE010_MARKER).ToList();
+            int geneCount = selectedIntGenes.Count;
+            int addedCount = 0;
+            var activated = new bool[relevantElems.Count];
+            var eligible = new List<int>();
 
-            for (int i = 0; i < selectedIntGenes.Count; i++)
+            for (int i = 0; i < relevantElems.Count; i++)
             {
-
-                if (i >= relevantElems.Count) break;
-                if (selectedIntGenes[i] == 0) continue;
-
-                double optionDbl = selectedDGenes[i] * range + Domain[0];
+                int geneIdx = i % geneCount;
+                double optionDbl = selectedDGenes[geneIdx] * range + Domain[0];
                 double roundedOptDbl = Math.Round(optionDbl, 0);
                 int optionNumber = (int)roundedOptDbl;
 
@@ -100,33 +103,87 @@ namespace ShapeGrammar3D.Classes.Rules
                 Point3d tip = re.Nodes[1].Pt;
                 Point3d rightElemPt, leftElemPt = new Point3d();
                 Line line = new Line();
+                bool hasCandidate = false;
+                bool shouldActivate = selectedIntGenes[geneIdx] != 0;
+                bool activatedNow = false;
 
                 if (rightElems.Count != 0)
                 {
                     rightElemPt = rightElems[0].Nodes[1].Pt;
                     if (optionNumber == 2 || optionNumber == 3)
                     {
+                        hasCandidate = true;
+                        if (!shouldActivate) goto LEFT_SIDE;
                         line = new Line(tip, rightElemPt);
-                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = UT.RULE041_MARKER };
+                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
+                        addedCount++;
+                        activatedNow = true;
                     }
                 }
+            LEFT_SIDE:
                 if (leftElems.Count != 0)
                 {
                     leftElemPt = leftElems[0].Nodes[0].Pt;
                     if (optionNumber == 1 || optionNumber == 3)
                     {
+                        hasCandidate = true;
+                        if (!shouldActivate) goto FINISH_STUD;
                         line = new Line(tip, leftElemPt);
-                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", new SH_CrossSection_Beam()) { Autorule = UT.RULE041_MARKER };
+                        SG_Elem1D newElem = new SG_Elem1D(line, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER };
                         ss_ref.AddNewElement(newElem);
+                        addedCount++;
+                        activatedNow = true;
                     }
                 }
-
-
-
+            FINISH_STUD:
+                if (hasCandidate) eligible.Add(i);
+                activated[i] = activatedNow;
             }
 
-            return "Auto-rule 041-3D successfully applied.";
+            if (MinRatio > 0.0 && eligible.Count > 0)
+            {
+                int activeCount = eligible.Count(idx => activated[idx]);
+                int target = (int)Math.Ceiling(MinRatio * eligible.Count);
+
+                foreach (int idx in eligible)
+                {
+                    if (activeCount >= target) break;
+                    if (activated[idx]) continue;
+
+                    var re = (SG_Elem1D)relevantElems[idx];
+                    var rightElems = initialElems.Where(e => e.Nodes[0].Pt.DistanceTo(re.Nodes[0].Pt) < UT.PRES).ToList();
+                    var leftElems = initialElems.Where(e => e.Nodes[1].Pt.DistanceTo(re.Nodes[0].Pt) < UT.PRES).ToList();
+                    if (rightElems.Count == 0 && leftElems.Count == 0) continue;
+
+                    var tip = re.Nodes[1].Pt;
+                    if (rightElems.Count != 0)
+                    {
+                        var ln = new Line(tip, rightElems[0].Nodes[1].Pt);
+                        if (ln.IsValid && ln.Length > UT.PRES)
+                        {
+                            ss_ref.AddNewElement(new SG_Elem1D(ln, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER });
+                            addedCount++;
+                            activated[idx] = true;
+                            activeCount++;
+                            continue;
+                        }
+                    }
+                    if (leftElems.Count != 0)
+                    {
+                        var ln = new Line(tip, leftElems[0].Nodes[0].Pt);
+                        if (ln.IsValid && ln.Length > UT.PRES)
+                        {
+                            ss_ref.AddNewElement(new SG_Elem1D(ln, -999, "3DAR4", def_crosec) { Autorule = UT.RULE041_MARKER });
+                            addedCount++;
+                            activated[idx] = true;
+                            activeCount++;
+                        }
+                    }
+                }
+            }
+
+            return $"Auto-rule 041-3D: {addedCount} diagonals added from {relevantElems.Count} studs";
         }
         public override State GetNextState()
         {

@@ -90,6 +90,11 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
 
             // Status
             pManager.AddTextParameter("Status", "Status", "Component status messages", GH_ParamAccess.item);
+
+            // Per-individual clustering metrics
+            pManager.AddNumberParameter("All Fitness", "AllFit", "Fitness value for each individual", GH_ParamAccess.list);
+            pManager.AddNumberParameter("All Topology", "AllTopo", "Topology metric for each individual", GH_ParamAccess.list);
+            pManager.AddNumberParameter("All Shape", "AllShpe", "Shape metric for each individual", GH_ParamAccess.list);
         }
 
         /// <summary>
@@ -287,6 +292,14 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
 
                 // Status message
                 DA.SetData(8, statusMessage);
+
+                // Per-individual clustering metrics
+                List<double> allFitness = _currentGeneration.Select(ind => ind.Fitness).ToList();
+                List<double> allTopo = _currentGeneration.Select(ind => ind.Topo).ToList();
+                List<double> allShape = _currentGeneration.Select(ind => ind.Shpe).ToList();
+                DA.SetDataList(9, allFitness);
+                DA.SetDataList(10, allTopo);
+                DA.SetDataList(11, allShape);
             }
             catch (Exception ex)
             {

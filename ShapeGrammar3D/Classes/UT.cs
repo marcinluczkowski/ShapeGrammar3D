@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -42,6 +42,7 @@ namespace ShapeGrammar3D.Classes
 
         public static int RULE010_MARKER = -10;
         public static int RULE011_MARKER = -11;
+        public static int RULE012_MARKER = -12;
         public static int RULE020_MARKER = -20;
         public static int RULE030_MARKER = -30;
         public static int RULE031_MARKER = -31;
@@ -51,6 +52,10 @@ namespace ShapeGrammar3D.Classes
         public static int RULE051_MARKER = -51;
         public static int RULE060_MARKER = -60;
         public static int RULE061_MARKER = -61;
+        public static int RULE062_MARKER = -62;
+        public static int RULE063_MARKER = -63;
+        public static int RULE064_MARKER = -64;
+        public static int RULE_INITSHAPE_MARKER = -5;
 
         public static string CAT = "StructuralGrammar";
         public static string GR_MAT = "01. Material";
@@ -61,27 +66,11 @@ namespace ShapeGrammar3D.Classes
         public static string GR_ASSEM = "06. Assembly";
         public static string GR_RLS = "07. Rules";
         public static string GR_INT = "08. Interpreter";
+        public static string GR_DATA_PREVIEW = "09. Data Preview";
         public static string GR_UTIL = "89. Utilities";
         public static string GR_MISC = "99. Misc";
 
 
-        public static T DeepCopy<T>(T target)
-        {
-            // Use System.Text.Json for deep copy instead of BinaryFormatter (obsolete).
-            // Note: If types used inside T (for example Rhino.Geometry types) are not
-            // JSON-serializable, consider adding custom converters or implementing
-            // an explicit cloning method on those types.
-            if (target == null) return default(T);
-
-            var options = new JsonSerializerOptions
-            {
-                ReferenceHandler = ReferenceHandler.Preserve,
-                IncludeFields = true
-            };
-
-            string json = JsonSerializer.Serialize(target, options);
-            return JsonSerializer.Deserialize<T>(json, options);
-        }
         /// <summary>
         /// Works as a grammar interpreter by applying the list of rules to the shape
         /// </summary>
@@ -157,6 +146,47 @@ namespace ShapeGrammar3D.Classes
             {
                 return random.NextDouble() * (max - min) + min;
             }
+        }
+
+        public static List<T> DeepCopyList<T>(IEnumerable<T> source)
+            where T : IDeepCloneable<T>
+        {
+            return source?.Select(x => x.DeepClone()).ToList();
+        }
+        /// <summary>
+        /// Deep copy for SG_Shape using its DeepCopy method.
+        /// </summary>
+        /// <param name="ss"></param>
+        /// <returns></returns>
+        public static SG_Shape DeepCopy(SG_Shape ss)
+        {
+            return ss?.DeepCopy();
+        }
+
+        /// <summary>
+        /// Deep copy for List of SG_Shape using each item's DeepCopy method.
+        /// </summary>
+        /// <param name="shapes"></param>
+        /// <returns></returns>
+        public static List<SG_Shape> DeepCopy(List<SG_Shape> shapes)
+        {
+            if (shapes == null)
+                return null;
+
+            return shapes.Select(s => s?.DeepCopy()).ToList();
+        }
+
+        /// <summary>
+        /// Deep copy for List of GAIndividual using each item's Clone method.
+        /// </summary>
+        /// <param name="individuals"></param>
+        /// <returns></returns>
+        public static List<GAIndividual> DeepCopy(List<GAIndividual> individuals)
+        {
+            if (individuals == null)
+                return null;
+
+            return individuals.Select(i => i?.Clone()).ToList();
         }
     }
 }

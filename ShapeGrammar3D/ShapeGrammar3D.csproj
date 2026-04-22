@@ -20,30 +20,27 @@
     <Title>ShapeGrammar3D</Title>
     <Company>ShapeGrammar3D Authors</Company>
     <Description>Description of ShapeGrammar3D</Description>
+    <BaseOutputPath>bin</BaseOutputPath>
   </PropertyGroup>
+
+  <!-- Auto-copy .gha + dependencies to Grasshopper Libraries after build -->
+  <Target Name="CopyToGrasshopperLibraries" AfterTargets="AfterBuild">
+    <PropertyGroup>
+      <GrasshopperLibDir>$(APPDATA)\Grasshopper\Libraries\ShapeGrammar3D</GrasshopperLibDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(GrasshopperLibDir)" />
+    <ItemGroup>
+      <GhaFiles Include="$(TargetDir)**\*.*" Exclude="$(TargetDir)**\Grasshopper.dll;$(TargetDir)**\RhinoCommon.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GhaFiles)" DestinationFolder="$(GrasshopperLibDir)\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
   
   <ItemGroup>
-    <Compile Remove="Components\RuleComponents\**" />
-    <EmbeddedResource Remove="Components\RuleComponents\**" />
-    <None Remove="Components\RuleComponents\**" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <Compile Remove="Components\ToolboxComponents\01_Material.cs" />
-    <Compile Remove="Components\ToolboxComponents\02_Sections.cs" />
-    <Compile Remove="Components\ToolboxComponents\03_Support.cs" />
-    <Compile Remove="Components\ToolboxComponents\04_Loads.cs" />
-    <Compile Remove="Components\ToolboxComponents\05_Element1D.cs" />
-    <Compile Remove="Components\ToolboxComponents\05_ElementHinge.cs" />
-    <Compile Remove="Components\ToolboxComponents\06_Assembly.cs" />
-    <Compile Remove="Components\ToolboxComponents\07_CroSecOpt.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_DeformedShape.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Elem1DForces.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Reaction.cs" />
-    <Compile Remove="Components\ToolboxComponents\08_Utilisation.cs" />
-    <Compile Remove="Components\ToolboxComponents\10_GeneticAlgorithm.cs" />
-    <Compile Remove="Components\ToolboxComponents\98_Draw_CrossSection.cs" />
-    <Compile Remove="Components\ToolboxComponents\99_Disassembles.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto2.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto3.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto4.cs" />
+    <Compile Remove="Components\GrammarInterpreter_Auto5.cs" />
     <Compile Remove="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   
@@ -67,6 +64,25 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" ExcludeAssets="all" GeneratePathProperty="true" />
     <Reference Include="$(PkgMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll" Private="False" />
     <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Data\SHS_Catalog.csv" />
+    <None Include="Data\SHS_Catalog.csv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <CustomToolNamespace>ShapeGrammar3D.Properties</CustomToolNamespace>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

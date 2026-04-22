@@ -1,18 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using ShapeGrammar3D.Classes;
 
-namespace ShapeGrammar3D.Classes
+public class SG_Load : IDeepCloneable<SG_Load>
 {
-    [Serializable]
-    public class SG_Load
-    {
-        // --- properties ---
-        
-        // --- constructors ---
-
-        // --- methods ---
-    }
+    public virtual SG_Load DeepClone() => new SG_Load();
 }

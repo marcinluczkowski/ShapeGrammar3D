@@ -26,5 +26,14 @@ namespace ShapeGrammar3D.Classes
             Position = _position;
         }
         // --- methods ---
+        public override SG_Load DeepClone()
+        {
+            return new SG_PointLoad
+            {
+                Forces = Forces,
+                Moments = Moments,
+                Position = Position
+            };
+        }
     }
 }

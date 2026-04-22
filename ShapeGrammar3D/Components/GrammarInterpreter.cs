@@ -87,9 +87,9 @@ namespace ShapeGrammar3D.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;// Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Generic;
             }
-        }
+        }   
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.

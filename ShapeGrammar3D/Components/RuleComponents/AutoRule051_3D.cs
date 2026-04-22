@@ -16,7 +16,9 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// </summary>
         public AutoRule051_3D()
           : base("Auto Rule 051-3D", "A-Rule051-3D",
-              "",
+              "Adds braces between each RULE020 strut tip and the tip of its adjacent strut(s) along the shared RULE010 base beam. " +
+              "Rule option: 1 = previous neighbour along the beam, 2 = next neighbour, 3 = both. " +
+              "End struts (no previous or no next neighbour) connect to the only available neighbour.",
               UT.CAT, UT.GR_RLS)
         {
         }
@@ -27,8 +29,10 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Rule option", "O", "options: 1 to the left, 2 to the right, 3 for both", GH_ParamAccess.list);
-
+            pManager.AddIntegerParameter("Rule option", "O", "options: 1 = prev, 2 = next, 3 = both", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Min Ratio", "minR",
+                "Minimum ratio (0–1) of eligible struts that should generate members.",
+                GH_ParamAccess.item, 0.0);
         }
 
         /// <summary>
@@ -47,17 +51,17 @@ namespace ShapeGrammar3D.Components.RuleComponents
         {
             // --- variables ---
             string eName = "";
-            // int option = -999;
             List<int> domain = new List<int>();
+            double minRatio = 0.0;
 
             // --- input ---
             if (!DA.GetData(0, ref eName)) return;
-            // if (!DA.GetData(1, ref option)) return;
             if (!DA.GetDataList(1, domain)) return;
+            DA.GetData(2, ref minRatio);
 
             // --- solve ---
 
-            SG_AutoRule051_3D ar5 = new SG_AutoRule051_3D(eName, domain.ToArray());
+            SG_AutoRule051_3D ar5 = new SG_AutoRule051_3D(eName, domain.ToArray(), minRatio);
 
             // --- output ---
             DA.SetData(0, ar5);

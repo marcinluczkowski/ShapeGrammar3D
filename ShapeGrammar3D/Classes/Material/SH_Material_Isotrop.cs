@@ -37,6 +37,25 @@ namespace ShapeGrammar3D.Classes
             alphaT = _alphaT;
 
         }
+
+        public static SH_Material_Isotrop Default_Material()
+        {
+            SH_Material_Isotrop mat = new SH_Material_Isotrop();
+
+            mat.Family = "steel";
+            mat.Name = "S355";
+            mat.Density = 78.00;
+            mat.E = 210000;
+            mat.Poisson = 0.3;
+            mat.Fy = 355;
+            mat.G_ip = mat.E / (2 * (1 + mat.Poisson));
+            mat.G_tr = mat.E / (2 * (1 + mat.Poisson));
+            mat.alphaT = 0.0001;
+
+            return mat;
+        }
+
+
         // --- methods ---
     }
 }

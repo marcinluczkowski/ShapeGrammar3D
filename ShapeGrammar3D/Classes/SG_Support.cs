@@ -4,10 +4,12 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Rhino.Geometry;
+using ShapeGrammar3D.Classes;
+
 namespace ShapeGrammar3D.Classes
 {
     [Serializable]
-    public class SG_Support
+    public class SG_Support : IDeepCloneable<SG_Support>
     {
         // --- properties ---
         
@@ -67,6 +69,17 @@ namespace ShapeGrammar3D.Classes
                 boolConditions.Add(((cond >> i) & 1u) != 0u);
             }
             return boolConditions;
+        }
+
+        public SG_Support DeepClone()
+        {
+            return new SG_Support
+            {
+                ID = ID,
+                Pt = Pt,
+                SupportCondition = SupportCondition,
+                Node = null
+            };
         }
 
     }

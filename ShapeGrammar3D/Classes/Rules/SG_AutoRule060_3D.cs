@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -38,6 +38,8 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         // --- methods ---
+        public override RuleIterationTarget IterationTarget => RuleIterationTarget.Studs;
+
         public override void NewRuleParameters(Random random, SG_Shape ss) { }
         public override SG_Rule CopyRule(SG_Rule rule)
         {
@@ -45,7 +47,10 @@ namespace ShapeGrammar3D.Classes.Rules
         }
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
-            // algorithm for rule 05-3d
+            SH_CrossSection_Beam def_crosec = ss_ref.Elems?
+                .OfType<SG_Elem1D>()
+                .FirstOrDefault()?.CrossSection
+                ?? new SH_CrossSection_Beam();
 
             // find relevant range in genotype
             int sid = -999;
@@ -91,13 +96,25 @@ namespace ShapeGrammar3D.Classes.Rules
             {
                 var stud0 = (SG_Elem1D)studElements[i];
 
-                var iniCrv = ((SG_Elem1D)stud0.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                var baseElem0 = stud0.Nodes[0].Elements
+                    .Where(e => e.Autorule == UT.RULE010_MARKER)
+                    .OfType<SG_Elem1D>()
+                    .FirstOrDefault();
+                if (baseElem0 == null) continue;
+                var iniCrv = baseElem0.Init_Crv;
+                if (iniCrv == null) continue;
 
                 var targetElements = new List<SG_Element>();
                 for (int j = 0; j < studElements.Count; j++)
                 {
                     var stud1 = (SG_Elem1D)studElements[j];
-                    var iniCrv1 = ((SG_Elem1D)stud1.Nodes[0].Elements.Where(e => e.Autorule == UT.RULE010_MARKER).ToList()[0]).Init_Crv;
+                    var baseElem1 = stud1.Nodes[0].Elements
+                        .Where(e => e.Autorule == UT.RULE010_MARKER)
+                        .OfType<SG_Elem1D>()
+                        .FirstOrDefault();
+                    if (baseElem1 == null) continue;
+                    var iniCrv1 = baseElem1.Init_Crv;
+                    if (iniCrv1 == null) continue;
 
                     if (iniCrv.PointAtStart.CompareTo(iniCrv1.PointAtStart) != 0)
                     {
@@ -122,7 +139,9 @@ namespace ShapeGrammar3D.Classes.Rules
 
                 var targetStud = targetElements.OrderBy(t => t.Nodes[1].Pt.DistanceTo(stud0.Nodes[1].Pt)).ToList()[0];
 
-                var newBeam = new SG_Elem1D(new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt), -999, "3DAR5", new SH_CrossSection_Beam()) { Autorule = UT.RULE060_MARKER };
+                var brLine = new Line(stud0.Nodes[1].Pt, targetStud.Nodes[1].Pt);
+                if (!brLine.IsValid || brLine.Length < UT.PRES) continue;
+                var newBeam = new SG_Elem1D(brLine, -999, "3DAR5", def_crosec) { Autorule = UT.RULE060_MARKER };
 
                 ss_ref.AddNewElement(newBeam);
             }
