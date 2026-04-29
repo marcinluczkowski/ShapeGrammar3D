@@ -207,6 +207,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Conv Avg", "CAvg", "Convergence: average per cluster per gen. Path = (gen, cluster)", GH_ParamAccess.tree);   // 7
             pManager.AddLineParameter("Conv Lines", "CLn", "Convergence graph lines (axes, grid, curves)", GH_ParamAccess.tree);  // 8
             pManager.AddColourParameter("Conv Colours", "CCol", "Colours for Conv Lines", GH_ParamAccess.tree);                   // 9
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
+                "In-memory GA run assembly (genotypes, fitness, objectives, models) for Data Preview components",
+                GH_ParamAccess.item);                                                                                               // 10
         }
 
         public override void CreateAttributes() { m_attributes = new GrammarInterpreter_ForLargeModelAttributes(this); }
@@ -268,6 +271,7 @@ namespace ShapeGrammar3D.Components
                 DA.SetDataTree(7, new GH_Structure<GH_Number>());
                 DA.SetDataTree(8, new GH_Structure<GH_Line>());
                 DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                DA.SetData(10, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
                 return;
             }
 
@@ -387,6 +391,7 @@ namespace ShapeGrammar3D.Components
                 DA.SetDataTree(7, new GH_Structure<GH_Number>());
                 DA.SetDataTree(8, new GH_Structure<GH_Line>());
                 DA.SetDataTree(9, new GH_Structure<GH_Colour>());
+                DA.SetData(10, new GH_SGAssembly(new SGShapeGrammar3DAssembly()));
                 return;
             }
 
@@ -432,9 +437,32 @@ namespace ShapeGrammar3D.Components
             List<SG_Shape> evaluatedShapes = null;
             List<TB_Model> evaluatedModels = null;
             string lastClusterLog = string.Empty;
+            var assembly = new SGShapeGrammar3DAssembly
+            {
+                Config = new AssemblyConfig
+                {
+                    PopulationSize = _populationSize,
+                    NumGenerations = _numGenerations,
+                    NumClusters = _numClusters,
+                    NumObjectives = _numObjectives,
+                    TopoMetricTypes = new List<int>(_topoMetricTypes),
+                    ShapeMetricTypes = new List<int>(_shapeMetricTypes),
+                    FeasibilityAngleMinDeg = _feasibilitySettings.AngleMinDeg,
+                    FeasibilityAngleOptDeg = _feasibilitySettings.AngleOptDeg,
+                    FeasibilityLenTooShort = _feasibilitySettings.LenTooShort,
+                    FeasibilityLenOptLow = _feasibilitySettings.LenOptLow,
+                    FeasibilityLenOptHigh = _feasibilitySettings.LenOptHigh,
+                    FeasibilityLenTooLong = _feasibilitySettings.LenTooLong
+                }
+            };
+            foreach (int t in _topoMetricTypes)
+                assembly.MetricNames.Add("T:" + TopologyMetrics.GetLabel(t));
+            foreach (int s in _shapeMetricTypes)
+                assembly.MetricNames.Add("S:" + ShapeMetrics.GetLabel(s));
 
             while (true)
             {
+                int generationId = _currentGeneration;
                 deep_copied_inishape = CloneShape(ini_Shape);
 
                 evaluatedShapes = new List<SG_Shape>();
@@ -493,6 +521,19 @@ namespace ShapeGrammar3D.Components
                 if (isMultiObjective)
                     _ga.ClusterPopulation(evaluatedPop); // MOGA: cluster again for elite selection
 
+                var ag = new AssemblyGeneration { Generation = generationId };
+                int popCount = Math.Max(evaluatedPop?.Count ?? 0, Math.Max(evaluatedShapes?.Count ?? 0, evaluatedModels?.Count ?? 0));
+                for (int i = 0; i < popCount; i++)
+                {
+                    var ind = i < (evaluatedPop?.Count ?? 0) ? evaluatedPop[i] : null;
+                    var shp = i < (evaluatedShapes?.Count ?? 0) ? evaluatedShapes[i] : null;
+                    var mdl = i < (evaluatedModels?.Count ?? 0) ? evaluatedModels[i] : null;
+                    ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(
+                        ind ?? new GAIndividual(new List<int>(), new List<double>(), "?"),
+                        mdl, shp));
+                }
+                assembly.Generations.Add(ag);
+
                 if (isMultiObjective && _clusterEliteCount > 0 && !isLastGeneration)
                 {
                     _currentPopulation = InjectClusterElites(
@@ -510,7 +551,7 @@ namespace ShapeGrammar3D.Components
                     break;
             }
 
-            OutputFirstLastAndConvergence(DA, lastClusterLog, pctTop, insertPt, graphW, graphH);
+            OutputFirstLastAndConvergence(DA, lastClusterLog, pctTop, insertPt, graphW, graphH, assembly);
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
                 string.Format("GA completed {0} generations", _numGenerations));
         }
@@ -1133,7 +1174,7 @@ namespace ShapeGrammar3D.Components
         /// Outputs first/last generation shapes (filtered by %), colours, convergence trees, and graph.
         /// </summary>
         private void OutputFirstLastAndConvergence(IGH_DataAccess DA, string lastClusterLog,
-            double pctTop, Point3d insertPt, double graphW, double graphH)
+            double pctTop, Point3d insertPt, double graphW, double graphH, SGShapeGrammar3DAssembly assembly)
         {
             var rawFirst = _firstGenData ?? new List<(SG_Shape, int, double)>();
             var rawLast = _lastGenData ?? new List<(SG_Shape, int, double)>();
@@ -1185,6 +1226,7 @@ namespace ShapeGrammar3D.Components
                 _convergenceData?.Count ?? 0,
                 lastClusterLog);
             DA.SetData(0, info);
+            DA.SetData(10, new GH_SGAssembly(assembly ?? new SGShapeGrammar3DAssembly()));
         }
 
         private void BuildConvergenceGraph(Point3d insertPt, double graphW, double graphH,
