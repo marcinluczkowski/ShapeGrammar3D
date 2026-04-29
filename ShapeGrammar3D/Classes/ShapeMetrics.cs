@@ -82,6 +82,17 @@ namespace ShapeGrammar3D.Classes
 
         public static double Compute(SG_Shape shape, int metricType, double shrinkWrapDetailRatio)
         {
+            return Compute(shape, metricType, shrinkWrapDetailRatio, fastMode: false);
+        }
+
+        /// <summary>
+        /// Computes the selected shape metric.  When <paramref name="fastMode"/> is <c>true</c>
+        /// expensive Rhino mesh operations (currently only <see cref="ShapeMetricType.ShrinkWrapVolume"/>)
+        /// run with coarse parameters so they fit inside a tight GA inner loop.  All other metrics
+        /// are unaffected because they are already O(N) on element/node lists.
+        /// </summary>
+        public static double Compute(SG_Shape shape, int metricType, double shrinkWrapDetailRatio, bool fastMode)
+        {
             if (shape == null || shape.Elems == null)
                 return 0.0;
 
@@ -101,7 +112,7 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.HullAspectRatioXY     => HullAspectRatioXY(shape),
                 ShapeMetricType.MeshAreaFromLines     => MeshAreaFromLines(shape),
                 ShapeMetricType.ConvexHullVolume      => ConvexHullVolume(shape),
-                ShapeMetricType.ShrinkWrapVolume      => ShrinkWrapVolume(shape, shrinkWrapDetailRatio),
+                ShapeMetricType.ShrinkWrapVolume      => ShrinkWrapVolume(shape, shrinkWrapDetailRatio, fastMode),
                 _ => TotalLength(shape)
             };
         }
@@ -386,7 +397,20 @@ namespace ShapeGrammar3D.Classes
         /// <summary>14 – ShrinkWrap volume with configurable detail ratio.</summary>
         public static double ShrinkWrapVolume(SG_Shape shape, double detailRatio = DefaultShrinkWrapDetailRatio)
         {
-            var m = ShrinkWrapMesh(shape, detailRatio);
+            return ShrinkWrapVolume(shape, detailRatio, fastMode: false);
+        }
+
+        /// <summary>
+        /// 14 – ShrinkWrap volume.  When <paramref name="fastMode"/> is <c>true</c> the
+        /// internal mesh is built with very coarse parameters (no smoothing, no polygon
+        /// optimisation, ≤2 samples per beam, edge length ≥ 0.10×diagonal) so that the
+        /// metric is fast enough for GA inner-loop use (1000 pop × 100 gen = 100 000 calls).
+        /// Absolute volume is slightly less precise but the relative ordering between
+        /// shapes — which is all clustering needs — is preserved.
+        /// </summary>
+        public static double ShrinkWrapVolume(SG_Shape shape, double detailRatio, bool fastMode)
+        {
+            var m = ShrinkWrapMesh(shape, detailRatio, fastMode);
             if (m == null || !m.IsValid) return 0.0;
             try
             {
@@ -398,8 +422,26 @@ namespace ShapeGrammar3D.Classes
 
         public static Mesh ShrinkWrapMesh(SG_Shape shape, double detailRatio = DefaultShrinkWrapDetailRatio)
         {
+            return ShrinkWrapMesh(shape, detailRatio, fastMode: false);
+        }
+
+        /// <summary>
+        /// Builds the ShrinkWrap mesh.  In <paramref name="fastMode"/>:
+        ///  • TargetEdgeLength is clamped to ≥ 0.10×diagonal (≈25× fewer polys vs. detail 0.02).
+        ///  • SmoothingIterations = 0, PolygonOptimization = 0, FillHolesInInputObjects = false.
+        ///  • Beam sampling capped to ≤ 2 mid-points per element so the input cloud stays small.
+        /// In normal mode the original high-quality settings are used (slow but accurate).
+        /// </summary>
+        public static Mesh ShrinkWrapMesh(SG_Shape shape, double detailRatio, bool fastMode)
+        {
             if (shape?.Nodes == null || shape.Nodes.Count < 4) return null;
-            detailRatio = Math.Clamp(detailRatio, 0.001, 0.2);
+
+            // Fast mode forces a coarse target edge regardless of the user-supplied detail ratio.
+            // We still let larger user values take effect (the user explicitly asked for coarser).
+            double effectiveRatio = fastMode
+                ? Math.Max(detailRatio, 0.10)
+                : detailRatio;
+            effectiveRatio = Math.Clamp(effectiveRatio, 0.001, 0.5);
 
             var bb = BoundingBox.Empty;
             foreach (var n in shape.Nodes)
@@ -412,7 +454,7 @@ namespace ShapeGrammar3D.Classes
             double diag = bb.Diagonal.Length;
             if (diag < 1e-9) return null;
 
-            double targetEdge = Math.Max(1e-6, diag * detailRatio);
+            double targetEdge = Math.Max(1e-6, diag * effectiveRatio);
             var pc = new PointCloud();
             foreach (var n in shape.Nodes)
             {
@@ -420,12 +462,14 @@ namespace ShapeGrammar3D.Classes
                 pc.Add(n.Pt);
             }
 
+            int maxSamplesPerBeam = fastMode ? 2 : int.MaxValue;
             foreach (var e in shape.Elems.OfType<SG_Elem1D>())
             {
                 if (e.Nodes == null || e.Nodes.Length < 2 || e.Nodes[0] == null || e.Nodes[1] == null) continue;
                 var ln = new Line(e.Nodes[0].Pt, e.Nodes[1].Pt);
                 if (!ln.IsValid || ln.Length <= 1e-9) continue;
                 int div = Math.Max(1, (int)Math.Ceiling(ln.Length / targetEdge));
+                if (div > maxSamplesPerBeam + 1) div = maxSamplesPerBeam + 1;
                 for (int i = 1; i < div; i++)
                     pc.Add(ln.PointAt((double)i / div));
             }
@@ -435,14 +479,19 @@ namespace ShapeGrammar3D.Classes
             {
                 TargetEdgeLength = targetEdge,
                 Offset = 0.0,
-                SmoothingIterations = 1,
-                FillHolesInInputObjects = true,
-                PolygonOptimization = 20
+                SmoothingIterations = fastMode ? 0 : 1,
+                FillHolesInInputObjects = !fastMode,
+                PolygonOptimization = fastMode ? 0 : 20
             };
             var m = Mesh.ShrinkWrap(pc, p);
             if (m == null || !m.IsValid) return null;
-            m.Normals.ComputeNormals();
-            m.Compact();
+            // Skip Normals.ComputeNormals + Compact in fast mode; volume calculation does not
+            // need them and these passes are non-trivial for high poly counts.
+            if (!fastMode)
+            {
+                m.Normals.ComputeNormals();
+                m.Compact();
+            }
             return m;
         }
 
