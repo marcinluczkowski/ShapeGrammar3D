@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -18,6 +19,13 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public TB_Model Mdl { get; private set; }
         public int N_DOF { get; private set; }
 
+        // --- profiling hook ---
+        // When this dictionary is non-null, every sub-stage of Solve() adds its elapsed
+        // wall-clock time (in ms) under a key prefixed with "FEM[". Set it in the caller
+        // to record cumulative timings across many evaluations, leave null for production
+        // use to keep overhead at zero.  Stopwatch overhead is ~100 ns per Start/Stop pair.
+        public static Dictionary<string, double> ProfileMsAccumulator;
+
         // --- constructors --- 
         public SolveLS() { }
         public SolveLS(ref TB_Model _mdl)
@@ -34,15 +42,25 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
         private void Solve()
         {
+            bool profile = ProfileMsAccumulator != null;
+            var sw = profile ? new Stopwatch() : null;
+
             // global stiffness matrix
+            if (profile) sw.Restart();
             DenseMatrix kG = CreateGlobalStiffMX();
+            if (profile) Accum(sw, "FEM[AssembleK]");
+
+            if (profile) sw.Restart();
             Mdl.KG = kG.Clone();
+            if (profile) Accum(sw, "FEM[CloneK]");
 
             // CoordinateStorage<double> ccs_kG = CreateGlobalStiffMX();
 
             // load vector
+            if (profile) sw.Restart();
             DenseMatrix lV = CreateLoadMX();
             Mdl.LM = lV.Clone();
+            if (profile) Accum(sw, "FEM[AssembleLoad]");
 
             // Reaction initialization
             foreach (TB_Support s in Mdl.Sups)
@@ -52,6 +70,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
 
             // overwrite boundary condition & load
+            if (profile) sw.Restart();
             foreach (Node n in Mdl.Nodes.Where(n => n.Sup != null))
             {
                 // i: i-th degree of freedom in a node
@@ -97,19 +116,31 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     }
                 }
             }
+            if (profile) Accum(sw, "FEM[ApplyBC]");
 
             // Solve system
+            if (profile) sw.Restart();
             CompressedColumnStorage<double> kGs = SparseMatrix.OfMatrix(kG);
             // CompressedColumnStorage<double> kGs = SparseMatrix.OfIndexed(ccs_kG);
             CompressedColumnStorage<double> lVs = SparseMatrix.OfMatrix(lV);
+            if (profile) Accum(sw, "FEM[SparsifyKL]");
 
             var order = ColumnOrdering.MinimumDegreeAtPlusA;
 
+            // Factor the system matrix ONCE — kGs is identical for every load case, so
+            // re-running SparseLU.Create per load case (the previous behaviour) was pure
+            // duplicate work.  We now solve with the same LU for each RHS column.
+            if (profile) sw.Restart();
+            SparseLU lu = SparseLU.Create(kGs, order, Common.PRES);
+            if (profile) Accum(sw, "FEM[LuFactor]");
+
+            int dispLen = N_DOF * Mdl.Nodes.Count;
+
+            if (profile) sw.Restart();
             for (int i = 0; i < lVs.ColumnCount; i++)
             {
                 double[] b = lVs.Column(i);
-                SparseLU lu = SparseLU.Create(kGs, order, Common.PRES);
-                double[] disp = Vector.Create(N_DOF * Mdl.Nodes.Count, 0.0);
+                double[] disp = Vector.Create(dispLen, 0.0);
 
                 lu.Solve(b, disp);
 
@@ -122,9 +153,11 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     Mdl.Nodes[j].Disps.Add(vals);
                 }
             }
+            if (profile) Accum(sw, "FEM[LuSolve]");
 
             // reaction forces
             // i: load case
+            if (profile) sw.Restart();
             for (int i = 0; i < lVs.ColumnCount; i++)
             {
                 var Disp = new DenseMatrix(Mdl.Nodes.Count * N_DOF, 1, Mdl.Disps[i]);
@@ -145,8 +178,21 @@ namespace ShapeGrammar3D.Classes.Toolbox
 
                 }
             }
+            if (profile) Accum(sw, "FEM[Reactions]");
 
             return;
+        }
+
+        private static void Accum(Stopwatch sw, string key)
+        {
+            sw.Stop();
+            var dict = ProfileMsAccumulator;
+            if (dict == null) return;
+            double ms = sw.Elapsed.TotalMilliseconds;
+            if (dict.TryGetValue(key, out double existing))
+                dict[key] = existing + ms;
+            else
+                dict[key] = ms;
         }
 
         //private static int GedIndex(CoordinateStorage<double> cs, int row, int col)
