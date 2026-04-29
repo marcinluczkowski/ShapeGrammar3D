@@ -50,6 +50,14 @@ namespace ShapeGrammar3D.Components.RuleComponents
             pManager.AddIntegerParameter("Boundary Beam Constraint", "bConst",
                 "0: no boundary beam constraint, 1: hard constraint (remove outside beams), >=2: soft feasibility weight.",
                 GH_ParamAccess.item, 0);
+            pManager.AddBooleanParameter("Project Beams To Roof", "projRoof",
+                "When True (and a Boundary is supplied), each init beam is generated as a curve obtained by " +
+                "projecting the straight chord between two support points vertically (world +Z) onto the boundary's " +
+                "upper surface — i.e. the beam follows a gable / roof profile. With False, beams stay straight (legacy).",
+                GH_ParamAccess.item, false);
+            pManager.AddIntegerParameter("Projection Samples", "projN",
+                "Number of samples taken along each chord when projecting to the roof (≥3). Higher = smoother but slower.",
+                GH_ParamAccess.item, 21);
             pManager[1].Optional = true;
             pManager[3].Optional = true;
         }
@@ -74,6 +82,8 @@ namespace ShapeGrammar3D.Components.RuleComponents
             var areaLoadVec = Vector3d.Zero;
             bool useSelfWeight = false;
             int boundaryBeamConstraint = 0;
+            bool projectBeamsToRoof = false;
+            int projectionSampleCount = 21;
 
             DA.GetData(0, ref boundaryBrep);
             DA.GetData(1, ref boundaryMesh);
@@ -88,6 +98,8 @@ namespace ShapeGrammar3D.Components.RuleComponents
             DA.GetData(10, ref areaLoadVec);
             DA.GetData(11, ref useSelfWeight);
             DA.GetData(12, ref boundaryBeamConstraint);
+            DA.GetData(13, ref projectBeamsToRoof);
+            DA.GetData(14, ref projectionSampleCount);
 
             if (boundaryBrep == null && boundaryMesh == null)
             {
@@ -123,7 +135,8 @@ namespace ShapeGrammar3D.Components.RuleComponents
             var rule = new SG_AutoRule_InitShape_3D(
                 designBb, reqLines, optLines, maxPt, minPt,
                 crossSec, loadVec, supCond, areaLoadVec, useSelfWeight,
-                boundaryBrep, boundaryMesh, boundaryBeamConstraint, minSupportSpacing);
+                boundaryBrep, boundaryMesh, boundaryBeamConstraint, minSupportSpacing,
+                projectBeamsToRoof, projectionSampleCount);
 
             DA.SetData(0, rule);
         }

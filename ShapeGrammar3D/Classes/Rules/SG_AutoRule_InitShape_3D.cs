@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Rhino.Geometry;
+using Rhino.Geometry.Intersect;
 using ShapeGrammar3D.Classes.Elements;
 
 namespace ShapeGrammar3D.Classes.Rules
@@ -43,6 +44,16 @@ namespace ShapeGrammar3D.Classes.Rules
         public int BoundaryBeamConstraintMode { get; set; }
         /// <summary>Minimum chord distance between consecutive support points on each required line (model units). 0 disables spacing enforcement except near-duplicate merge.</summary>
         public double MinSupportSpacing { get; set; }
+        /// <summary>
+        /// When true and a Boundary (Brep or Mesh) is supplied, each candidate init beam is
+        /// generated as a curve obtained by projecting the straight chord between its two
+        /// support points vertically (world +Z) onto the boundary's upper surface — i.e.
+        /// the beam follows the gable / roof profile instead of being a straight chord.
+        /// When false (default), beams are straight lines as before.
+        /// </summary>
+        public bool ProjectBeamsToRoof { get; set; }
+        /// <summary>Number of samples taken along each chord when projecting to the roof.</summary>
+        public int ProjectionSampleCount { get; set; } = 21;
 
         /// <summary>Total gene slots – used by GrammarInterpreters for chromosome length estimation.</summary>
         public int MaxSupports => TotalLineCount * MaxPointsPerLine;
@@ -65,7 +76,9 @@ namespace ShapeGrammar3D.Classes.Rules
             Brep boundaryBrep = null,
             Mesh boundaryMesh = null,
             int boundaryBeamConstraintMode = 0,
-            double minSupportSpacing = 0.0)
+            double minSupportSpacing = 0.0,
+            bool projectBeamsToRoof = false,
+            int projectionSampleCount = 21)
         {
             RuleState = State.alpha;
             Name = "SG_AutoRule_InitShape_3D";
@@ -84,6 +97,8 @@ namespace ShapeGrammar3D.Classes.Rules
             UseSelfWeight = useSelfWeight;
             BoundaryBeamConstraintMode = boundaryBeamConstraintMode;
             MinSupportSpacing = Math.Max(0.0, minSupportSpacing);
+            ProjectBeamsToRoof = projectBeamsToRoof;
+            ProjectionSampleCount = Math.Max(3, projectionSampleCount);
         }
 
         public override RuleIterationTarget IterationTarget => RuleIterationTarget.Nodes;
@@ -109,7 +124,9 @@ namespace ShapeGrammar3D.Classes.Rules
                 src.CrossSection, src.LoadVector, src.SupportCondition,
                 src.AreaLoadVector, src.UseSelfWeight,
                 src.BoundaryBrep, src.BoundaryMesh, src.BoundaryBeamConstraintMode,
-                src.MinSupportSpacing);
+                src.MinSupportSpacing,
+                src.ProjectBeamsToRoof,
+                src.ProjectionSampleCount);
         }
 
         public override State GetNextState() => State.beta;
@@ -258,8 +275,17 @@ namespace ShapeGrammar3D.Classes.Rules
 
             // ---- Create beams between DIFFERENT boundary lines ----
             int beamCount = 0;
+            int curvedBeamCount = 0;
             int checkedBeamCount = 0;
             int outsideBeamCount = 0;
+            bool projectionEnabled = ProjectBeamsToRoof && (BoundaryBrep != null || BoundaryMesh != null);
+            BoundingBox roofBb = projectionEnabled
+                ? (BoundaryBrep != null ? BoundaryBrep.GetBoundingBox(true) : BoundaryMesh.GetBoundingBox(true))
+                : BoundingBox.Empty;
+            double roofZStart = projectionEnabled && roofBb.IsValid
+                ? roofBb.Max.Z + Math.Max(1.0, roofBb.Diagonal.Length * 0.01)
+                : 0.0;
+
             for (int i = 0; i < pointsByLine.Count; i++)
             {
                 for (int j = i + 1; j < pointsByLine.Count; j++)
@@ -273,8 +299,25 @@ namespace ShapeGrammar3D.Classes.Rules
                         bool isOutside = IsLineOutsideBoundary(ln);
                         if (isOutside) outsideBeamCount++;
                         if (BoundaryBeamConstraintMode == 1 && isOutside) continue;
-                        var beam = new SG_Elem1D(ln, -999, "beam", crosec);
-                        beam.Joined_Init_Crv = beam.Init_Crv?.ToNurbsCurve();
+
+                        Curve roofCrv = null;
+                        if (projectionEnabled)
+                            roofCrv = ProjectChordToRoof(ln, roofZStart, ProjectionSampleCount);
+
+                        SG_Elem1D beam;
+                        if (roofCrv != null)
+                        {
+                            beam = new SG_Elem1D(roofCrv, -999, "beam", crosec)
+                            {
+                                CrossSection = crosec
+                            };
+                            curvedBeamCount++;
+                        }
+                        else
+                        {
+                            beam = new SG_Elem1D(ln, -999, "beam", crosec);
+                        }
+                        beam.Joined_Init_Crv = beam.Init_Crv?.DuplicateCurve();
                         ss.AddNewElement(beam);
                         beamCount++;
                     }
@@ -335,7 +378,107 @@ namespace ShapeGrammar3D.Classes.Rules
             ss.BoundaryViolationWeight = BoundaryBeamConstraintMode > 1 ? BoundaryBeamConstraintMode : 0.0;
 
             int totalPts = pointsByLine.Sum(pl => pl.Count);
-            return $"InitShape: {totalPts} pts on {allLines.Count} lines, {beamCount} beams, {ss.Supports.Count} supports, {ss.Nodes.Count} nodes";
+            string projTag = projectionEnabled ? $" (curved={curvedBeamCount})" : "";
+            return $"InitShape: {totalPts} pts on {allLines.Count} lines, {beamCount} beams{projTag}, {ss.Supports.Count} supports, {ss.Nodes.Count} nodes";
+        }
+
+        /// <summary>
+        /// Builds a curve following the roof surface above the chord <paramref name="chord"/>
+        /// by sampling along the chord and casting a vertical ray downward from above the
+        /// boundary's bounding box for each sample. The chord endpoints (support points on
+        /// the eaves) are kept exactly as-is, so the resulting curve is C0-continuous with
+        /// the supports. Returns <c>null</c> when projection cannot recover at least 3
+        /// useful points (in which case the caller falls back to the straight chord).
+        /// </summary>
+        private Curve ProjectChordToRoof(Line chord, double zStart, int samples)
+        {
+            if (BoundaryBrep == null && BoundaryMesh == null) return null;
+            if (samples < 3) samples = 3;
+
+            var pts = new List<Point3d>(samples + 1);
+            var down = -Vector3d.ZAxis;
+            int hits = 0;
+
+            // Force the chord endpoints to remain exactly on the eaves so the beam
+            // connects to the support point without any drift.
+            for (int i = 0; i <= samples; i++)
+            {
+                double t = (double)i / samples;
+                Point3d basePt = chord.PointAt(t);
+                Point3d sample = basePt;
+                bool isEnd = (i == 0 || i == samples);
+
+                if (!isEnd)
+                {
+                    Point3d origin = new Point3d(basePt.X, basePt.Y, zStart);
+                    Ray3d ray = new Ray3d(origin, down);
+                    if (TryRayShootBoundary(ray, out Point3d hit))
+                    {
+                        // Only adopt the hit if it sits at or above the chord level —
+                        // otherwise the projection has fallen onto an underside / floor
+                        // face and would yield a degenerate beam.
+                        if (hit.Z + 1e-9 >= basePt.Z)
+                        {
+                            sample = hit;
+                            hits++;
+                        }
+                    }
+                }
+                pts.Add(sample);
+            }
+
+            // Need at least one interior projected sample, otherwise the curve
+            // would just reproduce the straight chord.
+            if (hits < 1) return null;
+
+            // Drop near-duplicate consecutive samples (rays sometimes produce slight
+            // coincidence at flat parts of the roof) so InterpolatedCurve stays valid.
+            var cleaned = new List<Point3d> { pts[0] };
+            for (int k = 1; k < pts.Count; k++)
+            {
+                if (pts[k].DistanceToSquared(cleaned[cleaned.Count - 1]) > 1e-12)
+                    cleaned.Add(pts[k]);
+            }
+            if (cleaned.Count < 3) return null;
+
+            // Use a degree-1 NURBS (i.e. polyline-like) interpolant so a sharp ridge
+            // is reproduced exactly. Subsequent rules use Curve.Split / FrameAt which
+            // both work on degree-1 NURBS.
+            return Curve.CreateInterpolatedCurve(cleaned, 1);
+        }
+
+        /// <summary>Cast <paramref name="ray"/> against the boundary Brep first, then the
+        /// boundary Mesh. Returns the first intersection point if any.</summary>
+        private bool TryRayShootBoundary(Ray3d ray, out Point3d hit)
+        {
+            hit = Point3d.Unset;
+            if (BoundaryBrep != null)
+            {
+                try
+                {
+                    var hits = Intersection.RayShoot(ray, new[] { (GeometryBase)BoundaryBrep }, 1);
+                    if (hits != null && hits.Length > 0 && hits[0].IsValid)
+                    {
+                        hit = hits[0];
+                        return true;
+                    }
+                }
+                catch { }
+            }
+            if (BoundaryMesh != null)
+            {
+                try
+                {
+                    double tHit = Intersection.MeshRay(BoundaryMesh, ray);
+                    if (tHit >= 0)
+                    {
+                        hit = ray.Position + ray.Direction * tHit;
+                        return true;
+                    }
+                }
+                catch { }
+            }
+            return false;
         }
 
         // ----------------------------------------------------------------
