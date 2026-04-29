@@ -21,7 +21,7 @@ namespace ShapeGrammar3D.Components
     public class FeasibilityPreviewAttributes : GH_ComponentAttributes
     {
         private RectangleF _panelBounds;
-        private RectangleF _btnUtil, _btnLength, _btnLengthBins, _btnAngle, _btnIntersect, _btnDangling;
+        private RectangleF _btnUtil, _btnLength, _btnLengthBins, _btnAngle, _btnIntersect, _btnDangling, _btnBoundary;
         private const float BTN_H = 22f, PAD = 4f, MIN_W = 200f;
         private GI_FeasibilityPreview Comp => (GI_FeasibilityPreview)Owner;
 
@@ -40,9 +40,10 @@ namespace ShapeGrammar3D.Components
             _btnLengthBins = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnAngle = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
             _btnIntersect = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
-            _btnDangling = new RectangleF(cx, y, cw, BTN_H);
-            _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, y - Bounds.Bottom - PAD);
-            Bounds = new RectangleF(x, Bounds.Y, w, y - Bounds.Y);
+            _btnDangling = new RectangleF(cx, y, cw, BTN_H); y += BTN_H + PAD;
+            _btnBoundary = new RectangleF(cx, y, cw, BTN_H);
+            _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, y + BTN_H + PAD - Bounds.Bottom - PAD);
+            Bounds = new RectangleF(x, Bounds.Y, w, y + BTN_H + PAD - Bounds.Y);
         }
 
         protected override void Render(GH_Canvas canvas, Graphics g, GH_CanvasChannel channel)
@@ -61,6 +62,7 @@ namespace ShapeGrammar3D.Components
             DrawToggle(g, _btnAngle, "Angle (nodes)", Comp.ShowAngle);
             DrawToggle(g, _btnIntersect, "Intersections", Comp.ShowIntersection);
             DrawToggle(g, _btnDangling, "Dangling", Comp.ShowDangling);
+            DrawToggle(g, _btnBoundary, "Boundary (VBoundary)", Comp.ShowBoundary);
         }
 
         private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
@@ -98,6 +100,7 @@ namespace ShapeGrammar3D.Components
                 if (_btnAngle.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Angle"); Comp.ShowAngle = !Comp.ShowAngle; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnIntersect.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Intersection"); Comp.ShowIntersection = !Comp.ShowIntersection; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
                 if (_btnDangling.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Dangling"); Comp.ShowDangling = !Comp.ShowDangling; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
+                if (_btnBoundary.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Boundary"); Comp.ShowBoundary = !Comp.ShowBoundary; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
             }
             return base.RespondToMouseDown(sender, e);
         }
@@ -124,9 +127,11 @@ namespace ShapeGrammar3D.Components
     public class GI_FeasibilityPreview : GH_Component
     {
         private struct DotMark { public Point3d Position; public Color Colour; }
+        private struct BoundaryDisplayItem { public Mesh Mesh; public Color WireColour; }
         private List<DotMark> _angleDots = new List<DotMark>();
         private List<DotMark> _intersectDots = new List<DotMark>();
         private List<DotMark> _danglingDots = new List<DotMark>();
+        private List<BoundaryDisplayItem> _boundaryItems = new List<BoundaryDisplayItem>();
         private double _dotRadius = 0.15;
 
         public bool ShowUtilization { get; set; } = true;
@@ -135,6 +140,7 @@ namespace ShapeGrammar3D.Components
         public bool ShowAngle { get; set; } = false;
         public bool ShowIntersection { get; set; } = false;
         public bool ShowDangling { get; set; } = false;
+        public bool ShowBoundary { get; set; } = false;
 
         public GI_FeasibilityPreview()
           : base("GI_Feasibility (Assembly)", "GI_Feas",
@@ -153,6 +159,7 @@ namespace ShapeGrammar3D.Components
             writer.SetBoolean("ShowAngle", ShowAngle);
             writer.SetBoolean("ShowIntersection", ShowIntersection);
             writer.SetBoolean("ShowDangling", ShowDangling);
+            writer.SetBoolean("ShowBoundary", ShowBoundary);
             return base.Write(writer);
         }
 
@@ -164,6 +171,7 @@ namespace ShapeGrammar3D.Components
             if (reader.ItemExists("ShowAngle")) ShowAngle = reader.GetBoolean("ShowAngle");
             if (reader.ItemExists("ShowIntersection")) ShowIntersection = reader.GetBoolean("ShowIntersection");
             if (reader.ItemExists("ShowDangling")) ShowDangling = reader.GetBoolean("ShowDangling");
+            if (reader.ItemExists("ShowBoundary")) ShowBoundary = reader.GetBoolean("ShowBoundary");
             return base.Read(reader);
         }
 
@@ -182,6 +190,12 @@ namespace ShapeGrammar3D.Components
             if (ShowDangling && _danglingDots != null)
                 foreach (var d in _danglingDots)
                     args.Display.DrawSphere(new Sphere(d.Position, r), d.Colour);
+            if (ShowBoundary && _boundaryItems != null)
+                foreach (var b in _boundaryItems)
+                {
+                    if (b.Mesh == null) continue;
+                    args.Display.DrawMeshWires(b.Mesh, b.WireColour, 1);
+                }
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
@@ -218,6 +232,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddPointParameter("Intersection Pts", "IntPts", "Actual intersection locations (Point3d). One point per intersection.", GH_ParamAccess.tree);
             pManager.AddNumberParameter("Intersection Values", "IntVal", "Penalty value per intersection contributing to VIntersect.", GH_ParamAccess.tree);
             pManager.AddTextParameter("Elem Type Counts", "TypeCnt", "Per structure: MainBeam, Strut, Bar, Other counts (for reverse-engineering when bar marker is lost).", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("VBoundary", "VBnd", "Length-weighted ratio of element length lying outside the boundary Brep/Mesh stored on the shape (0 = fully inside, 1 = fully outside). One value per individual.", GH_ParamAccess.tree);
+            pManager.AddMeshParameter("Boundary Mesh", "BndMesh", "Boundary geometry (Brep tessellated to Mesh, or BoundaryMesh as-is) per individual, offset to layout position. One mesh per individual that has a boundary.", GH_ParamAccess.tree);
+            pManager.AddNumberParameter("Outside Ratios", "OutR", "Per-element outside ratio (0..1) for each line in the same order as Lines. Useful for inspecting which beams violate the boundary.", GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -225,6 +242,7 @@ namespace ShapeGrammar3D.Components
             _angleDots.Clear();
             _intersectDots.Clear();
             _danglingDots.Clear();
+            _boundaryItems.Clear();
 
             GH_SGAssembly ghAssembly = null;
             if (!DA.GetData(0, ref ghAssembly) || ghAssembly?.Value == null)
@@ -317,10 +335,17 @@ namespace ShapeGrammar3D.Components
             var intPtsTree = new GH_Structure<GH_Point>();
             var intValTree = new GH_Structure<GH_Number>();
             var elemTypeCountsTree = new GH_Structure<GH_String>();
+            var vBoundaryTree = new GH_Structure<GH_Number>();
+            var boundaryMeshTree = new GH_Structure<GH_Mesh>();
+            var outsideRatioTree = new GH_Structure<GH_Number>();
 
             double[] utilThresholds = new double[] { 50, 80, 95, 100, 110 };
             int col = 0;
             int totalCount = 0;
+            int boundaryStructureCount = 0;
+            // Cache: tessellated mesh per boundary geometry instance (Brep or Mesh).
+            // Many individuals typically share the same boundary, so meshing once is much cheaper.
+            var boundaryMeshCache = new Dictionary<object, Mesh>();
 
             foreach (var gen in assembly.Generations ?? new List<AssemblyGeneration>())
             {
@@ -340,6 +365,33 @@ namespace ShapeGrammar3D.Components
                     }
 
                     shape.RegisterElemsToNodes();
+
+                    // Refresh boundary violation from current geometry so VBoundary in
+                    // the preview always reflects the actual shape, not a stale cache
+                    // from the GA run. Also collect per-element outside ratios for
+                    // visualization and the OutR output.
+                    Dictionary<SG_Elem1D, double> elemOutsideRatio = null;
+                    bool hasBoundary = shape.BoundaryBrep != null || shape.BoundaryMesh != null;
+                    if (hasBoundary)
+                    {
+                        double surfTol = BoundaryConstraintUtil.DefaultSurfaceTol(shape.BoundaryBrep, shape.BoundaryMesh);
+                        elemOutsideRatio = new Dictionary<SG_Elem1D, double>();
+                        double totalLen = 0.0, outsideLen = 0.0;
+                        foreach (var el in shape.Elems)
+                        {
+                            if (!(el is SG_Elem1D e1d)) continue;
+                            if (e1d.Nodes == null || e1d.Nodes.Length < 2 || e1d.Nodes[0] == null || e1d.Nodes[1] == null) continue;
+                            Line ln0 = new Line(e1d.Nodes[0].Pt, e1d.Nodes[1].Pt);
+                            if (!ln0.IsValid || ln0.Length < 1e-9) { elemOutsideRatio[e1d] = 0.0; continue; }
+                            double rOut = BoundaryConstraintUtil.OutsideRatio(ln0, shape.BoundaryBrep, shape.BoundaryMesh, surfTol);
+                            elemOutsideRatio[e1d] = rOut;
+                            totalLen += ln0.Length;
+                            outsideLen += ln0.Length * rOut;
+                        }
+                        shape.BoundaryViolationRatio = totalLen > 1e-12 ? outsideLen / totalLen : 0.0;
+                        boundaryStructureCount++;
+                    }
+
                     FeasibilityResult feas = FeasibilityMetrics.Compute(shape, feasSettings);
 
                     Vector3d offset = new Vector3d(
@@ -355,11 +407,13 @@ namespace ShapeGrammar3D.Components
                     vIntTree.Append(new GH_Number(feas.VIntersect), path);
                     vRepetTree.Append(new GH_Number(feas.VRepet), path);
                     vDupTree.Append(new GH_Number(feas.VDup), path);
+                    vBoundaryTree.Append(new GH_Number(feas.VBoundary), path);
                     feasTree.Append(new GH_Number(feas.TotalViolation), path);
 
                     bool useLengthBinsColor = ShowLengthBins;
                     bool useLengthColor = ShowLength && !useLengthBinsColor;
                     bool useUtilColor = ShowUtilization && !useLengthColor && !useLengthBinsColor && model != null;
+                    bool useBoundaryColor = ShowBoundary && !useUtilColor && !useLengthColor && !useLengthBinsColor && elemOutsideRatio != null;
 
                     int lc = ResolveLoadCase(model, lcIndex);
 
@@ -382,6 +436,10 @@ namespace ShapeGrammar3D.Components
 
                         TB_Element_1D modelElem = FindModelElementByLine(model, ln);
 
+                        double outsideR = 0.0;
+                        if (elemOutsideRatio != null && elemOutsideRatio.TryGetValue(e1, out var orVal)) outsideR = orVal;
+                        outsideRatioTree.Append(new GH_Number(outsideR), path);
+
                         Color meshColor = Color.Gray;
                         if (useLengthBinsColor && elemToBin != null && elemToBin.TryGetValue(e1, out var binInfo))
                         {
@@ -397,8 +455,12 @@ namespace ShapeGrammar3D.Components
                             double util = ComputeUtilization(model, modelElem, lc);
                             meshColor = UtilColor(util, utilThresholds);
                         }
+                        else if (useBoundaryColor)
+                        {
+                            meshColor = BoundaryColor(outsideR);
+                        }
 
-                        if (ShowLength || ShowUtilization || ShowLengthBins)
+                        if (ShowLength || ShowUtilization || ShowLengthBins || ShowBoundary)
                         {
                             double sw = 0.05, sh = 0.05;
                             if (modelElem?.Sec != null)
@@ -455,9 +517,31 @@ namespace ShapeGrammar3D.Components
                     int angGood = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_GOOD);
                     int angOrange = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_ORANGE);
                     int angBad = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_BAD);
-                    string labelTxt = string.Format("Feas:{0:F3} VAng:{1:F3} | Angle nodes: {2} good, {3} medium, {4} bad", feas.TotalViolation, feas.VAng, angGood, angOrange, angBad);
+                    string labelTxt = string.Format("Feas:{0:F3} VAng:{1:F3} VBnd:{2:F3} | Angle nodes: {3} good, {4} medium, {5} bad",
+                        feas.TotalViolation, feas.VAng, feas.VBoundary, angGood, angOrange, angBad);
                     labelPtTree.Append(new GH_Point(labelPt), path);
                     labelTxtTree.Append(new GH_String(labelTxt), path);
+
+                    // Boundary geometry visualization (per individual). Tessellate Brep
+                    // (or take Mesh as-is) once per unique boundary instance, then offset
+                    // a duplicate to the layout slot for this individual.
+                    if (hasBoundary)
+                    {
+                        Mesh baseMesh = GetOrTessellateBoundary(shape.BoundaryBrep, shape.BoundaryMesh, boundaryMeshCache);
+                        if (baseMesh != null)
+                        {
+                            Mesh placed = baseMesh.DuplicateMesh();
+                            placed.Translate(offset);
+                            boundaryMeshTree.Append(new GH_Mesh(placed), path);
+                            if (ShowBoundary)
+                            {
+                                Color wireColor = shape.BoundaryViolationRatio > 1e-6
+                                    ? Color.FromArgb(220, 50, 50)
+                                    : Color.FromArgb(80, 140, 200);
+                                _boundaryItems.Add(new BoundaryDisplayItem { Mesh = placed, WireColour = wireColor });
+                            }
+                        }
+                    }
                     var typeCounts = FeasibilityMetrics.GetElementTypeCounts(shape);
                     elemTypeCountsTree.Append(new GH_String(string.Format("MainBeam:{0} Strut:{1} Bar:{2} Other:{3}", typeCounts.MainBeam, typeCounts.Strut, typeCounts.Bar, typeCounts.Other)), path);
                     var intersectionData = FeasibilityMetrics.GetIntersectionData(shape);
@@ -491,9 +575,11 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(6, vRepetTree);
             DA.SetDataTree(7, vDupTree);
             DA.SetDataTree(8, feasTree);
-            DA.SetData(9, string.Format("Feasibility Preview: {0} individuals. Util:{1} Len:{2} LenBins:{3} Ang:{4} Int:{5} Dang:{6} Repet+Dup:computed",
-                totalCount, ShowUtilization ? "ON" : "OFF", ShowLength ? "ON" : "OFF", ShowLengthBins ? "ON" : "OFF",
-                ShowAngle ? "ON" : "OFF", ShowIntersection ? "ON" : "OFF", ShowDangling ? "ON" : "OFF"));
+            DA.SetData(9, string.Format("Feasibility Preview: {0} individuals ({1} with boundary). Util:{2} Len:{3} LenBins:{4} Ang:{5} Int:{6} Dang:{7} Bnd:{8} Repet+Dup:computed",
+                totalCount, boundaryStructureCount,
+                ShowUtilization ? "ON" : "OFF", ShowLength ? "ON" : "OFF", ShowLengthBins ? "ON" : "OFF",
+                ShowAngle ? "ON" : "OFF", ShowIntersection ? "ON" : "OFF", ShowDangling ? "ON" : "OFF",
+                ShowBoundary ? "ON" : "OFF"));
             DA.SetDataTree(10, angleNodePtsTree);
             DA.SetDataTree(11, angleNodeTxtTree);
             DA.SetDataTree(12, labelPtTree);
@@ -502,6 +588,52 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(15, intPtsTree);
             DA.SetDataTree(16, intValTree);
             DA.SetDataTree(17, elemTypeCountsTree);
+            DA.SetDataTree(18, vBoundaryTree);
+            DA.SetDataTree(19, boundaryMeshTree);
+            DA.SetDataTree(20, outsideRatioTree);
+        }
+
+        /// <summary>
+        /// Tessellates a boundary Brep to a Mesh (cached by reference), or returns the
+        /// supplied Mesh as-is. Used so we mesh each unique boundary only once even when
+        /// many individuals share it.
+        /// </summary>
+        private static Mesh GetOrTessellateBoundary(Brep brep, Mesh mesh, Dictionary<object, Mesh> cache)
+        {
+            if (brep != null)
+            {
+                if (cache.TryGetValue(brep, out var cached)) return cached;
+                Mesh result = null;
+                try
+                {
+                    var meshes = Mesh.CreateFromBrep(brep, MeshingParameters.FastRenderMesh);
+                    if (meshes != null && meshes.Length > 0)
+                    {
+                        result = new Mesh();
+                        foreach (var m in meshes) if (m != null) result.Append(m);
+                        if (!result.IsValid) result = null;
+                    }
+                }
+                catch { result = null; }
+                cache[brep] = result;
+                return result;
+            }
+            if (mesh != null)
+            {
+                if (cache.TryGetValue(mesh, out var cached)) return cached;
+                cache[mesh] = mesh;
+                return mesh;
+            }
+            return null;
+        }
+
+        /// <summary>Green (fully inside) → orange (partial) → red (fully outside).</summary>
+        private static Color BoundaryColor(double outsideRatio)
+        {
+            outsideRatio = Math.Clamp(outsideRatio, 0.0, 1.0);
+            if (outsideRatio <= 1e-6) return Color.FromArgb(0, 180, 80);
+            if (outsideRatio < 0.5) return Lerp(Color.FromArgb(0, 180, 80), Color.FromArgb(255, 165, 0), outsideRatio / 0.5);
+            return Lerp(Color.FromArgb(255, 165, 0), Color.FromArgb(220, 50, 50), (outsideRatio - 0.5) / 0.5);
         }
 
         private static Color FeasColor(int cls)

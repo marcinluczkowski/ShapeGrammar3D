@@ -181,6 +181,11 @@ namespace ShapeGrammar3D.Classes.Rules
         /// <paramref name="nd"/> — local X = average of outward beam tangents,
         /// local Y = world_Z × local_x, local Z = local_x × local_y.
         /// If local X is parallel to world Z, returns world +Z.
+        ///
+        /// We use each beam's <c>Init_Crv</c> (the original parent beam curve before any
+        /// node-moving rule like Rule012-3D was applied), not the current
+        /// <c>Nodes[].Pt</c>, so that lifting mid-nodes vertically does not tilt the
+        /// strut frame (Rule012 must not behave like a global rotation rule).
         /// </summary>
         private static Vector3d ComputeStrutDirectionFromRule010Beams(SG_Node nd)
         {
@@ -194,14 +199,13 @@ namespace ShapeGrammar3D.Classes.Rules
                 if (el.Nodes == null || el.Nodes.Length < 2 || el.Nodes[0] == null || el.Nodes[1] == null)
                     continue;
 
-                Vector3d away;
-                if (ReferenceEquals(el.Nodes[0], nd))
-                    away = el.Nodes[1].Pt - el.Nodes[0].Pt;
-                else if (ReferenceEquals(el.Nodes[1], nd))
-                    away = el.Nodes[0].Pt - el.Nodes[1].Pt;
-                else
-                    continue;
+                SG_Node other;
+                if (ReferenceEquals(el.Nodes[0], nd)) other = el.Nodes[1];
+                else if (ReferenceEquals(el.Nodes[1], nd)) other = el.Nodes[0];
+                else continue;
+                if (other == null) continue;
 
+                Vector3d away = ComputeOutwardTangent(el, nd, other);
                 if (away.SquareLength < 1e-24) continue;
                 away.Unitize();
                 sum += away;
@@ -227,6 +231,38 @@ namespace ShapeGrammar3D.Classes.Rules
                 return zWorld;
 
             return localZ;
+        }
+
+        /// <summary>
+        /// Direction along the parent beam (Init_Crv), pointing from <paramref name="nd"/>
+        /// toward <paramref name="other"/>. Uses the parent line — which is invariant under
+        /// Rule012-3D node moves — instead of the (possibly tilted) sub-segment chord.
+        /// Falls back to the current sub-segment chord when Init_Crv is missing.
+        /// </summary>
+        private static Vector3d ComputeOutwardTangent(SG_Elem1D el, SG_Node nd, SG_Node other)
+        {
+            Curve init = el.Init_Crv;
+            if (init != null)
+            {
+                Vector3d parentDir = init.PointAtEnd - init.PointAtStart;
+                if (parentDir.SquareLength >= 1e-24)
+                {
+                    parentDir.Unitize();
+                    // Decide sign by projecting both nodes onto the parent direction.
+                    // For a straight Init_Crv this is exact; for slightly curved
+                    // boundaries it still recovers the correct outward sign as long
+                    // as Rule012 hasn't pushed nd past `other` along the line.
+                    Point3d origin = init.PointAtStart;
+                    double tNd = (nd.Pt - origin) * parentDir;
+                    double tOther = (other.Pt - origin) * parentDir;
+                    double signed = tOther - tNd;
+                    if (Math.Abs(signed) > 1e-12)
+                        return signed > 0.0 ? parentDir : -parentDir;
+                }
+            }
+
+            // Fallback: current chord (legacy behaviour) when no usable Init_Crv.
+            return other.Pt - nd.Pt;
         }
     }
 

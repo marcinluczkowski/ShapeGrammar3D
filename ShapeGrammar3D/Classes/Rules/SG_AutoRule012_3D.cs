@@ -64,6 +64,18 @@ namespace ShapeGrammar3D.Classes.Rules
             }
             double range = d1 - d0;
 
+            // Refresh node->element registration. Rule01_3D adds new mid-nodes and
+            // sub-segment elements without touching SG_Node.Elements lists, so
+            // without this refresh the new mid-nodes have an empty Elements list
+            // (filter below would always discard them) and the original endpoint
+            // nodes still point to the now-removed RULE_INITSHAPE elements.
+            ss_ref.UnregisterElemsFromNodes();
+            ss_ref.RegisterElemsToNodes();
+
+            // Mid-nodes created by Rule01_3D split: connected to exactly two
+            // RULE010-marked sub-segments. Boundary corners (intersection of
+            // multiple init-shape lines) typically have >2 connections and are
+            // therefore correctly excluded as supports we don't want to move.
             var targetNodes = ss_ref.Nodes
                 .Where(n => n != null
                     && n.Elements != null
@@ -72,7 +84,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 .ToList();
 
             if (targetNodes.Count == 0)
-                return "Auto-rule 012-3D: no Rule01-generated nodes found";
+                return $"Auto-rule 012-3D: no Rule01-generated mid-nodes found (nodes={ss_ref.Nodes?.Count ?? 0}, elems={ss_ref.Elems?.Count ?? 0}). Make sure Rule01-3D runs before Rule012-3D and produces splits.";
 
             int movedCount = 0;
             int geneCount = selectedIntGenes.Count;
@@ -83,6 +95,8 @@ namespace ShapeGrammar3D.Classes.Rules
                 if (selectedIntGenes[geneIdx] == 0) continue;
 
                 double dz = selectedDGenes[geneIdx] * range + d0;
+                if (Math.Abs(dz) < 1e-9) continue;
+
                 var nd = targetNodes[i];
                 nd.Pt = new Point3d(nd.Pt.X, nd.Pt.Y, nd.Pt.Z + dz);
                 if (nd.Support != null)
@@ -99,7 +113,7 @@ namespace ShapeGrammar3D.Classes.Rules
                 movedCount++;
             }
 
-            return $"Auto-rule 012-3D: moved {movedCount}/{targetNodes.Count} Rule01 nodes in Z";
+            return $"Auto-rule 012-3D: moved {movedCount}/{targetNodes.Count} Rule01 mid-nodes in Z (domain=[{d0:F2},{d1:F2}], genes={geneCount})";
         }
 
         public override State GetNextState()
