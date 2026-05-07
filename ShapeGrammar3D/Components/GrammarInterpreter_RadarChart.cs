@@ -252,7 +252,7 @@ namespace ShapeGrammar3D.Components
                 "Maximum axis length (model units)", GH_ParamAccess.item, 1.0);        // 6
             pManager.AddIntervalParameter("Metric Domains", "MDom",
                 "Expected [min, max] domain per metric axis for normalization.\n" +
-                "If not supplied, each axis is normalized by observed max.",
+                "If not supplied, each axis uses observed min–max over displayed individuals (supports negative metrics).",
                 GH_ParamAccess.list);                                                   // 7
             pManager.AddIntegerParameter("Cluster Groups", "Clust",
                 "Cluster group per individual {generation}(individual) from Auto4",
@@ -263,12 +263,16 @@ namespace ShapeGrammar3D.Components
                 "Base point for the grid layout", GH_ParamAccess.item, Point3d.Origin); // 10
             pManager.AddColourParameter("Colour", "Col",
                 "Text and label colour", GH_ParamAccess.item, Color.Black);             // 11
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient chart grid (XY through Insert Pt) onto this plane, e.g. XZ. Leave disconnected for world-XY layout.",
+                GH_ParamAccess.item);                                                   // 12
 
             pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[7].Optional = true;
             pManager[8].Optional = true;
             pManager[9].Optional = true;
+            pManager[12].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -324,6 +328,8 @@ namespace ShapeGrammar3D.Components
             Color inputColour = Color.Black;
             DA.GetData(11, ref inputColour);
             _textColor = inputColour;
+
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 12, insertPt);
 
             int numAxes = metricNames.Count;
             if (numAxes < 2)
@@ -415,8 +421,13 @@ namespace ShapeGrammar3D.Components
             }
             else
             {
-                double[] axisMax = new double[numAxes];
-                for (int m = 0; m < numAxes; m++) axisMax[m] = 1e-15;
+                var axisLo = new double[numAxes];
+                var axisHi = new double[numAxes];
+                for (int m = 0; m < numAxes; m++)
+                {
+                    axisLo[m] = double.PositiveInfinity;
+                    axisHi[m] = double.NegativeInfinity;
+                }
 
                 foreach (int gen in selectedGens)
                 {
@@ -425,15 +436,33 @@ namespace ShapeGrammar3D.Components
                         if (!allInds && !indSet.Contains(kvp.Key)) continue;
                         for (int m = 0; m < numAxes; m++)
                         {
-                            double abs = Math.Abs(kvp.Value[m]);
-                            if (abs > axisMax[m]) axisMax[m] = abs;
+                            double v = kvp.Value[m];
+                            if (double.IsNaN(v) || double.IsInfinity(v)) continue;
+                            if (v < axisLo[m]) axisLo[m] = v;
+                            if (v > axisHi[m]) axisHi[m] = v;
                         }
                     }
                 }
+
+                const double epsSpan = 1e-15;
                 for (int m = 0; m < numAxes; m++)
                 {
-                    axisMin[m] = 0;
-                    axisRange[m] = axisMax[m];
+                    if (double.IsInfinity(axisLo[m]) || double.IsInfinity(axisHi[m]))
+                    {
+                        axisMin[m] = 0;
+                        axisRange[m] = 1.0;
+                        continue;
+                    }
+
+                    axisMin[m] = axisLo[m];
+                    double span = axisHi[m] - axisLo[m];
+                    if (span <= epsSpan)
+                    {
+                        axisMin[m] = axisHi[m] - 0.5;
+                        axisRange[m] = 1.0;
+                    }
+                    else
+                        axisRange[m] = span;
                 }
             }
 
@@ -471,7 +500,7 @@ namespace ShapeGrammar3D.Components
                     if (!allInds && !indSet.Contains(indIdx)) continue;
 
                     double[] vals = kvp.Value;
-                    Point3d center = new Point3d(
+                    Point3d c = new Point3d(
                         insertPt.X + col * xSpacing,
                         insertPt.Y - row * ySpacing,
                         insertPt.Z);
@@ -481,15 +510,17 @@ namespace ShapeGrammar3D.Components
 
                     for (int m = 0; m < numAxes; m++)
                     {
-                        Point3d axisEnd = center + axisDirs[m] * radius;
-                        axesTree.Append(new GH_Line(new Line(center, axisEnd)), outPath);
+                        Line axisLn = new Line(c, c + axisDirs[m] * radius);
+                        axisLn.Transform(dispXf);
+                        axesTree.Append(new GH_Line(axisLn), outPath);
 
-                        double norm = axisRange[m] > 0
+                        double norm = axisRange[m] > 0 && !double.IsNaN(vals[m]) && !double.IsInfinity(vals[m])
                             ? (vals[m] - axisMin[m]) / axisRange[m]
                             : 0;
-                        double clampedNorm = Math.Max(0, Math.Min(1, norm));
-                        Point3d dataPt = center + axisDirs[m] * (radius * clampedNorm);
-                        polygonPts.Add(dataPt);
+                        double clampedNorm = double.IsNaN(vals[m]) || double.IsInfinity(vals[m])
+                            ? 0
+                            : Math.Max(0, Math.Min(1, norm));
+                        polygonPts.Add(c + axisDirs[m] * (radius * clampedNorm));
 
                         Vector3d xdir = axisDirs[m];
                         Vector3d ydir = new Vector3d(-axisDirs[m].Y, axisDirs[m].X, 0);
@@ -503,30 +534,35 @@ namespace ShapeGrammar3D.Components
 
                         Point3d labelPt;
                         if (flipped)
-                            labelPt = center + axisDirs[m] * (radius + labelGap + labelTextWidth);
+                            labelPt = c + axisDirs[m] * (radius + labelGap + labelTextWidth);
                         else
-                            labelPt = center + axisDirs[m] * (radius + labelGap);
+                            labelPt = c + axisDirs[m] * (radius + labelGap);
 
+                        Plane namePl = new Plane(labelPt, xdir, ydir);
+                        namePl.Transform(dispXf);
                         _axisLabels.Add(new RadarLabel
                         {
-                            Position = labelPt,
+                            Position = namePl.Origin,
                             Text = metricNames[m],
-                            XDir = xdir,
-                            YDir = ydir
+                            XDir = namePl.XAxis,
+                            YDir = namePl.YAxis
                         });
 
-                        Point3d valuePt = labelPt - ydir * _textHeight * 1.3;
+                        Plane valPl = new Plane(labelPt - ydir * _textHeight * 1.3, xdir, ydir);
+                        valPl.Transform(dispXf);
                         _axisLabels.Add(new RadarLabel
                         {
-                            Position = valuePt,
+                            Position = valPl.Origin,
                             Text = string.Format("{0:F3} ({1:F2})", vals[m], clampedNorm),
-                            XDir = xdir,
-                            YDir = ydir
+                            XDir = valPl.XAxis,
+                            YDir = valPl.YAxis
                         });
                     }
 
                     if (polygonPts.Count > 0)
                     {
+                        for (int pi = 0; pi < polygonPts.Count; pi++)
+                            polygonPts[pi].Transform(dispXf);
                         polygonPts.Add(polygonPts[0]);
                         Polyline pl = new Polyline(polygonPts);
                         polyTree.Append(new GH_Curve(pl.ToNurbsCurve()), outPath);
@@ -537,13 +573,14 @@ namespace ShapeGrammar3D.Components
                         && genClust.TryGetValue(indIdx, out int cid))
                         clustId = cid;
 
-                    Point3d clPt = center + new Vector3d(0, -radius * 1.25, 0);
+                    Plane clPl = new Plane(c + new Vector3d(0, -radius * 1.25, 0), Vector3d.XAxis, Vector3d.YAxis);
+                    clPl.Transform(dispXf);
                     _clusterLabels.Add(new RadarLabel
                     {
-                        Position = clPt,
+                        Position = clPl.Origin,
                         Text = string.Format("C{0} [G{1} I{2}]", clustId, gen, indIdx),
-                        XDir = Vector3d.XAxis,
-                        YDir = Vector3d.YAxis
+                        XDir = clPl.XAxis,
+                        YDir = clPl.YAxis
                     });
 
                     row++;
@@ -555,7 +592,7 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(0, axesTree);
             DA.SetDataTree(1, polyTree);
 
-            string normMode = hasDomains ? "user-defined domains" : "observed-max fallback";
+            string normMode = hasDomains ? "user-defined domains" : "observed min–max";
             string info = string.Format(
                 "Radar Charts: {0}\nAxes: {1}\nGenerations shown: {2}\n" +
                 "Radius: {3}\nText Height: {4}\nNormalization: {5}\nLabels: {6}\nClusters: {7}",
@@ -567,7 +604,7 @@ namespace ShapeGrammar3D.Components
             DA.SetData(2, info);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
 
         public override Guid ComponentGuid
             => new Guid("F6A7B8C9-0D1E-2F3A-4B5C-6D7E8F9A0B12");

@@ -46,6 +46,7 @@ namespace ShapeGrammar3D.Classes
         public static int RULE020_MARKER = -20;
         public static int RULE030_MARKER = -30;
         public static int RULE031_MARKER = -31;
+        public static int RULE032_MARKER = -32;
         public static int RULE040_MARKER = -40;
         public static int RULE041_MARKER = -41;
         public static int RULE050_MARKER = -50;

@@ -25,9 +25,12 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter", GH_ParamAccess.list);
-            pManager.AddGenericParameter("Genotype", "Genotype", "Genotype/Chromosome", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Initial shape", "Shape",
+                "Starting SG_Shape (e.g. from Assembly) before rules are applied.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Rules", "Rules",
+                "Ordered list of automatic rules (SG_Rule) including markers for chromosome segments.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Genotype", "GT",
+                "SG_Genotype or compatible wrapper: integer + double genes consumed by the rules.", GH_ParamAccess.item);
 
         }
 
@@ -36,7 +39,8 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "SG Assembly", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Derived shape", "Shape",
+                "SG_Shape after applying every rule once using the supplied genotype.", GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -108,9 +112,8 @@ namespace ShapeGrammar3D.Components
             return sorted;
         }
 
-        /// <summary>
-        /// Gets the unique ID for this component. Do not change this ID after release.
-        /// </summary>
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("676601C2-219B-4265-B77A-C981DB51982C"); }

@@ -5,6 +5,7 @@ using Rhino.Display;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Elements;
+using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -15,7 +16,8 @@ namespace ShapeGrammar3D.Components
     /// <summary>
     /// Top-K interactive picker. Reads an Assembly, picks K candidates from
     /// the last generation according to the selected mode, lays them out as
-    /// scaled-down anchored previews next to the input init curve, and lets
+    /// scaled-down anchored previews stacked along +Z relative to the init curve,
+    /// and lets
     /// the designer pick one (Pick Index) to output its lines + cross-section
     /// extrusion meshes for downstream Grasshopper use.
     ///
@@ -33,7 +35,7 @@ namespace ShapeGrammar3D.Components
 
         public GrammarInterpreter_TopKPicker()
           : base("Grammar Interpreter Top-K Picker", "GI_TopK",
-              "Picks top-K candidates from Assembly and previews them as scaled mini-structures next to the input init curve. The Pick Index input outputs lines + section meshes for the chosen one.",
+              "Picks top-K candidates from Assembly and previews them as scaled mini-structures stacked along world Z above the input init curve (Preview Spacing steps along Z). The Pick Index input outputs lines + section meshes for the chosen one.",
               UT.CAT, UT.GR_DATA_PREVIEW)
         {
         }
@@ -47,11 +49,15 @@ namespace ShapeGrammar3D.Components
                 GH_ParamAccess.item, 0);                                                                                              // 2
             pManager.AddIntegerParameter("K", "K", "Number of preview candidates.", GH_ParamAccess.item, 5);                          // 3
             pManager.AddIntegerParameter("Pick Index", "Pick", "Index (0..K-1) of the candidate to output as the picked structure.", GH_ParamAccess.item, 0); // 4
-            pManager.AddNumberParameter("Preview Spacing", "dX", "Horizontal spacing between mini-previews [m].", GH_ParamAccess.item, 15.0); // 5
+            pManager.AddNumberParameter("Preview Spacing", "dZ", "Spacing step along world Z between mini-preview cells [m].", GH_ParamAccess.item, 15.0); // 5
             pManager.AddNumberParameter("Preview Cell Size", "Cell", "Side length [m] of the bounding cell each mini-preview is scaled to fit. 0 = no scaling.", GH_ParamAccess.item, 10.0); // 6
             pManager.AddBooleanParameter("Show Meshes", "Mesh", "Generate cross-section extrusion meshes for previews.", GH_ParamAccess.item, false); // 7
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient stacked previews (XY through layout origin) onto this plane.",
+                GH_ParamAccess.item); // 8
 
             pManager[1].Optional = true;
+            pManager[8].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -60,7 +66,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddLineParameter("All Preview Lines", "Lines", "Lines of all K mini-previews. Tree path {previewIndex}.", GH_ParamAccess.tree); // 1
             pManager.AddMeshParameter("All Preview Meshes", "Meshes", "Cross-section extrusion meshes for the previews (only when Show Meshes = true). Tree path {previewIndex}.", GH_ParamAccess.tree); // 2
             pManager.AddTextParameter("Labels", "Labels", "Per-preview label strings. Tree path {previewIndex}.", GH_ParamAccess.tree);                  // 3
-            pManager.AddPointParameter("Label Points", "LabelPts", "Anchor point for each label (top of each mini-preview cell).", GH_ParamAccess.tree); // 4
+            pManager.AddPointParameter("Label Points", "LabelPts", "Anchor point for each label (offset upward in Z above each mini-preview cell).", GH_ParamAccess.tree); // 4
             pManager.AddLineParameter("Picked Lines", "PickL", "Element lines of the picked structure (in original world coordinates).", GH_ParamAccess.list); // 5
             pManager.AddMeshParameter("Picked Meshes", "PickM", "Cross-section extrusion meshes of the picked structure.", GH_ParamAccess.list);             // 6
             pManager.AddTextParameter("Picked Info", "PickInfo", "Stats of the picked individual.", GH_ParamAccess.item);                                    // 7
@@ -128,12 +134,15 @@ namespace ShapeGrammar3D.Components
             if (initCurve != null && initCurve.IsValid)
             {
                 var bb = initCurve.GetBoundingBox(true);
-                origin = new Point3d(bb.Min.X, bb.Max.Y + spacing, bb.Center.Z);
+                // First stacked cell sits above the curve in Z; XY aligned to curve centroid.
+                origin = new Point3d(bb.Center.X, bb.Center.Y, bb.Max.Z + spacing);
             }
             else
             {
                 origin = Point3d.Origin;
             }
+
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 8, origin);
 
             // ── Build previews ────────────────────────────────────────
             var linesTree = new GH_Structure<GH_Line>();
@@ -191,6 +200,21 @@ namespace ShapeGrammar3D.Components
             }
             info.AppendLine();
             info.AppendLine("Picked: " + pickedInfo);
+
+            if (!dispXf.IsIdentity)
+            {
+                linesTree = PreviewLayoutTransforms.TransformLineTree(linesTree, dispXf);
+                meshesTree = PreviewLayoutTransforms.TransformMeshTree(meshesTree, dispXf);
+                labelPtsTree = PreviewLayoutTransforms.TransformPointTree(labelPtsTree, dispXf);
+                for (int li = 0; li < _viewportLabels.Count; li++)
+                {
+                    var vl = _viewportLabels[li];
+                    Point3d a = vl.anchor;
+                    a.Transform(dispXf);
+                    _viewportLabels[li] = (a, vl.text, vl.color);
+                }
+                _previewBounds.Transform(dispXf);
+            }
 
             DA.SetData(0, info.ToString());
             DA.SetDataTree(1, linesTree);
@@ -260,7 +284,7 @@ namespace ShapeGrammar3D.Components
 
             double scale = 1.0;
             Vector3d translation;
-            Point3d cellAnchor = origin + new Vector3d(slot * (cellSize + spacing), 0, 0);
+            Point3d cellAnchor = origin + new Vector3d(0, 0, slot * (cellSize + spacing));
 
             if (bb.IsValid && cellSize > 1e-9)
             {
@@ -293,7 +317,7 @@ namespace ShapeGrammar3D.Components
                 return copy;
             }).ToList();
 
-            Point3d cellTopCenter = cellAnchor + new Vector3d(0, cellSize * 0.6, 0);
+            Point3d cellTopCenter = cellAnchor + new Vector3d(0, 0, cellSize * 0.6);
             return (outLines, outMeshes, cellAnchor, cellTopCenter);
         }
 

@@ -10,10 +10,11 @@ namespace ShapeGrammar3D
         public override string Name => "ShapeGrammar3D";
 
         //Return a 24x24 pixel bitmap to represent this GHA library.
-        public override Bitmap Icon => null;
+        public override Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
 
         //Return a short string describing the purpose of this GHA library.
-        public override string Description => "";
+        public override string Description =>
+            "Shape Grammar 3D: assembly, loads, rules, GA interpreters, and structural previews for Grasshopper.";
 
         public override Guid Id => new Guid("83244308-313c-44b4-8ab8-af98a582266f");
 

@@ -15,7 +15,7 @@ namespace ShapeGrammar3D.Components
     {
         private struct TableTextLabel
         {
-            public Point3d Position;
+            public Plane TextPlane;
             public string Text;
         }
 
@@ -38,10 +38,7 @@ namespace ShapeGrammar3D.Components
 
             Color textColor = Color.Black;
             foreach (var lbl in _labels)
-            {
-                Plane pl = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
-                args.Display.Draw3dText(lbl.Text, textColor, pl, _textHeight, "Arial");
-            }
+                args.Display.Draw3dText(lbl.Text, textColor, lbl.TextPlane, _textHeight, "Arial");
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
@@ -88,6 +85,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Crowding", "Crowd",
                 "NSGA-II crowding distance {generation}(individual) from Auto4. With Rank, shows selection order: lower rank then higher crowding.",
                 GH_ParamAccess.tree);                                                                  // 16
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient table (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                GH_ParamAccess.item);                                                              // 17
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
@@ -101,6 +101,7 @@ namespace ShapeGrammar3D.Components
             pManager[14].Optional = true;
             pManager[15].Optional = true;
             pManager[16].Optional = true;
+            pManager[17].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -157,6 +158,8 @@ namespace ShapeGrammar3D.Components
             DA.GetDataTree(14, out GH_Structure<GH_Number> objFeasTree);
             DA.GetDataTree(15, out GH_Structure<GH_Integer> rankTree);
             DA.GetDataTree(16, out GH_Structure<GH_Number> crowdingTree);
+
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 17, insertPt);
 
             var fitByGenInd = ParseFlatTree(fitnessTree);
             var crowdingByGenInd = ParseFlatTree(crowdingTree);
@@ -253,17 +256,19 @@ namespace ShapeGrammar3D.Components
                     TB_Model model = modelBranch[i].Value;
                     if (model.Nodes == null) continue;
 
-                    Point3d anchor = new Point3d(
+                    Point3d anchorLayout = new Point3d(
                         insertPt.X + col * xSpacing,
                         insertPt.Y - row * ySpacing,
                         insertPt.Z);
 
                     GH_Path outPath = new GH_Path(col, row);
-                    tablePtsTree.Append(new GH_Point(anchor), outPath);
+                    Point3d anchorOut = anchorLayout;
+                    anchorOut.Transform(dispXf);
+                    tablePtsTree.Append(new GH_Point(anchorOut), outPath);
 
                     int lineIdx = 0;
 
-                    AddLabel(anchor, lineH, ref lineIdx,
+                    AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                         string.Format("--- G{0} I{1} ---", genIdx, i));
 
                     int resolvedLC = ResolveLoadCase(model, lcIndex);
@@ -281,27 +286,27 @@ namespace ShapeGrammar3D.Components
                             }
                         }
                     }
-                    AddLabel(anchor, lineH, ref lineIdx,
+                    AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                         string.Format("MaxDisp: {0:F4}", maxDisp));
 
                     if (fitByGenInd.TryGetValue(genIdx, out var genFit)
                         && genFit.TryGetValue(i, out double fitVal))
                     {
-                        AddLabel(anchor, lineH, ref lineIdx,
+                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                             string.Format("Fitness: {0:F4}", fitVal));
                     }
 
                     if (volByGenInd.TryGetValue(genIdx, out var genVol)
                         && genVol.TryGetValue(i, out double volVal))
                     {
-                        AddLabel(anchor, lineH, ref lineIdx,
+                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                             string.Format("AvgUtil Dev: {0:F4}", volVal));
                     }
 
                     if (feasByGenInd.TryGetValue(genIdx, out var genFeas)
                         && genFeas.TryGetValue(i, out double feasVal))
                     {
-                        AddLabel(anchor, lineH, ref lineIdx,
+                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                             string.Format("Feasibility: {0:F4}", feasVal));
                     }
 
@@ -311,7 +316,7 @@ namespace ShapeGrammar3D.Components
                         for (int m = 0; m < metVals.Length; m++)
                         {
                             string name = (m < metricNames.Count) ? metricNames[m] : string.Format("M{0}", m);
-                            AddLabel(anchor, lineH, ref lineIdx,
+                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                                 string.Format("{0}: {1:F4}", name, metVals[m]));
                         }
                     }
@@ -319,21 +324,21 @@ namespace ShapeGrammar3D.Components
                     if (clusterByGenInd.TryGetValue(genIdx, out var genClust)
                         && genClust.TryGetValue(i, out int clustId))
                     {
-                        AddLabel(anchor, lineH, ref lineIdx,
+                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                             string.Format("Cluster: {0}", clustId));
                     }
 
                     if (rankByGenInd.TryGetValue(genIdx, out var genRank)
                         && genRank.TryGetValue(i, out int rank))
                     {
-                        AddLabel(anchor, lineH, ref lineIdx,
+                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                             string.Format("Pareto Rank: {0}", rank));
                         if (crowdingByGenInd.TryGetValue(genIdx, out var genCrowd)
                             && genCrowd.TryGetValue(i, out double crowd))
-                            AddLabel(anchor, lineH, ref lineIdx,
+                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                                 string.Format("Crowding (selection): {0:F4}", crowd));
                         if (rank == 0)
-                            AddLabel(anchor, lineH, ref lineIdx,
+                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf,
                                 string.Format("Pareto front (Disp): {0:F4}", maxDisp));
                     }
 
@@ -352,11 +357,14 @@ namespace ShapeGrammar3D.Components
             DA.SetData(1, info);
         }
 
-        private void AddLabel(Point3d anchor, double lineH, ref int lineIdx, string text)
+        private void AddLabel(Point3d anchor, double lineH, ref int lineIdx, Transform dispXf, string text)
         {
+            Point3d pos = new Point3d(anchor.X, anchor.Y - lineIdx * lineH, anchor.Z);
+            Plane pl = new Plane(pos, Vector3d.XAxis, Vector3d.YAxis);
+            pl.Transform(dispXf);
             _labels.Add(new TableTextLabel
             {
-                Position = new Point3d(anchor.X, anchor.Y - lineIdx * lineH, anchor.Z),
+                TextPlane = pl,
                 Text = text
             });
             lineIdx++;
@@ -394,7 +402,7 @@ namespace ShapeGrammar3D.Components
             return lcIndex;
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
 
         public override Guid ComponentGuid
             => new Guid("A1B2C3D4-E5F6-7890-AB12-CD34EF567890");

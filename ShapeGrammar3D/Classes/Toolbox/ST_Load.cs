@@ -42,7 +42,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
     public class TB_Load_Point : TB_Load
     {
         // --- field ---
-        public Point3d Pt { get; private set; }
+        public Point3d Pt { get; set; }
         public List<double> Loads { get; } = new List<double>();
         public Node Node { get; set; } = null;
 
@@ -112,7 +112,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
     {
         public Param_Load() : base(
             new GH_InstanceDescription(
-                "Load", "load", "Load", Common.category, Common.sub_param
+                "Load", "load", "Nodal force/moment packet referencing a load case id.", Common.category, Common.sub_param
                 )
             )
         { }
@@ -123,8 +123,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         {
             get
             {
-                return null;
-                //Properties.Resources.icons_P_Load_P ;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
             }
         } //Set icon image
 

@@ -14,7 +14,7 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         public LineToElement()
           : base("LineToElement", "lnToEl",
-              "Creates a SH_Element from a Line",
+              "Create a 1D element (SG_Elem1D) from a line, assigned cross-section, and optional label.",
               UT.CAT, UT.GR_ELM)
         {
         }
@@ -24,9 +24,12 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddLineParameter("Initial Line", "initLine", "Line to be used in the simple grammar derivaiton.", GH_ParamAccess.item); // 0
-            pManager.AddGenericParameter("Cross Section", "crossSec", "Cross Section to assign the element", GH_ParamAccess.item); // 1
-            pManager.AddTextParameter("ElementName", "name", "Name of the element", GH_ParamAccess.item); // 2
+            pManager.AddLineParameter("Initial Line", "initLine",
+                "Member axis as a line; stored as Init_Crv and used in grammar derivation.", GH_ParamAccess.item); // 0
+            pManager.AddGenericParameter("Cross Section", "crossSec",
+                "Beam section (SH_CrossSection_Beam), e.g. rectangle or RHS preset.", GH_ParamAccess.item); // 1
+            pManager.AddTextParameter("Element Name", "name",
+                "Optional tag for the element (used to target line loads by name).", GH_ParamAccess.item); // 2
 
             pManager[2].Optional = true;
         }
@@ -36,7 +39,8 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SH_Element", "sH_el", "An instance of a SH_Element", GH_ParamAccess.item); 
+            pManager.AddGenericParameter("SH_Element", "sH_el",
+                "The new SG_Elem1D instance to wire into Assembly.", GH_ParamAccess.item); 
         }
 
         /// <summary>

@@ -100,7 +100,8 @@ namespace ShapeGrammar3D.Classes
             SG_Shape iniShape,
             List<SG_Rule> rules,
             GrammarInterpreterSettings settings,
-            FeasibilitySettings feas)
+            FeasibilitySettings feas,
+            bool deepCopyOutputs = true)
         {
             var outcome = new EvaluationOutcome();
             if (population == null || population.Count == 0)
@@ -128,7 +129,12 @@ namespace ShapeGrammar3D.Classes
                     SG_Shape shape = iniShape.DeepCopy();
 
                     for (int j = 0; j < rules.Count; j++)
-                        rules[j].RuleOperation(ref shape, ref gt);
+                    {
+                        string msg = rules[j].RuleOperation(ref shape, ref gt);
+                        if (i == 0 && msg != null && (msg.Contains("wrong marker")
+                                                      || msg.Contains("0 struts")))
+                            outcome.Warnings.Add(msg);
+                    }
 
                     shape.RegisterElemsToNodes();
                     EnforceBoundaryConstraints(shape, rules);
@@ -213,8 +219,8 @@ namespace ShapeGrammar3D.Classes
                         SyncShapeSectionsFromModel(shape, finalModel);
 
                     outcome.EvaluatedPopulation.Add(individual);
-                    outcome.Shapes.Add(shape.DeepCopy());
-                    outcome.Models.Add(finalModel?.DeepCopy());
+                    outcome.Shapes.Add(deepCopyOutputs ? shape.DeepCopy() : shape);
+                    outcome.Models.Add(deepCopyOutputs ? finalModel?.DeepCopy() : finalModel);
                 }
                 catch (Exception ex)
                 {
@@ -267,14 +273,19 @@ namespace ShapeGrammar3D.Classes
             shape.Supports ??= new List<SG_Support>();
             shape.Supports.Clear();
 
-            var elemEndpoints = new HashSet<int>();
+            // Treat both endpoint and mid-element nodes as valid load-bearing FEM nodes.
+            var elemNodeIds = new HashSet<int>();
             if (shape.Elems != null)
             {
                 foreach (var e in shape.Elems)
                 {
-                    if (e?.Nodes == null) continue;
-                    foreach (var n in e.Nodes)
-                        if (n != null) elemEndpoints.Add(n.ID);
+                    if (e?.Nodes != null)
+                        foreach (var n in e.Nodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
+
+                    if (e is SG_Elem1D e1d && e1d.MidNodes != null)
+                        foreach (var n in e1d.MidNodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
                 }
             }
 
@@ -282,7 +293,7 @@ namespace ShapeGrammar3D.Classes
             {
                 if (nd?.Support == null) continue;
                 if (nd.Support.SupportCondition == 0) continue;
-                if (!elemEndpoints.Contains(nd.ID)) continue;
+                if (!elemNodeIds.Contains(nd.ID)) continue;
 
                 nd.Support.Pt = nd.Pt;
                 nd.Support.Node = nd;
@@ -290,21 +301,96 @@ namespace ShapeGrammar3D.Classes
             }
 
             var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
-            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+            Vector3d loadVec = initRule?.LoadVector ?? Vector3d.Zero;
             Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
+
+            // If the user supplied loads through the Assembly AND no init-rule load
+            // is configured, preserve them as-is. This is the path taken by the new
+            // curve+CurveLoad assembly: loads (including line loads) come from the
+            // input shape and must survive every GA generation.
+            bool hasUserLoads =
+                (shape.PointLoads != null && shape.PointLoads.Count > 0) ||
+                (shape.LineLoads  != null && shape.LineLoads.Count  > 0);
+            if (hasUserLoads)
+            {
+                shape.PointLoads ??= new List<SG_PointLoad>();
+                shape.LineLoads  ??= new List<SG_LineLoad>();
+                // Snap user point loads to the nearest existing FEM node so
+                // TB_Model.CheckLoads can resolve them to TB nodes.
+                var candidateNodes = new List<SG_Node>();
+                var seen = new HashSet<int>();
+                if (shape.Elems != null)
+                {
+                    foreach (var e in shape.Elems)
+                    {
+                        if (e?.Nodes != null)
+                        {
+                            foreach (var n in e.Nodes)
+                            {
+                                if (n == null || !seen.Add(n.ID)) continue;
+                                candidateNodes.Add(n);
+                            }
+                        }
+
+                        if (e is SG_Elem1D e1d && e1d.MidNodes != null)
+                        {
+                            foreach (var n in e1d.MidNodes)
+                            {
+                                if (n == null || !seen.Add(n.ID)) continue;
+                                candidateNodes.Add(n);
+                            }
+                        }
+                    }
+                }
+
+                if (candidateNodes.Count > 0)
+                {
+                    for (int i = shape.PointLoads.Count - 1; i >= 0; i--)
+                    {
+                        var pl = shape.PointLoads[i];
+                        if (pl == null)
+                        {
+                            shape.PointLoads.RemoveAt(i);
+                            continue;
+                        }
+
+                        SG_Node closest = null;
+                        double best = double.MaxValue;
+                        foreach (var n in candidateNodes)
+                        {
+                            double d = pl.Position.DistanceToSquared(n.Pt);
+                            if (d < best)
+                            {
+                                best = d;
+                                closest = n;
+                            }
+                        }
+
+                        if (closest == null)
+                        {
+                            shape.PointLoads.RemoveAt(i);
+                            continue;
+                        }
+
+                        pl.Position = closest.Pt;
+                    }
+                }
+                return;
+            }
 
             shape.PointLoads ??= new List<SG_PointLoad>();
             shape.PointLoads.Clear();
 
             if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
+                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec);
             }
             else
             {
+                if (loadVec.Length < 1e-12) loadVec = new Vector3d(0, 0, -100);
                 foreach (var nd in shape.Nodes)
                 {
-                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                    if (nd == null || !elemNodeIds.Contains(nd.ID)) continue;
                     shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
                 }
             }
