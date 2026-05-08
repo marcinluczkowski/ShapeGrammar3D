@@ -3,6 +3,7 @@ using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
+using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -57,11 +58,15 @@ namespace ShapeGrammar3D.Components
                 "Graph height in model units", GH_ParamAccess.item, 6.0);
             pManager.AddPointParameter("Insert Point", "Pt",
                 "Base point for graph", GH_ParamAccess.item, Point3d.Origin);
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient graph (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                GH_ParamAccess.item);
             pManager[3].Optional = true;
             pManager[4].Optional = true;
             pManager[5].Optional = true;
             pManager[6].Optional = true;
             pManager[7].Optional = true;
+            pManager[8].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -175,6 +180,7 @@ namespace ShapeGrammar3D.Components
             var sortedGens = fitData.Keys.OrderBy(g => g).ToList();
             int numGens = sortedGens.Count;
             Plane plane = new Plane(insertPt, Vector3d.XAxis, Vector3d.YAxis);
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 8, insertPt);
 
             var linesTree = new GH_Structure<GH_Line>();
             var colorsTree = new GH_Structure<GH_Colour>();
@@ -417,6 +423,30 @@ namespace ShapeGrammar3D.Components
                 });
             } // end for fi
 
+            if (!dispXf.IsIdentity)
+            {
+                linesTree = PreviewLayoutTransforms.TransformLineTree(linesTree, dispXf);
+                curvesBestTree = PreviewLayoutTransforms.TransformCurveTree(curvesBestTree, dispXf);
+                curvesWorstTree = PreviewLayoutTransforms.TransformCurveTree(curvesWorstTree, dispXf);
+                curvesAvgTree = PreviewLayoutTransforms.TransformCurveTree(curvesAvgTree, dispXf);
+                curvesClusterTree = PreviewLayoutTransforms.TransformCurveTree(curvesClusterTree, dispXf);
+                for (int li = 0; li < _labels.Count; li++)
+                {
+                    var L = _labels[li];
+                    var textPl = new Plane(L.Position, L.XDir, L.YDir);
+                    textPl.Transform(dispXf);
+                    _labels[li] = new GraphLabel
+                    {
+                        Position = textPl.Origin,
+                        XDir = textPl.XAxis,
+                        YDir = textPl.YAxis,
+                        Text = L.Text,
+                        Height = L.Height,
+                        Color = L.Color
+                    };
+                }
+            }
+
             DA.SetDataTree(0, linesTree);
             DA.SetDataTree(1, colorsTree);
             DA.SetData(2, string.Format("Convergence from Assembly: {0} gens. Best/Worst/Avg + cluster curves.", numGens));
@@ -543,7 +573,7 @@ namespace ShapeGrammar3D.Components
             return Color.FromArgb(0, g, b);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
         public override Guid ComponentGuid => new Guid("A1B2C3D4-E5F6-7890-ABCD-EF0123456781");
     }
 }

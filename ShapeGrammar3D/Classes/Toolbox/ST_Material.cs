@@ -80,7 +80,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
     {
         public Param_Material() : base(
             new GH_InstanceDescription(
-                "Material", "Mat", "Material properties", Common.category, Common.sub_param
+                "Material", "Mat", "Isotropic steel-like material (E, G, density, yield) for sections.", Common.category, Common.sub_param
                 )
             )
         { }
@@ -88,7 +88,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public override Guid ComponentGuid => new Guid("91bbf942-086c-4470-82c8-7c7bb78b841f");
 
         protected override System.Drawing.Bitmap Icon { get {
-                return null; // Properties.Resources.icons_P_Mat; 
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
             } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Material> values)

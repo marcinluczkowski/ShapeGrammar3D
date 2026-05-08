@@ -283,6 +283,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
                     double val = lds[i] * Math.Pow(10, 3);
                     // [kN]-->[N], [kNm]-->[Nm]
 
+                    if (pl.Node?.Id == null) continue;
                     loadMX[N_DOF * pl.Node.Id.Value + i, lc] += val;
                 }
             }

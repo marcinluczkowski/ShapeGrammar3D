@@ -361,17 +361,16 @@ namespace ShapeGrammar3D.Classes.Toolbox
     {
         public Param_Element1D() : base(
             new GH_InstanceDescription(
-                "Element_1D", "Elem1D", "Element 1D", Common.category, Common.sub_param
+                "Element_1D", "Elem1D", "Straight prismatic member between two nodes with section, orientation, and metadata.", Common.category, Common.sub_param
                 )
             )
         { }
 
         public override Guid ComponentGuid => new Guid("643b9efa-4583-436a-bb37-3d94f47f91e3");
 
-        protected override System.Drawing.Bitmap Icon {
-            get { return null;// Properties.Resources.icons_P_Elem1D
-                              }
-        }  //Set icon image
+        protected override System.Drawing.Bitmap Icon { get {
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+            } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Element_1D> values)
         {

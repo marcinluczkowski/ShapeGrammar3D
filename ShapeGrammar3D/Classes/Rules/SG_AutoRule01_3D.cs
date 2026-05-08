@@ -16,8 +16,34 @@ namespace ShapeGrammar3D.Classes.Rules
     {
         // --- properties ---
         public List<string> ElemNames { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Maximum allowed segment length. Together with <see cref="MinSegmentLength"/>
+        /// this defines the *range* of allowed division counts per beam:
+        ///   numSegMin = ceil(len / MaxSegmentLength)   (guaranteed minimum subdivisions)
+        ///   numSegMax = floor(len / MinSegmentLength)  (allowed upper bound)
+        /// 0 = use legacy gene-based single-split mode.
+        /// </summary>
         public double MaxSegmentLength { get; set; }
+
+        /// <summary>
+        /// Minimum allowed segment length. When &gt; 0 and &lt; MaxSegmentLength, the GA
+        /// gene picks the *number* of subdivisions in [numSegMin, numSegMax] for each beam,
+        /// giving real variety in division counts across the population. When 0 (default),
+        /// every individual gets exactly numSegMin subdivisions and only the gene-driven
+        /// phase offset varies node positions.
+        /// </summary>
+        public double MinSegmentLength { get; set; } = 0.0;
+
         private readonly double[] bounds = { 0.2, 0.8 };
+
+        /// <summary>
+        /// When true and MaxSegmentLength > 0, interior node positions are shifted
+        /// by a per-element gene-driven phase offset instead of being perfectly uniform.
+        /// This gives the GA variety in node placement while still guaranteeing the
+        /// minimum number of segments per element.
+        /// </summary>
+        public bool RandomizePositions { get; set; } = true;
 
         // --- constructors --- 
         public SG_AutoRule01_3D()
@@ -27,12 +53,14 @@ namespace ShapeGrammar3D.Classes.Rules
             RuleMarker = UT.RULE010_MARKER;
         }
 
-        public SG_AutoRule01_3D(List<string> _eNames, double maxSegLen = 0)
+        public SG_AutoRule01_3D(List<string> _eNames, double maxSegLen = 0, bool randomizePositions = true, double minSegLen = 0)
         {
             RuleState = State.alpha;
             Name = "SG_AutoRule_01_3D";
             ElemNames = _eNames;
             MaxSegmentLength = maxSegLen;
+            MinSegmentLength = minSegLen;
+            RandomizePositions = randomizePositions;
             RuleMarker = UT.RULE010_MARKER;
         }
 
@@ -41,8 +69,15 @@ namespace ShapeGrammar3D.Classes.Rules
 
         public override int GetChromosomeLength(SG_Shape shape)
         {
+            // MaxSegmentLength mode allocates 2 genes per element so the GA can independently control:
+            //   gene[2i]   → number of subdivisions  (used only when MinSegmentLength range is active)
+            //   gene[2i+1] → phase offset            (used only when RandomizePositions is true)
+            // Gene-based mode keeps 1 gene per element (split position).
             if (MaxSegmentLength > 0)
-                return 2;
+            {
+                int elements = shape?.Elems?.Count ?? 0;
+                return Math.Max(11, 2 * elements + 2);
+            }
             return base.GetChromosomeLength(shape);
         }
 
@@ -60,38 +95,78 @@ namespace ShapeGrammar3D.Classes.Rules
                 return "Autorule010_3D - wrong marker";
 
             if (MaxSegmentLength > 0)
-                return DeterministicSubdivision(ref ss_ref);
+                return MaxSegSubdivision(ref ss_ref, ref gt, sid, eid);
 
             return GeneBasedSubdivision(ref ss_ref, ref gt, sid, eid);
         }
 
         /// <summary>
-        /// Deterministic mode: subdivide every beam until all segments ≤ MaxSegmentLength.
+        /// MaxSegmentLength mode. For every beam:
+        ///   numSegMin = ceil(len / MaxSegmentLength)              (lower bound — always guaranteed)
+        ///   numSegMax = floor(len / MinSegmentLength) when set    (upper bound)
+        /// Two genes per element drive variety:
+        ///   gene[2i]   → numSeg in [numSegMin, numSegMax]
+        ///   gene[2i+1] → phase offset that shifts interior nodes away from the uniform grid
+        /// First-generation random doubles therefore spread division counts across the full range,
+        /// not just the minimum.
         /// </summary>
-        private string DeterministicSubdivision(ref SG_Shape ss_ref)
+        private string MaxSegSubdivision(ref SG_Shape ss_ref, ref SG_Genotype gt, int sid, int eid)
         {
+            var selectedDGenes = gt.DGenes.GetRange(sid, eid - sid);
+
             int totalNewNodes = 0;
             var removeIds = new List<int>();
-            var newElems = new List<SG_Element>();
+            var newElems  = new List<SG_Element>();
 
-            foreach (var e in new List<SG_Element>(ss_ref.Elems))
+            var elemList = new List<SG_Element>(ss_ref.Elems);
+            for (int i = 0; i < elemList.Count; i++)
             {
-                var elem = e as SG_Elem1D;
+                var elem = elemList[i] as SG_Elem1D;
                 if (elem?.Crv == null) continue;
 
                 double len = elem.Crv.GetLength();
-                if (len <= MaxSegmentLength || len < UT.MIN_SEG_LEN * 2)
-                    continue;
+                if (len <= MaxSegmentLength || len < UT.MIN_SEG_LEN * 2) continue;
 
-                int numSeg = (int)Math.Ceiling(len / MaxSegmentLength);
+                // --- 1. Pick number of segments in [numSegMin, numSegMax] ---
+                int numSegMin = Math.Max(2, (int)Math.Ceiling(len / MaxSegmentLength));
+                int numSegMax = numSegMin;
+                if (MinSegmentLength > 0 && MinSegmentLength < MaxSegmentLength)
+                {
+                    int candidateMax = (int)Math.Floor(len / Math.Max(MinSegmentLength, UT.MIN_SEG_LEN));
+                    numSegMax = Math.Max(numSegMin, candidateMax);
+                }
+
+                int countGeneIdx = 2 * i;
+                int phaseGeneIdx = 2 * i + 1;
+
+                int numSeg = numSegMin;
+                if (numSegMax > numSegMin && countGeneIdx < selectedDGenes.Count)
+                {
+                    double gCount = selectedDGenes[countGeneIdx]; // [0, 1]
+                    // Uniform integer pick — guarantees the first generation spans coarse → fine.
+                    numSeg = numSegMin + (int)Math.Floor(gCount * (numSegMax - numSegMin + 1));
+                    if (numSeg > numSegMax) numSeg = numSegMax;
+                    if (numSeg < numSegMin) numSeg = numSegMin;
+                }
                 if (numSeg < 2) continue;
+
+                // --- 2. Pick phase offset (shifts uniform grid for natural-looking irregularity) ---
+                double phase = 0.0;
+                if (RandomizePositions && phaseGeneIdx < selectedDGenes.Count)
+                {
+                    double g = selectedDGenes[phaseGeneIdx]; // [0, 1]
+                    double maxPhase = Math.Max(0.0, 1.0 - UT.MIN_SEG_LEN * numSeg / len);
+                    maxPhase = Math.Min(0.5, maxPhase);
+                    phase = (g - 0.5) * 2.0 * maxPhase;
+                }
 
                 Interval domain = elem.Crv.Domain;
 
+                // Normalised interior node positions: t_k = (k + phase) / numSeg, k = 1..numSeg-1
                 var segNodes = new List<SG_Node> { elem.Nodes[0] };
                 for (int k = 1; k < numSeg; k++)
                 {
-                    double t = (double)k / numSeg;
+                    double t = Math.Clamp((k + phase) / numSeg, UT.MIN_SEG_LEN / len, 1.0 - UT.MIN_SEG_LEN / len);
                     SG_Node nd = SG_Node.CreateNodeOnCrv(elem, t, ss_ref.nodeCount);
                     ss_ref.Nodes.Add(nd);
                     ss_ref.nodeCount++;
@@ -100,12 +175,20 @@ namespace ShapeGrammar3D.Classes.Rules
                 }
                 segNodes.Add(elem.Nodes[1]);
 
+                // Build sub-elements between consecutive nodes
                 for (int k = 0; k < numSeg; k++)
                 {
-                    double t0 = domain.ParameterAt((double)k / numSeg);
-                    double t1 = domain.ParameterAt((double)(k + 1) / numSeg);
+                    double tStart = k == 0
+                        ? 0.0
+                        : Math.Clamp((k + phase) / numSeg, UT.MIN_SEG_LEN / len, 1.0 - UT.MIN_SEG_LEN / len);
+                    double tEnd = k == numSeg - 1
+                        ? 1.0
+                        : Math.Clamp((k + 1 + phase) / numSeg, UT.MIN_SEG_LEN / len, 1.0 - UT.MIN_SEG_LEN / len);
 
-                    Curve subCrv = elem.Crv.Trim(t0, t1);
+                    double p0 = domain.ParameterAt(tStart);
+                    double p1 = domain.ParameterAt(tEnd);
+
+                    Curve subCrv = elem.Crv.Trim(p0, p1);
                     if (subCrv == null)
                     {
                         Line subLn = new Line(segNodes[k].Pt, segNodes[k + 1].Pt);
@@ -118,7 +201,6 @@ namespace ShapeGrammar3D.Classes.Rules
                         ss_ref.elementCount, elem.Name, elem.CrossSection
                     ) { Autorule = UT.RULE010_MARKER };
                     ne.Joined_Init_Crv = elem.Joined_Init_Crv;
-
                     newElems.Add(ne);
                     ss_ref.elementCount++;
                 }
@@ -130,7 +212,11 @@ namespace ShapeGrammar3D.Classes.Rules
             if (removeIds.Count > 0)
                 ss_ref.Elems = ss_ref.Elems.Where(e => !removeIds.Contains(e.ID)).ToList();
 
-            return $"Auto-rule 01_3D: {totalNewNodes} nodes added (maxSeg={MaxSegmentLength:F1}), {ss_ref.Elems.Count} elems total";
+            string posMode = RandomizePositions ? "phase-shift" : "uniform";
+            string countMode = (MinSegmentLength > 0 && MinSegmentLength < MaxSegmentLength)
+                ? $"count∈[{MinSegmentLength:F1}–{MaxSegmentLength:F1}m]"
+                : $"maxSeg={MaxSegmentLength:F1}m";
+            return $"Auto-rule 01_3D ({posMode}, {countMode}): {totalNewNodes} nodes added, {ss_ref.Elems.Count} elems total";
         }
 
         /// <summary>

@@ -13,7 +13,7 @@ namespace ShapeGrammar.Components
         /// </summary>
         public LineLoad()
           : base("LineLoad", "l_load",
-              "Line load on element",
+              "Uniform distributed load along one or more 1D elements (SG_LineLoad). Magnitude is load intensity per length (e.g. kN/m); optional element filter by name or ID.",
               UT.CAT, UT.GR_LD)
         {
         }
@@ -23,9 +23,11 @@ namespace ShapeGrammar.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddTextParameter("ElementIds", "e_id", "The element to apply the loads onto", GH_ParamAccess.item); // 0
-            pManager.AddIntegerParameter("LoadCase", "lc", "Load case that the load applies to", GH_ParamAccess.item, 0); // 1
-            pManager.AddVectorParameter("LoadVector", "loadvec", "The direction of the line load", GH_ParamAccess.item); // 2
+            pManager.AddTextParameter("Element filter", "e_id",
+                "Element Name or numeric ID to restrict the load; leave empty to apply to every element in the shape.", GH_ParamAccess.item); // 0
+            pManager.AddIntegerParameter("Load case", "lc", "Load case index stored on the load object.", GH_ParamAccess.item, 0); // 1
+            pManager.AddVectorParameter("Intensity", "q",
+                "Load intensity vector in global XYZ (e.g. kN/m along the member projection you care about).", GH_ParamAccess.item); // 2
 
             pManager[0].Optional = true;  // element ids are not necessary. If none are present the laod applies to all. 
         }
@@ -35,7 +37,8 @@ namespace ShapeGrammar.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SH_LineLoad", "load", "SH_Load for assembly", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Line Load", "LL",
+                "SG_LineLoad ready for Assembly (resolved to nodal forces in the structural model).", GH_ParamAccess.item);
         }
 
         /// <summary>

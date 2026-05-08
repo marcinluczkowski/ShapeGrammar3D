@@ -208,8 +208,12 @@ namespace ShapeGrammar3D.Components
             pManager.AddPointParameter("Insert Point", "Pt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddIntegerParameter("Load Case", "LC", "Load case for utilization (-1 = last)", GH_ParamAccess.item, -1);
             pManager.AddNumberParameter("Dot Radius", "DotR", "Radius of angle/intersection/dangling dots", GH_ParamAccess.item, 0.15);
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient layout (XY through Insert Pt) onto this plane.",
+                GH_ParamAccess.item);
             pManager[6].Optional = true;
             pManager[7].Optional = true;
+            pManager[8].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -275,6 +279,8 @@ namespace ShapeGrammar3D.Components
             DA.GetData(6, ref lcIndex);
             DA.GetData(7, ref dotR);
             _dotRadius = Math.Max(0.01, dotR);
+
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 8, insertPt);
 
             if (assembly.Config != null)
             {
@@ -566,6 +572,42 @@ namespace ShapeGrammar3D.Components
                 col++;
             }
 
+            if (!dispXf.IsIdentity)
+            {
+                lineTree = PreviewLayoutTransforms.TransformLineTree(lineTree, dispXf);
+                meshTree = PreviewLayoutTransforms.TransformMeshTree(meshTree, dispXf);
+                angleNodePtsTree = PreviewLayoutTransforms.TransformPointTree(angleNodePtsTree, dispXf);
+                labelPtTree = PreviewLayoutTransforms.TransformPointTree(labelPtTree, dispXf);
+                intPtsTree = PreviewLayoutTransforms.TransformPointTree(intPtsTree, dispXf);
+                boundaryMeshTree = PreviewLayoutTransforms.TransformMeshTree(boundaryMeshTree, dispXf);
+                for (int i = 0; i < _angleDots.Count; i++)
+                {
+                    var d = _angleDots[i];
+                    Point3d p = d.Position;
+                    p.Transform(dispXf);
+                    _angleDots[i] = new DotMark { Position = p, Colour = d.Colour };
+                }
+                for (int i = 0; i < _intersectDots.Count; i++)
+                {
+                    var d = _intersectDots[i];
+                    Point3d p = d.Position;
+                    p.Transform(dispXf);
+                    _intersectDots[i] = new DotMark { Position = p, Colour = d.Colour };
+                }
+                for (int i = 0; i < _danglingDots.Count; i++)
+                {
+                    var d = _danglingDots[i];
+                    Point3d p = d.Position;
+                    p.Transform(dispXf);
+                    _danglingDots[i] = new DotMark { Position = p, Colour = d.Colour };
+                }
+                foreach (var b in _boundaryItems)
+                {
+                    if (b.Mesh != null)
+                        b.Mesh.Transform(dispXf);
+                }
+            }
+
             DA.SetDataTree(0, lineTree);
             DA.SetDataTree(1, meshTree);
             DA.SetDataTree(2, vDangTree);
@@ -764,7 +806,7 @@ namespace ShapeGrammar3D.Components
             return mesh;
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
         public override Guid ComponentGuid => new Guid("B1C2D3E4-F5A6-4B7C-8D9E-0F1A2B3C4D5E");
     }
 }

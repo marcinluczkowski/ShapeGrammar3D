@@ -134,9 +134,9 @@ namespace ShapeGrammar3D.Classes
                 ShapeMetricType.TotalStructuralVolume => "Total Structural Volume",
                 ShapeMetricType.MaxNodeSpan           => "Max Node Span",
                 ShapeMetricType.Compactness           => "Compactness (L/diag)",
-                ShapeMetricType.ConvexHullAreaXY      => "Hull Area XY",
-                ShapeMetricType.HullAspectRatioXY     => "Hull Aspect XY",
-                ShapeMetricType.MeshAreaFromLines     => "Mesh Area (from lines)",
+                ShapeMetricType.ConvexHullAreaXY      => "Hull Area (struct. footprint)",
+                ShapeMetricType.HullAspectRatioXY     => "Hull Aspect (struct. footprint)",
+                ShapeMetricType.MeshAreaFromLines     => "Mesh Area (struct. footprint)",
                 ShapeMetricType.ConvexHullVolume      => "Convex Hull Volume",
                 ShapeMetricType.ShrinkWrapVolume      => "ShrinkWrap Volume",
                 _ => "Unknown"
@@ -272,10 +272,10 @@ namespace ShapeGrammar3D.Classes
             return diag > 0.0 ? TotalLength(shape) / diag : 0.0;
         }
 
-        /// <summary>10 – Convex hull area in XY plane (footprint/envelope).</summary>
+        /// <summary>10 – Convex hull of node footprint on the structural horizontal plane (world Z normal, X along initial RULE010 / first beam direction).</summary>
         public static double ConvexHullAreaXY(SG_Shape shape)
         {
-            var pts = GetXYPoints(shape);
+            var pts = GetStructuralFootprint2DPoints(shape);
             if (pts.Count < 3)
                 return 0.0;
 
@@ -286,10 +286,10 @@ namespace ShapeGrammar3D.Classes
             return PolygonArea2D(hull);
         }
 
-        /// <summary>11 – Hull aspect ratio in XY (width/length, 1=square, &lt;1=elongated).</summary>
+        /// <summary>11 – Hull aspect on structural footprint plane (1=square, &lt;1=elongated).</summary>
         public static double HullAspectRatioXY(SG_Shape shape)
         {
-            var pts = GetXYPoints(shape);
+            var pts = GetStructuralFootprint2DPoints(shape);
             if (pts.Count < 3)
                 return 0.0;
 
@@ -310,12 +310,148 @@ namespace ShapeGrammar3D.Classes
             return major > 0 ? minor / major : 0.0;
         }
 
-        /// <summary>12 – Area from mesh/surface created from lines (JoinCurves → planar breps). More accurate than convex hull for concave structures.</summary>
+        /// <summary>12 – Planar face area from projected line network on the structural footprint plane.</summary>
         public static double MeshAreaFromLines(SG_Shape shape)
         {
             if (shape?.Elems == null || shape.Elems.Count == 0) return 0.0;
             var (area, _) = MeshAreaFromLinesWithMesh(shape);
             return area;
+        }
+
+        /// <summary>
+        /// Plane for hull / mesh-from-lines metrics: X along the horizontal part of the initial RULE010 beam
+        /// (else first 1D curve). Y is chosen so projections are not degenerate — either horizontal plan
+        /// (normal ≈ world Z) or a vertical plane through that beam and world-up (e.g. XZ layouts with constant Y).
+        /// </summary>
+        public static bool TryGetStructuralFootprintPlane(SG_Shape shape, out Plane plane)
+        {
+            plane = Plane.Unset;
+            if (shape?.Nodes == null || shape.Nodes.Count == 0)
+                return false;
+
+            Point3d origin = Point3d.Origin;
+            int c = 0;
+            foreach (var n in shape.Nodes)
+            {
+                if (n == null) continue;
+                origin += n.Pt;
+                c++;
+            }
+            if (c == 0) return false;
+            origin /= c;
+
+            var nodePts = new List<Point3d>(c);
+            foreach (var n in shape.Nodes)
+            {
+                if (n == null) continue;
+                nodePts.Add(n.Pt);
+            }
+
+            Vector3d tBeam = GetInitialBeamTangent3D(shape);
+            Vector3d zUp = Vector3d.ZAxis;
+
+            Vector3d beamX = tBeam - zUp * (tBeam * zUp);
+            if (beamX.Length < 1e-9)
+            {
+                beamX = Vector3d.CrossProduct(Vector3d.XAxis, tBeam);
+                if (beamX.Length < 1e-9)
+                    beamX = Vector3d.CrossProduct(Vector3d.YAxis, tBeam);
+                if (beamX.Length < 1e-9)
+                    return false;
+            }
+            beamX.Unitize();
+
+            Vector3d yPlan = Vector3d.CrossProduct(zUp, beamX);
+            if (yPlan.Length < 1e-9)
+                yPlan = Vector3d.YAxis;
+            else
+                yPlan.Unitize();
+
+            Vector3d yElev = zUp - beamX * (zUp * beamX);
+            if (yElev.Length < 1e-9)
+            {
+                yElev = Vector3d.CrossProduct(beamX, tBeam);
+                if (yElev.Length < 1e-9)
+                    yElev = zUp;
+            }
+            yElev.Unitize();
+
+            double extentPlan = FootprintAxisAlignedRectArea(origin, beamX, yPlan, nodePts);
+            double extentElev = FootprintAxisAlignedRectArea(origin, beamX, yElev, nodePts);
+
+            Vector3d yAxis = extentElev > extentPlan * (1.0 + 1e-9) ? yElev : yPlan;
+            plane = new Plane(origin, beamX, yAxis);
+            return plane.IsValid;
+        }
+
+        /// <summary>Product of (max−min) extents along two orthonormal axes through <paramref name="origin"/>.</summary>
+        private static double FootprintAxisAlignedRectArea(Point3d origin, Vector3d xDir, Vector3d yDir, List<Point3d> pts)
+        {
+            if (pts == null || pts.Count == 0) return 0;
+            double minU = double.MaxValue, maxU = double.MinValue, minV = double.MaxValue, maxV = double.MinValue;
+            foreach (var p in pts)
+            {
+                Vector3d d = p - origin;
+                double u = d * xDir;
+                double v = d * yDir;
+                if (u < minU) minU = u;
+                if (u > maxU) maxU = u;
+                if (v < minV) minV = v;
+                if (v > maxV) maxV = v;
+            }
+            return Math.Max(0, maxU - minU) * Math.Max(0, maxV - minV);
+        }
+
+        /// <summary>Unit tangent of the “main” beam: RULE010 <c>Init_Crv</c>, else first 1D curve or chord.</summary>
+        private static Vector3d GetInitialBeamTangent3D(SG_Shape shape)
+        {
+            var beam = shape.Elems?.OfType<SG_Elem1D>()
+                .FirstOrDefault(e => e.Autorule == UT.RULE010_MARKER && e.Init_Crv != null);
+            if (beam == null)
+                beam = shape.Elems?.OfType<SG_Elem1D>().FirstOrDefault(e => e.Crv != null);
+            if (beam == null)
+                beam = shape.Elems?.OfType<SG_Elem1D>().FirstOrDefault();
+
+            Vector3d d = Vector3d.XAxis;
+            if (beam?.Init_Crv != null)
+            {
+                var crv = beam.Init_Crv;
+                double t = crv.Domain.ParameterAt(0.5);
+                d = crv.TangentAt(t);
+            }
+            else if (beam?.Crv != null)
+            {
+                var crv = beam.Crv;
+                double t = crv.Domain.ParameterAt(0.5);
+                d = crv.TangentAt(t);
+            }
+            else if (beam?.Nodes != null && beam.Nodes.Length >= 2
+                && beam.Nodes[0] != null && beam.Nodes[1] != null)
+            {
+                d = beam.Nodes[1].Pt - beam.Nodes[0].Pt;
+            }
+
+            if (d.Length < 1e-12)
+                return Vector3d.XAxis;
+            d.Unitize();
+            return d;
+        }
+
+        private static List<Point2d> GetStructuralFootprint2DPoints(SG_Shape shape)
+        {
+            if (shape?.Nodes == null || shape.Nodes.Count == 0)
+                return new List<Point2d>();
+            if (!TryGetStructuralFootprintPlane(shape, out Plane pl) || !pl.IsValid)
+                return new List<Point2d>();
+
+            var pts = new List<Point2d>(shape.Nodes.Count);
+            foreach (var node in shape.Nodes)
+            {
+                if (node == null) continue;
+                pl.ClosestParameter(node.Pt, out double u, out double v);
+                pts.Add(new Point2d(u, v));
+            }
+            return pts;
         }
 
         /// <summary>13 – Convex Hull Volume. Calculate envelope volume generated by Grasshopper's convex hull volume.</summary>
@@ -505,12 +641,18 @@ namespace ShapeGrammar3D.Classes
             const double tol = 1e-8;
             const double tolSq = tol * tol;
 
+            if (!TryGetStructuralFootprintPlane(shape, out Plane footprint) || !footprint.IsValid)
+                return (0.0, null);
+
             var segs = new List<(Point2d a, Point2d b)>();
             foreach (var elem in shape.Elems)
             {
                 if (!(elem is SG_Elem1D e1) || e1.Nodes == null || e1.Nodes.Length < 2) continue;
-                var a = new Point2d(e1.Nodes[0].Pt.X, e1.Nodes[0].Pt.Y);
-                var b = new Point2d(e1.Nodes[1].Pt.X, e1.Nodes[1].Pt.Y);
+                if (e1.Nodes[0] == null || e1.Nodes[1] == null) continue;
+                footprint.ClosestParameter(e1.Nodes[0].Pt, out double ua, out double va);
+                footprint.ClosestParameter(e1.Nodes[1].Pt, out double ub, out double vb);
+                var a = new Point2d(ua, va);
+                var b = new Point2d(ub, vb);
                 if (DistSq2d(a, b) < tolSq) continue;
                 segs.Add((a, b));
             }
@@ -603,10 +745,13 @@ namespace ShapeGrammar3D.Classes
                 {
                     var pts = new Point3d[poly.Length];
                     for (int i = 0; i < poly.Length; i++)
-                        pts[i] = new Point3d(poly[i].X, poly[i].Y, 0);
-                    var pl = new Polyline(pts);
-                    pl.Add(pts[0]);
-                    var crv = pl.ToNurbsCurve();
+                    {
+                        var p2 = poly[i];
+                        pts[i] = footprint.PointAt(p2.X, p2.Y);
+                    }
+                    var pline = new Polyline(pts);
+                    pline.Add(pts[0]);
+                    var crv = pline.ToNurbsCurve();
                     if (crv != null && crv.IsClosed)
                     {
                         var breps = Brep.CreatePlanarBreps(crv, tol);
@@ -681,20 +826,6 @@ namespace ShapeGrammar3D.Classes
             for (int i = 0, n = p.Length; i < n; i++)
                 a += p[i].X * (p[(i + 1) % n].Y - p[(i + n - 1) % n].Y);
             return a * 0.5;
-        }
-
-        private static List<Point2d> GetXYPoints(SG_Shape shape)
-        {
-            if (shape.Nodes == null || shape.Nodes.Count == 0)
-                return new List<Point2d>();
-
-            var pts = new List<Point2d>();
-            foreach (var node in shape.Nodes)
-            {
-                if (node?.Pt != null)
-                    pts.Add(new Point2d(node.Pt.X, node.Pt.Y));
-            }
-            return pts;
         }
 
         /// <summary>Graham scan 2D convex hull. Returns vertices in CCW order.</summary>

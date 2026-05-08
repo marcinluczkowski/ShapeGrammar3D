@@ -487,7 +487,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
     {
         public Param_Section() : base(
             new GH_InstanceDescription(
-                "Section", "Sec", "Cross-Section", Common.category, Common.sub_param
+                "Section", "Sec", "Member cross-section (area, inertia, material link) for 1D elements.", Common.category, Common.sub_param
                 )
             )
         { }
@@ -495,7 +495,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public override Guid ComponentGuid => new Guid("845c714e-2a89-482f-817a-14053a290d55");
 
         protected override System.Drawing.Bitmap Icon { get {
-                return null;// Properties.Resources.icons_P_Sec; ; 
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
             } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Section> values)

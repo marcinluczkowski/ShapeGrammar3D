@@ -12,7 +12,7 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         public SupportComponent()
           : base("SupportComponent", "support",
-              "Create The support for the element",
+              "Create a support (SG_Support) with six DOF flags at a point, for use with Assembly.",
               UT.CAT, UT.GR_SUP)
         {
         }
@@ -22,8 +22,10 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddPointParameter("Location", "loc", "Point to add support.", GH_ParamAccess.item);
-            pManager.AddTextParameter("Support condition", "string", "[Tx, Ty, Tz, Rx, Ry, Rz]. 1 for locked, 0 for free", GH_ParamAccess.item, "111111");
+            pManager.AddPointParameter("Location", "loc",
+                "Support position; must coincide with a node after Assembly merges endpoints.", GH_ParamAccess.item);
+            pManager.AddTextParameter("DOF mask", "dof",
+                "Six characters [Tx Ty Tz Rx Ry Rz]: 1 = fixed, 0 = free. Example: 111000 fixes translations only.", GH_ParamAccess.item, "111111");
         }
 
         /// <summary>
@@ -31,7 +33,8 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("Support", "sup", "Support Class instance.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Support", "sup",
+                "SG_Support instance (attach to Assembly supports list).", GH_ParamAccess.item);
         }
 
         /// <summary>

@@ -36,6 +36,15 @@ namespace ShapeGrammar3D.Classes.Elements
         public Plane EPln { get; set; }
         public SH_CrossSection_Beam CrossSection { get; set; }
 
+        /// <summary>
+        /// Interior nodes that lie ON this element but are NOT endpoints.
+        /// Used for non-endpoint point loads ("loads on a beam, not at its ends")
+        /// and as candidate origins for downstream rules (e.g. rule 02 struts).
+        /// The element is NOT split in the SG_Shape: <see cref="Nodes"/> stays length 2.
+        /// At FEM build time (TB_Model) the chord is sub-divided at these nodes.
+        /// </summary>
+        public List<SG_Node> MidNodes { get; set; } = new List<SG_Node>();
+
         /// <summary>Structural role for feasibility: main beam (rule 01), strut/column (rule 02), bar/diagonal (rules 04+). Uses Name when Autorule is 0/-999 (e.g. after section sync).</summary>
         public Elem1DStructuralType StructuralType => GetStructuralType(Autorule, Name);
 
@@ -226,7 +235,7 @@ namespace ShapeGrammar3D.Classes.Elements
         {
             if (autorule == UT.RULE010_MARKER || autorule == 1) return Elem1DStructuralType.MainBeam;
             if (autorule == UT.RULE020_MARKER || autorule == 2) return Elem1DStructuralType.Strut;
-            if (autorule == 3 || autorule == UT.RULE030_MARKER || autorule == UT.RULE031_MARKER) return Elem1DStructuralType.Strut;
+            if (autorule == 3 || autorule == UT.RULE030_MARKER || autorule == UT.RULE031_MARKER || autorule == UT.RULE032_MARKER) return Elem1DStructuralType.Strut;
             if (autorule == 4 || autorule == 5 || autorule == 6
                 || autorule == UT.RULE040_MARKER || autorule == UT.RULE041_MARKER
                 || autorule == UT.RULE050_MARKER || autorule == UT.RULE051_MARKER
@@ -235,6 +244,10 @@ namespace ShapeGrammar3D.Classes.Elements
                 || autorule == UT.RULE064_MARKER)
                 return Elem1DStructuralType.Bar;
             if (autorule == 0 || autorule == UT.RULE_END_MARKER) return GetStructuralTypeFromName(name);
+            // DeepCopy / init-shape import can leave unusual markers; infer strut/bar from name like Rule02 ("AR2") / Rule04+ ("AR4"…).
+            var fromName = GetStructuralTypeFromName(name);
+            if (fromName != Elem1DStructuralType.Other)
+                return fromName;
             return Elem1DStructuralType.Other;
         }
 
@@ -242,7 +255,16 @@ namespace ShapeGrammar3D.Classes.Elements
         private static Elem1DStructuralType GetStructuralTypeFromName(string name)
         {
             if (string.IsNullOrEmpty(name)) return Elem1DStructuralType.Other;
+            if (name.Equals("column", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("strut", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("stud", StringComparison.OrdinalIgnoreCase))
+                return Elem1DStructuralType.Strut;
             if (name == "3DAR2" || name == "AR2") return Elem1DStructuralType.Strut;
+            if (name.IndexOf("AR2", StringComparison.OrdinalIgnoreCase) >= 0
+                && name.IndexOf("AR4", StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("AR5", StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("AR6", StringComparison.OrdinalIgnoreCase) < 0)
+                return Elem1DStructuralType.Strut;
             if (name == "3DAR4" || name == "3DAR5" || name == "dg"
                 || name.IndexOf("AR4", StringComparison.OrdinalIgnoreCase) >= 0
                 || name.IndexOf("AR5", StringComparison.OrdinalIgnoreCase) >= 0
@@ -254,6 +276,7 @@ namespace ShapeGrammar3D.Classes.Elements
         public override SG_Element DeepClone()
         {
             var clonedNodes = Nodes?.Select(n => n?.DeepClone()).ToArray();
+            var clonedMidNodes = MidNodes?.Select(n => n?.DeepClone()).ToList() ?? new List<SG_Node>();
             return new SG_Elem1D
             {
                 ID = ID,
@@ -265,7 +288,8 @@ namespace ShapeGrammar3D.Classes.Elements
                 Init_Crv = Init_Crv?.DuplicateCurve(),
                 Joined_Init_Crv = Joined_Init_Crv?.DuplicateCurve(),
                 EPln = EPln,
-                CrossSection = CrossSection // if mutable, add its own clone
+                CrossSection = CrossSection,
+                MidNodes = clonedMidNodes
             };
         }
 

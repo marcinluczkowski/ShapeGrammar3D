@@ -16,9 +16,12 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// </summary>
         public AutoRule051_3D()
           : base("Auto Rule 051-3D", "A-Rule051-3D",
-              "Adds braces between each RULE020 strut tip and the tip of its adjacent strut(s) along the shared RULE010 base beam. " +
-              "Rule option: 1 = previous neighbour along the beam, 2 = next neighbour, 3 = both. " +
-              "End struts (no previous or no next neighbour) connect to the only available neighbour.",
+              "Adds braces between strut tips (RULE020) along the shared RULE010 subdivision chain. " +
+              "Neighbours are found by walking the actual graph of RULE010 sub-elements through their shared nodes, " +
+              "skipping subdivision nodes that have no strut. " +
+              "Rule option domain: include 0 for no brace on that stud; 1 = previous neighbour, 2 = next, 3 = both. " +
+              "Strut tips at the ends of a chain (no further strut on that side) get no brace in that direction — " +
+              "the rule connects strut TIP to strut TIP only and never falls back to a base-curve endpoint.",
               UT.CAT, UT.GR_RLS)
         {
         }
@@ -29,7 +32,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Rule option", "O", "options: 1 = prev, 2 = next, 3 = both", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Rule option", "O", "[min,max] for mapped integer option: 0 = none, 1 = prev, 2 = next, 3 = both", GH_ParamAccess.list);
             pManager.AddNumberParameter("Min Ratio", "minR",
                 "Minimum ratio (0–1) of eligible struts that should generate members.",
                 GH_ParamAccess.item, 0.0);

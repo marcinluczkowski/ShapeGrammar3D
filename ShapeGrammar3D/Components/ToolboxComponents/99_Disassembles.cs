@@ -249,7 +249,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;// Properties.Resources.icons_I_Sup; ;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
             }
         }
 
@@ -350,7 +350,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;//Properties.Resources.icons_I_Elem1D; ;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;//Properties.Resources.icons_I_Elem1D; ;
             }
         }
 
@@ -440,7 +440,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;//Properties.Resources.icons_I_Mdl;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;//Properties.Resources.icons_I_Mdl;
             }
         }
 
@@ -530,7 +530,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;//Properties.Resources.icons_I_Node;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;//Properties.Resources.icons_I_Node;
             }
         }
 
@@ -626,7 +626,7 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;//Properties.Resources.icons_I_Load_P;
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;//Properties.Resources.icons_I_Load_P;
             }
         }
 

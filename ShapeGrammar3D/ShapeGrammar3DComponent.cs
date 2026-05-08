@@ -17,7 +17,7 @@ namespace ShapeGrammar3D
         /// </summary>
         public ShapeGrammar3DComponent()
           : base("ShapeGrammar3DComponent", "SH3D",
-            "Description",
+            "Template / scaffold component for this plug-in. Replace with your own logic or remove from the canvas.",
             "Category", "Subcategory")
         {
         }
@@ -51,7 +51,7 @@ namespace ShapeGrammar3D
         /// You can add image files to your project resources and access them like this:
         /// return Resources.IconForThisComponent;
         /// </summary>
-        protected override System.Drawing.Bitmap Icon => null;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
 
         /// <summary>
         /// Each component must have a unique Guid to identify it. 

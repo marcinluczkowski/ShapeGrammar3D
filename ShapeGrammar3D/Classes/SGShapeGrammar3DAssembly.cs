@@ -166,12 +166,12 @@ namespace ShapeGrammar3D.Classes
         public Param_SGAssembly() : base(
             new GH_InstanceDescription(
                 "SG Assembly", "Assembly",
-                "In-memory Shape Grammar 3D GA run (genotypes, results, models)",
+                "Lightweight container for an entire GA run: per-generation individuals with chromosomes, fitness, TB_Model snapshots and SG_Shape geometry.",
                 UT.CAT, UT.GR_DATA_PREVIEW))
         { }
 
         public override Guid ComponentGuid => new Guid("E8A1B2C3-4D5E-6F7A-8B9C-0D1E2F3A4B5C");
-        protected override System.Drawing.Bitmap Icon => null;
+        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_SGAssembly> values) => GH_GetterResult.success;
         protected override GH_GetterResult Prompt_Singular(ref GH_SGAssembly value) => GH_GetterResult.success;

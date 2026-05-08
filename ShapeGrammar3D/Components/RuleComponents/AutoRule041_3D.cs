@@ -16,7 +16,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         /// </summary>
         public AutoRule041_3D()
           : base("Auto Rule 041-3D", "A-Rule041-3D",
-              "",
+              "Stud-tip diagonals to neighbouring base elements. Rule option domain: include 0 for no diagonal on that stud; 1 = left, 2 = right, 3 = both.",
               UT.CAT, UT.GR_RLS)
         {
         }
@@ -27,7 +27,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("Elem Name", "eName", "element name", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Rule option", "O", "options: 1 to the left, 2 to the right, 3 for both", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Rule option", "O", "Integer domain [min,max] for D-gene mapping: include 0 for \"no bar\" on that stud; otherwise 1 = left, 2 = right, 3 = both.", GH_ParamAccess.list);
             pManager.AddNumberParameter("Min Ratio", "minR",
                 "Minimum ratio (0–1) of eligible struts that should generate members.",
                 GH_ParamAccess.item, 0.0);

@@ -12,7 +12,8 @@ namespace ShapeGrammar3D.Classes
     public static class FixedGenotypes
     {
         private const int SEED = 42;
-        private const int DEFAULT_POOL_SIZE = 100;
+        /// <summary>Minimum pool size when a smaller population is requested (avoids tiny cache churn).</summary>
+        private const int MIN_POOL_SIZE = 100;
 
         // Cache key: (chromosome structure hash) → cached pool
         private static List<GAIndividual> _cachedPool;
@@ -20,24 +21,25 @@ namespace ShapeGrammar3D.Classes
 
         /// <summary>
         /// Returns a list of deterministic GAIndividuals.
-        /// Rebuilds the cache only if chromosome structure changes.
+        /// Rebuilds the cache when chromosome structure changes or when the pool is smaller than <paramref name="count"/>.
         /// </summary>
-        /// <param name="count">Number of individuals to return (clamped to pool size).</param>
+        /// <param name="count">Number of individuals to return (must be ≥ 1).</param>
         /// <param name="chromosomeLengths">Length of each chromosome segment (one per rule).</param>
         /// <param name="ruleMarkers">Rule marker IDs (one per rule).</param>
         /// <returns>Cloned list of deterministic individuals.</returns>
         public static List<GAIndividual> Get(int count, List<int> chromosomeLengths, List<int> ruleMarkers)
         {
+            count = Math.Max(1, count);
             int structureHash = ComputeStructureHash(chromosomeLengths, ruleMarkers);
+            int targetPool = Math.Max(count, MIN_POOL_SIZE);
 
-            if (_cachedPool == null || _cachedStructureHash != structureHash)
+            if (_cachedPool == null || _cachedStructureHash != structureHash || _cachedPool.Count < count)
             {
-                _cachedPool = Generate(DEFAULT_POOL_SIZE, chromosomeLengths, ruleMarkers);
+                _cachedPool = Generate(targetPool, chromosomeLengths, ruleMarkers);
                 _cachedStructureHash = structureHash;
             }
 
-            int n = Math.Min(count, _cachedPool.Count);
-            return _cachedPool.Take(n).Select(ind => ind.Clone()).ToList();
+            return _cachedPool.Take(count).Select(ind => ind.Clone()).ToList();
         }
 
         /// <summary>
@@ -79,7 +81,7 @@ namespace ShapeGrammar3D.Classes
                         activationProb = 0.70 + 0.20 * t;
                     else if (ruleId == UT.RULE010_MARKER)
                         activationProb = 0.40 + 0.30 * t;
-                    else if (ruleId == UT.RULE031_MARKER)
+                    else if (ruleId == UT.RULE031_MARKER || ruleId == UT.RULE032_MARKER)
                         activationProb = 0.45 + 0.40 * t;  // Rotation: 45%-85%
                     else
                         activationProb = 0.30 + 0.60 * t;

@@ -23,16 +23,23 @@
     <BaseOutputPath>bin</BaseOutputPath>
   </PropertyGroup>
 
-  <!-- Auto-copy .gha + dependencies to Grasshopper Libraries after build -->
-  <Target Name="CopyToGrasshopperLibraries" AfterTargets="AfterBuild">
+  <!-- Copy only the real plug-in output (ProjectName.gha). Skips /p:AssemblyName=... scratch builds that would register duplicate GUIDs. -->
+  <!-- Set /p:SkipGrasshopperDeploy=true when Rhino has the .gha loaded and copy would fail. -->
+  <Target Name="CopyToGrasshopperLibraries" AfterTargets="AfterBuild" Condition="'$(SkipGrasshopperDeploy)' != 'true'">
     <PropertyGroup>
       <GrasshopperLibDir>$(APPDATA)\Grasshopper\Libraries\ShapeGrammar3D</GrasshopperLibDir>
+      <_PrimaryGha>$(MSBuildProjectName).gha</_PrimaryGha>
+      <_IsDeployable Condition="'$(TargetFileName)' == '$(_PrimaryGha)'">true</_IsDeployable>
     </PropertyGroup>
     <MakeDir Directories="$(GrasshopperLibDir)" />
     <ItemGroup>
-      <GhaFiles Include="$(TargetDir)**\*.*" Exclude="$(TargetDir)**\Grasshopper.dll;$(TargetDir)**\RhinoCommon.dll" />
+      <GhaMain Include="$(TargetPath)" />
+      <GhaDeps Include="$(TargetDir)*.dll" Exclude="$(TargetDir)Grasshopper.dll;$(TargetDir)RhinoCommon.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(GhaFiles)" DestinationFolder="$(GrasshopperLibDir)\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(GhaMain)" DestinationFolder="$(GrasshopperLibDir)" SkipUnchangedFiles="true" Condition="'$(_IsDeployable)' == 'true'" />
+    <Copy SourceFiles="@(GhaDeps)" DestinationFolder="$(GrasshopperLibDir)" SkipUnchangedFiles="true" Condition="'$(_IsDeployable)' == 'true'" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).deps.json" DestinationFolder="$(GrasshopperLibDir)" SkipUnchangedFiles="true" Condition="'$(_IsDeployable)' == 'true' And Exists('$(TargetDir)$(AssemblyName).deps.json')" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).runtimeconfig.json" DestinationFolder="$(GrasshopperLibDir)" SkipUnchangedFiles="true" Condition="'$(_IsDeployable)' == 'true' And Exists('$(TargetDir)$(AssemblyName).runtimeconfig.json')" />
   </Target>
   
   <ItemGroup>

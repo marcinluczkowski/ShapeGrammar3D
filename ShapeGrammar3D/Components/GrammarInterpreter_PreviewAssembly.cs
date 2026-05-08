@@ -25,24 +25,28 @@ namespace ShapeGrammar3D.Components
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). Leave empty or -1 = all.", GH_ParamAccess.list,-1);
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). Leave empty or -1 = all.", GH_ParamAccess.list,-1);
-            pManager.AddIntegerParameter("Top N per Cluster", "TopN",
-                "Show only the top N best individuals per cluster per generation. 0 = all (default). 1 = best one per cluster.",
-                GH_ParamAccess.item, 0);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing between columns", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing between rows", GH_ParamAccess.item, 30.0);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Asm",
+                "In-memory GA result from GI_FromSg / GI_LargeSg (contains generations of shapes).", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Generation", "Gen",
+                "Generation index to preview (-1 = all generations present in the assembly).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Individual", "Ind",
+                "Population index within each generation (-1 = all individuals).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Top N per cluster", "TopN",
+                "If > 0, keep only the N lowest-fitness individuals per cluster in each generation; 0 = no filtering.", GH_ParamAccess.item, 0);
+            pManager.AddNumberParameter("Column spacing", "dX",
+                "Horizontal offset between generation columns when laying out multiple previews.", GH_ParamAccess.item, 30.0);
+            pManager.AddNumberParameter("Row spacing", "dY",
+                "Vertical offset between individuals when laying out the preview grid.", GH_ParamAccess.item, 30.0);
             pManager[4].Optional = true;
             pManager[5].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddLineParameter("Lines", "Lines", "Element lines {col;row}(element)", GH_ParamAccess.tree);
-            pManager.AddPointParameter("Points", "Points", "Node points {col;row}(node)", GH_ParamAccess.tree);
-            pManager.AddColourParameter("Colours", "Col", "Cluster colours per element", GH_ParamAccess.tree);
-            pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
+            pManager.AddLineParameter("Member lines", "Ln", "Tree of element axis lines. Path {column; row} = layout cell.", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Nodes", "Pt", "Tree of node positions for the same layout.", GH_ParamAccess.tree);
+            pManager.AddColourParameter("Colours", "Col", "One colour per element line, keyed by GA cluster id.", GH_ParamAccess.tree);
+            pManager.AddTextParameter("Summary", "Info", "Human-readable counts: how many structures were expanded.", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -186,7 +190,7 @@ namespace ShapeGrammar3D.Components
             return Color.FromArgb(r, Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
         public override Guid ComponentGuid => new Guid("E7F8A2B4-5D6E-4F8B-C2D4-BF0E9F8A7C6D");
     }
 }

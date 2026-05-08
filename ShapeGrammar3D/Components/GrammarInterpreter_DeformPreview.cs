@@ -164,7 +164,7 @@ namespace ShapeGrammar3D.Components
 
         private struct UtilLabel
         {
-            public Point3d Position;
+            public Plane TextPlane;
             public string Text;
             public Color Colour;
         }
@@ -191,10 +191,7 @@ namespace ShapeGrammar3D.Components
             if (!ShowUtilText || _utilLabels == null || _utilLabels.Count == 0) return;
 
             foreach (var lbl in _utilLabels)
-            {
-                Plane txtPlane = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
-                args.Display.Draw3dText(lbl.Text, lbl.Colour, txtPlane, _textHeight, "Arial");
-            }
+                args.Display.Draw3dText(lbl.Text, lbl.Colour, lbl.TextPlane, _textHeight, "Arial");
         }
 
         public override bool Write(GH_IO.Serialization.GH_IWriter writer)
@@ -236,10 +233,14 @@ namespace ShapeGrammar3D.Components
                 "Base point for the grid layout", GH_ParamAccess.item, Point3d.Origin);               // 8
             pManager.AddNumberParameter("Text Height", "TxH",
                 "Text height in model units for utilization labels", GH_ParamAccess.item, 0.3);       // 9
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional: orient layout grid (XY through Insert Pt) onto this plane.",
+                GH_ParamAccess.item);                                                          // 10
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
             pManager[7].Optional = true;
+            pManager[10].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -298,6 +299,8 @@ namespace ShapeGrammar3D.Components
             double textH = 0.3;
             DA.GetData(9, ref textH);
             _textHeight = Math.Max(0.01, textH);
+
+            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 10, insertPt);
 
             _utilLabels.Clear();
 
@@ -408,9 +411,10 @@ namespace ShapeGrammar3D.Components
                         if (ShowUtilText)
                         {
                             Point3d midPt = defLine.PointAt(0.5);
+                            Plane tpl = new Plane(midPt, Vector3d.XAxis, Vector3d.YAxis);
                             _utilLabels.Add(new UtilLabel
                             {
-                                Position = midPt,
+                                TextPlane = tpl,
                                 Text = string.Format("{0:F1}%", util * 100.0),
                                 Colour = clr
                             });
@@ -468,6 +472,20 @@ namespace ShapeGrammar3D.Components
                 ShowMesh ? "ON" : "OFF",
                 ShowUtilText ? "ON" : "OFF",
                 rangeStr);
+
+            if (!dispXf.IsIdentity)
+            {
+                undefTree = PreviewLayoutTransforms.TransformLineTree(undefTree, dispXf);
+                defTree = PreviewLayoutTransforms.TransformLineTree(defTree, dispXf);
+                meshTree = PreviewLayoutTransforms.TransformMeshTree(meshTree, dispXf);
+                for (int ui = 0; ui < _utilLabels.Count; ui++)
+                {
+                    var u = _utilLabels[ui];
+                    Plane pl = u.TextPlane;
+                    pl.Transform(dispXf);
+                    _utilLabels[ui] = new UtilLabel { TextPlane = pl, Text = u.Text, Colour = u.Colour };
+                }
+            }
 
             DA.SetDataTree(0, undefTree);
             DA.SetDataTree(1, defTree);

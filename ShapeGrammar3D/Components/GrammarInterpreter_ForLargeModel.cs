@@ -66,7 +66,7 @@ namespace ShapeGrammar3D.Components
         // Memory-optimized: only first and last generation shapes stored with cluster+fitness for filtering.
         private List<(SG_Shape Shape, int Cluster, double Fitness)> _firstGenData;
         private List<(SG_Shape Shape, int Cluster, double Fitness)> _lastGenData;
-        /// <summary>Top-1 individual per cluster per generation: shape+model+cluster+fitness+gen.</summary>
+        /// <summary>Top-K individuals per cluster per generation (K = assembly retain input): shape+model+cluster+fitness+gen.</summary>
         private List<(int Generation, int Cluster, SG_Shape Shape, TB_Model Model, double Fitness, string Id)> _topPerGenCluster;
         /// <summary>Per generation, per cluster: (gen, cluster, best, worst, avg) fitness for convergence plots.</summary>
         private List<(int gen, int cluster, double best, double worst, double avg)> _convergenceData;
@@ -91,7 +91,7 @@ namespace ShapeGrammar3D.Components
         public GrammarInterpreter_ForLargeModel()
           : base("Grammar Interpreter for Large Model", "GI_Large",
               "Large-scale GA (default 1000×100×10). Streams scalar metrics for every individual to CSV, " +
-              "stores geometry only for first+last generations and the top-1 individual per cluster per generation.",
+              "stores geometry only for first+last generations and the top K individuals per cluster per generation (Asm K/Clust).",
               UT.CAT, UT.GR_INT)
         {
         }
@@ -122,12 +122,16 @@ namespace ShapeGrammar3D.Components
             pManager.AddTextParameter("Out Folder", "Out",
                 "Folder where the per-individual CSV and the JSON summary are written. Empty = system temp folder.",
                 GH_ParamAccess.item, string.Empty);                                                                                       // 7
+            pManager.AddIntegerParameter("Asm K/Clust", "AsmK",
+                "Store up to K best individuals per cluster in the Assembly output (for GI_Deform Top N / Top %). Default 1. Higher uses more RAM; capped at 25.",
+                GH_ParamAccess.item, 1);                                                                                                 // 8
             pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[4].Optional = true;
             pManager[5].Optional = true;
             pManager[6].Optional = true;
             pManager[7].Optional = true;
+            pManager[8].Optional = true;
         }
 
         /// <summary>
@@ -143,7 +147,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddGenericParameter("Last Gen", "Last", "SG_Shape list of the final optimised generation (filtered by % per cluster)",
                 GH_ParamAccess.list);                                                                                                                // 2
             pManager.AddGenericParameter("Top per Gen-Cluster", "Top",
-                "Tree of best SG_Shape per cluster per generation. Path = {generation}, item index = cluster id.",
+                "Tree of best SG_Shape per cluster per generation (path = generation). With Asm K/Clust > 1, up to K items per cluster.",
                 GH_ParamAccess.tree);                                                                                                                // 3
             pManager.AddColourParameter("First Colours", "FCol", "Cluster colour per First Gen shape", GH_ParamAccess.list);                         // 4
             pManager.AddColourParameter("Last Colours", "LCol", "Cluster colour per Last Gen shape", GH_ParamAccess.list);                           // 5
@@ -162,7 +166,7 @@ namespace ShapeGrammar3D.Components
                 "Absolute path to the JSON summary (run metadata + per-cluster aggregates per generation).",
                 GH_ParamAccess.item);                                                                                                                // 13
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
-                "Lightweight assembly: only the geometry kept in memory (first gen, last gen, top-1 per cluster per gen).",
+                "Lightweight assembly: geometry from each generation = up to Asm K/Clust best per cluster (default K=1).",
                 GH_ParamAccess.item);                                                                                                                // 14
         }
 
@@ -342,6 +346,9 @@ namespace ShapeGrammar3D.Components
             DA.GetData(5, ref graphW);
             DA.GetData(6, ref graphH);
             DA.GetData(7, ref outFolder);
+            int assemblyKeepPerCluster = 1;
+            DA.GetData(8, ref assemblyKeepPerCluster);
+            assemblyKeepPerCluster = Math.Max(1, Math.Min(assemblyKeepPerCluster, 25));
             pctTop = Math.Clamp(pctTop, 0.01, 100.0);
             graphW = Math.Max(1.0, graphW);
             graphH = Math.Max(1.0, graphH);
@@ -439,8 +446,8 @@ namespace ShapeGrammar3D.Components
                 if (isLastGeneration)
                     _lastGenData = SnapshotGenerationGeometry(evaluatedShapes, evaluatedPop);
 
-                // Top-1 per cluster per generation (for the Top per Gen-Cluster output)
-                AppendTopPerCluster(evaluatedPop, evaluatedShapes, evaluatedModels, _currentGeneration, _numClusters);
+                // Top-K per cluster per generation (Assembly + Top tree); K from Asm K/Clust input
+                AppendTopPerCluster(evaluatedPop, evaluatedShapes, evaluatedModels, _currentGeneration, _numClusters, assemblyKeepPerCluster);
 
                 lastClusterLog = isMultiObjective
                     ? BuildMOInfo(evaluatedPop, _currentGeneration)
@@ -559,46 +566,49 @@ namespace ShapeGrammar3D.Components
         }
 
         /// <summary>
-        /// Selects the top-1 individual per cluster for this generation and stores its
-        /// (already deep-copied) shape + model in <see cref="_topPerGenCluster"/>.
+        /// Selects the top <paramref name="retainPerCluster"/> individuals per cluster for this generation and stores
+        /// their (already deep-copied) shape + model in <see cref="_topPerGenCluster"/>.
         /// Skips clusters that had no successful individual.
         /// </summary>
         private void AppendTopPerCluster(
             List<GAIndividual> pop, List<SG_Shape> shapes, List<TB_Model> models,
-            int generation, int numClusters)
+            int generation, int numClusters, int retainPerCluster)
         {
             if (pop == null || pop.Count == 0) return;
+            retainPerCluster = Math.Max(1, Math.Min(retainPerCluster, 25));
             int n = pop.Count;
             for (int c = 0; c < Math.Max(1, numClusters); c++)
             {
-                int bestIdx = -1;
-                double bestFit = MAXIMIZE ? double.MinValue : double.MaxValue;
+                var ranked = new List<(int i, double f)>();
                 for (int i = 0; i < n; i++)
                 {
                     if (pop[i].ClustGrp != c) continue;
-                    if (shapes != null && i < shapes.Count && shapes[i] == null) continue; // failed eval
+                    if (shapes != null && i < shapes.Count && shapes[i] == null) continue;
                     double f = pop[i].Fitness;
                     if (double.IsNaN(f) || double.IsInfinity(f) || f == double.MaxValue || f == double.MinValue) continue;
-                    bool better = MAXIMIZE ? f > bestFit : f < bestFit;
-                    if (better) { bestFit = f; bestIdx = i; }
+                    ranked.Add((i, f));
                 }
 
-                if (bestIdx < 0) continue;
-
-                SG_Shape shape = (shapes != null && bestIdx < shapes.Count) ? shapes[bestIdx] : null;
-                TB_Model mdl = (models != null && bestIdx < models.Count) ? models[bestIdx] : null;
-                if (shape == null) continue;
-
-                _topPerGenCluster.Add((generation, c, shape, mdl, bestFit, pop[bestIdx].Id));
+                IEnumerable<(int i, double f)> orderedEnum = MAXIMIZE
+                    ? ranked.OrderByDescending(x => x.f)
+                    : ranked.OrderBy(x => x.f);
+                var ordered = orderedEnum.ToList();
+                int take = Math.Min(retainPerCluster, ordered.Count);
+                for (int t = 0; t < take; t++)
+                {
+                    int idx = ordered[t].i;
+                    double fit = ordered[t].f;
+                    SG_Shape shape = (shapes != null && idx < shapes.Count) ? shapes[idx] : null;
+                    TB_Model mdl = (models != null && idx < models.Count) ? models[idx] : null;
+                    if (shape == null) continue;
+                    _topPerGenCluster.Add((generation, c, shape, mdl, fit, pop[idx].Id));
+                }
             }
         }
 
         /// <summary>
-        /// Populates <paramref name="assembly"/> with only the kept geometry: one
-        /// AssemblyGeneration per recorded generation containing the top-1 per cluster.
-        /// First and last generation also include their full population geometry. This
-        /// keeps the assembly object small enough for downstream Data Preview components
-        /// even when the GA evaluated 100k+ individuals.
+        /// Populates <paramref name="assembly"/> with kept geometry: for each generation, up to K best
+        /// individuals per cluster (K from the Asm K/Clust input). Keeps RAM bounded for large runs.
         /// </summary>
         private void BuildLightweightAssembly(SGShapeGrammar3DAssembly assembly)
         {
@@ -1363,7 +1373,7 @@ namespace ShapeGrammar3D.Components
                 foreach (var grp in _topPerGenCluster.GroupBy(t => t.Generation).OrderBy(g => g.Key))
                 {
                     var path = new GH_Path(grp.Key);
-                    foreach (var (_, cluster, shape, _, _, _) in grp.OrderBy(x => x.Cluster))
+                    foreach (var (_, cluster, shape, _, fit, _) in grp.OrderBy(x => x.Cluster).ThenBy(x => x.Fitness))
                     {
                         topShapesTree.Append(new GH_ObjectWrapper(shape), path);
                         topColoursTree.Append(new GH_Colour(GetClusterColour(cluster, _numClusters)), path);
@@ -2442,14 +2452,18 @@ namespace ShapeGrammar3D.Components
             shape.Supports ??= new List<SG_Support>();
             shape.Supports.Clear();
 
-            var elemEndpoints = new HashSet<int>();
+            var elemNodeIds = new HashSet<int>();
             if (shape.Elems != null)
             {
                 foreach (var e in shape.Elems)
                 {
-                    if (e?.Nodes == null) continue;
-                    foreach (var n in e.Nodes)
-                        if (n != null) elemEndpoints.Add(n.ID);
+                    if (e?.Nodes != null)
+                        foreach (var n in e.Nodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
+
+                    if (e is SG_Elem1D e1d && e1d.MidNodes != null)
+                        foreach (var n in e1d.MidNodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
                 }
             }
 
@@ -2457,7 +2471,7 @@ namespace ShapeGrammar3D.Components
             {
                 if (nd?.Support == null) continue;
                 if (nd.Support.SupportCondition == 0) continue;
-                if (!elemEndpoints.Contains(nd.ID)) continue;
+                if (!elemNodeIds.Contains(nd.ID)) continue;
 
                 nd.Support.Pt = nd.Pt;
                 nd.Support.Node = nd;
@@ -2465,21 +2479,32 @@ namespace ShapeGrammar3D.Components
             }
 
             var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
-            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+            Vector3d loadVec = initRule?.LoadVector ?? Vector3d.Zero;
             Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
+
+            bool hasUserLoads =
+                (shape.PointLoads != null && shape.PointLoads.Count > 0) ||
+                (shape.LineLoads  != null && shape.LineLoads.Count  > 0);
+            if (hasUserLoads)
+            {
+                shape.PointLoads ??= new List<SG_PointLoad>();
+                shape.LineLoads  ??= new List<SG_LineLoad>();
+                return;
+            }
 
             shape.PointLoads ??= new List<SG_PointLoad>();
             shape.PointLoads.Clear();
 
             if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
+                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec);
             }
             else
             {
+                if (loadVec.Length < 1e-12) loadVec = new Vector3d(0, 0, -100);
                 foreach (var nd in shape.Nodes)
                 {
-                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                    if (nd == null || !elemNodeIds.Contains(nd.ID)) continue;
                     shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
                 }
             }

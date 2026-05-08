@@ -13,7 +13,7 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         public PointLoads()
           : base("PointLoads", "loads",
-              "Assign Loads To the structure",
+              "Build a nodal point load (force and moment vectors at a 3D point). Feed into Assembly; off-axis loads snap to the nearest beam.",
               UT.CAT, UT.GR_LD)
         {
         }
@@ -23,9 +23,12 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddVectorParameter("Load Vector", "load", "Load as Vector in x,y,z direction", GH_ParamAccess.item, new Vector3d(0,0,0));
-            pManager.AddVectorParameter("Moment Vector", "moment", "Moment as Vector", GH_ParamAccess.item, new Vector3d(0, 0, 0));
-            pManager.AddPointParameter("Position", "pos", "Position as Point3d", GH_ParamAccess.item);
+            pManager.AddVectorParameter("Force", "F",
+                "Applied force vector in global XYZ (typically kN).", GH_ParamAccess.item, new Vector3d(0,0,0));
+            pManager.AddVectorParameter("Moment", "M",
+                "Applied moment vector in global axes (typically kNm).", GH_ParamAccess.item, new Vector3d(0, 0, 0));
+            pManager.AddPointParameter("Location", "pos",
+                "Load application point in model space.", GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -33,7 +36,8 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("Loads", "loads", "An instance of the load class", GH_ParamAccess.item); 
+            pManager.AddGenericParameter("Point Load", "PL",
+                "SG_PointLoad instance for the Assembly load list.", GH_ParamAccess.item); 
         }
 
         /// <summary>
