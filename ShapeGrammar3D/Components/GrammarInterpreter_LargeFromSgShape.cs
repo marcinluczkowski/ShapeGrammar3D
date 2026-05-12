@@ -46,6 +46,9 @@ namespace ShapeGrammar3D.Components
         {
             pManager.AddTextParameter("Info", "Info", "Run summary and progress text.", GH_ParamAccess.item); // 0
             pManager.AddTextParameter("JSON Path", "JSON", "Path of the streamed run JSON.", GH_ParamAccess.item); // 1
+            pManager.AddParameter(new Param_LargeRunContext(), "Run Context", "RunCtx",
+                "Bundle of the SG_Shape seed + ordered rules used by this run. Feed into GI_LargeJson Reader to rebuild models without re-wiring SG_Shape and Autorules.",
+                GH_ParamAccess.item); // 2
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -61,6 +64,7 @@ namespace ShapeGrammar3D.Components
                     "The first rule must be AutoRule_InitShape_3D (no SG_Shape input is provided).");
                 DA.SetData(0, "GI_LargeBnd invalid input: missing AutoRule_InitShape_3D.");
                 DA.SetData(1, string.Empty);
+                DA.SetData(2, null);
                 return;
             }
 
@@ -72,10 +76,22 @@ namespace ShapeGrammar3D.Components
                 LineLoads = new List<SG_LineLoad>()
             };
 
+            // Build the context bundle early so it is always available downstream,
+            // even before Reset is toggled (so the reader can prebuild Run Context wires).
+            var idleOrderedRules = StructuralEvaluator.EnsureInitShapeFirst(rules);
+            var idleContext = new LargeRunContext
+            {
+                IniShape = iniShape,
+                Rules = idleOrderedRules,
+                JsonPath = string.Empty,
+                RunId = string.Empty
+            };
+
             if (!reset)
             {
                 DA.SetData(0, "GI_LargeBnd idle. Toggle Reset true to run.");
                 DA.SetData(1, string.Empty);
+                DA.SetData(2, new GH_LargeRunContext(idleContext));
                 return;
             }
 
@@ -199,6 +215,13 @@ namespace ShapeGrammar3D.Components
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GI_LargeBnd failed: " + ex.Message);
                     DA.SetData(0, string.Format("GI_LargeBnd failed at gen {0}: {1}", store.TotalIndividualsRecorded, ex.Message));
                     DA.SetData(1, string.Empty);
+                    DA.SetData(2, new GH_LargeRunContext(new LargeRunContext
+                    {
+                        IniShape = iniShape,
+                        Rules = orderedRules,
+                        JsonPath = string.Empty,
+                        RunId = runId
+                    }));
                     return;
                 }
             }
@@ -220,6 +243,13 @@ namespace ShapeGrammar3D.Components
 
             DA.SetData(0, info);
             DA.SetData(1, finalPath ?? string.Empty);
+            DA.SetData(2, new GH_LargeRunContext(new LargeRunContext
+            {
+                IniShape = iniShape,
+                Rules = orderedRules,
+                JsonPath = finalPath ?? string.Empty,
+                RunId = runId
+            }));
         }
 
         // ── helpers ──

@@ -36,15 +36,16 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddTextParameter("JSON Path", "JSON", "Path to GI_LargeSg JSON file.", GH_ParamAccess.item);                               // 0
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "Initial SG_Shape used during the original run (required for model rebuild).", GH_ParamAccess.item); // 1
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Same rule list as the original run (required for model rebuild).", GH_ParamAccess.list); // 2
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all.", GH_ParamAccess.list, -1);                       // 3
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual index(es) within each generation. -1 = all.", GH_ParamAccess.list, -1); // 4
-            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Keep only top N individuals per (gen, cluster). 0 = no filter.", GH_ParamAccess.item, 0);     // 5
-            pManager.AddBooleanParameter("Build Models", "Build", "If true and SG_Shape+rules supplied, rebuild filtered models into the Assembly output.", GH_ParamAccess.item, false); // 6
-            pManager.AddPointParameter("Insert Pt", "Pt", "Origin for the convergence graph.", GH_ParamAccess.item, Point3d.Origin);            // 7
-            pManager.AddNumberParameter("Graph W", "dX", "Convergence graph width.", GH_ParamAccess.item, 15.0);                                // 8
-            pManager.AddNumberParameter("Graph H", "dY", "Convergence graph height.", GH_ParamAccess.item, 8.0);                                // 9
+            pManager.AddParameter(new Param_LargeRunContext(), "Run Context", "RunCtx",
+                "Bundle of SG_Shape seed + ordered rules emitted by GI_LargeBnd. Required when Build Models = true so models can be rebuilt without re-wiring SG_Shape and Autorules.",
+                GH_ParamAccess.item);                                                                                                          // 1
+            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all.", GH_ParamAccess.list, -1);                       // 2
+            pManager.AddIntegerParameter("Individual", "Ind", "Which individual index(es) within each generation. -1 = all.", GH_ParamAccess.list, -1); // 3
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Keep only top N individuals per (gen, cluster). 0 = no filter.", GH_ParamAccess.item, 0);     // 4
+            pManager.AddBooleanParameter("Build Models", "Build", "If true and Run Context supplied, rebuild filtered models into the Assembly output.", GH_ParamAccess.item, false); // 5
+            pManager.AddPointParameter("Insert Pt", "Pt", "Origin for the convergence graph.", GH_ParamAccess.item, Point3d.Origin);            // 6
+            pManager.AddNumberParameter("Graph W", "dX", "Convergence graph width.", GH_ParamAccess.item, 15.0);                                // 7
+            pManager.AddNumberParameter("Graph H", "dY", "Convergence graph height.", GH_ParamAccess.item, 8.0);                                // 8
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
@@ -54,7 +55,6 @@ namespace ShapeGrammar3D.Components
             pManager[6].Optional = true;
             pManager[7].Optional = true;
             pManager[8].Optional = true;
-            pManager[9].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -85,16 +85,16 @@ namespace ShapeGrammar3D.Components
             string jsonPath = string.Empty;
             if (!DA.GetData(0, ref jsonPath)) return;
 
-            SG_Shape iniShape = null;
-            DA.GetData(1, ref iniShape);
-
-            var rules = new List<SG_Rule>();
-            DA.GetDataList(2, rules);
+            GH_LargeRunContext ghContext = null;
+            DA.GetData(1, ref ghContext);
+            LargeRunContext runContext = ghContext?.Value;
+            SG_Shape iniShape = runContext?.IniShape;
+            var rules = runContext?.Rules != null ? new List<SG_Rule>(runContext.Rules) : new List<SG_Rule>();
 
             var genFilter = new List<int>();
             var indFilter = new List<int>();
-            DA.GetDataList(3, genFilter);
-            DA.GetDataList(4, indFilter);
+            DA.GetDataList(2, genFilter);
+            DA.GetDataList(3, indFilter);
             if (genFilter.Count == 0) genFilter.Add(-1);
             if (indFilter.Count == 0) indFilter.Add(-1);
             bool allGens = genFilter.Contains(-1);
@@ -104,11 +104,11 @@ namespace ShapeGrammar3D.Components
             bool buildModels = false;
             Point3d insertPt = Point3d.Origin;
             double graphW = 15.0, graphH = 8.0;
-            DA.GetData(5, ref topN);
-            DA.GetData(6, ref buildModels);
-            DA.GetData(7, ref insertPt);
-            DA.GetData(8, ref graphW);
-            DA.GetData(9, ref graphH);
+            DA.GetData(4, ref topN);
+            DA.GetData(5, ref buildModels);
+            DA.GetData(6, ref insertPt);
+            DA.GetData(7, ref graphW);
+            DA.GetData(8, ref graphH);
             topN = Math.Max(0, topN);
             graphW = Math.Max(1.0, graphW);
             graphH = Math.Max(1.0, graphH);
@@ -232,7 +232,7 @@ namespace ShapeGrammar3D.Components
                 {
                     if (iniShape == null || rules == null || rules.Count == 0)
                     {
-                        buildStatus = "Build Models requested but SG_Shape and/or rules not supplied; rebuild skipped.";
+                        buildStatus = "Build Models requested but Run Context (SG_Shape seed + rules) not supplied; rebuild skipped.";
                         AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, buildStatus);
                     }
                     else
