@@ -1,4 +1,6 @@
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Elements;
@@ -46,6 +48,9 @@ namespace ShapeGrammar3D.Components
         {
             pManager.AddTextParameter("Info", "Info", "Run summary and progress text.", GH_ParamAccess.item); // 0
             pManager.AddTextParameter("JSON Path", "JSON", "Path of the streamed run JSON.", GH_ParamAccess.item); // 1
+            pManager.AddGenericParameter("SG_Shape", "SG_Shape",
+                "Final generation SG_Shapes sorted by cluster and fitness. Path = final generation.",
+                GH_ParamAccess.tree); // 2
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -61,6 +66,7 @@ namespace ShapeGrammar3D.Components
                     "The first rule must be AutoRule_InitShape_3D (no SG_Shape input is provided).");
                 DA.SetData(0, "GI_LargeBnd invalid input: missing AutoRule_InitShape_3D.");
                 DA.SetData(1, string.Empty);
+                DA.SetDataTree(2, new GH_Structure<GH_ObjectWrapper>());
                 return;
             }
 
@@ -76,6 +82,7 @@ namespace ShapeGrammar3D.Components
             {
                 DA.SetData(0, "GI_LargeBnd idle. Toggle Reset true to run.");
                 DA.SetData(1, string.Empty);
+                DA.SetDataTree(2, new GH_Structure<GH_ObjectWrapper>());
                 return;
             }
 
@@ -135,6 +142,7 @@ namespace ShapeGrammar3D.Components
 
             var watch = Stopwatch.StartNew();
             string finalPath = string.Empty;
+            var finalShapesTree = new GH_Structure<GH_ObjectWrapper>();
             using (var store = new LargeRunJsonStore())
             {
                 try
@@ -161,6 +169,9 @@ namespace ShapeGrammar3D.Components
                         ga.ClusterPopulation(evaluatedPop);
 
                         store.AppendAggregates(evaluatedPop, gen, settings.Clusters);
+
+                        if (isLast)
+                            AppendFinalShapes(finalShapesTree, outcome.Shapes, evaluatedPop, gen);
 
                         store.BeginGeneration(gen);
                         foreach (var ind in evaluatedPop) store.AppendIndividual(ind);
@@ -199,6 +210,7 @@ namespace ShapeGrammar3D.Components
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GI_LargeBnd failed: " + ex.Message);
                     DA.SetData(0, string.Format("GI_LargeBnd failed at gen {0}: {1}", store.TotalIndividualsRecorded, ex.Message));
                     DA.SetData(1, string.Empty);
+                    DA.SetDataTree(2, finalShapesTree);
                     return;
                 }
             }
@@ -220,9 +232,35 @@ namespace ShapeGrammar3D.Components
 
             DA.SetData(0, info);
             DA.SetData(1, finalPath ?? string.Empty);
+            DA.SetDataTree(2, finalShapesTree);
         }
 
         // ── helpers ──
+
+        private static void AppendFinalShapes(
+            GH_Structure<GH_ObjectWrapper> tree,
+            List<SG_Shape> shapes,
+            List<GAIndividual> individuals,
+            int generation)
+        {
+            if (tree == null || shapes == null || shapes.Count == 0)
+                return;
+
+            var path = new GH_Path(generation);
+            int count = shapes.Count;
+            var order = (individuals != null && individuals.Count >= count)
+                ? Enumerable.Range(0, count)
+                    .OrderBy(i => individuals[i].ClustGrp)
+                    .ThenBy(i => individuals[i].Fitness)
+                    .ToList()
+                : Enumerable.Range(0, count).ToList();
+
+            foreach (int idx in order)
+            {
+                var shape = idx < shapes.Count ? shapes[idx] : null;
+                tree.Append(shape != null ? new GH_ObjectWrapper(shape) : null, path);
+            }
+        }
 
         private static GrammarInterpreterSettings DefaultSettings()
         {
