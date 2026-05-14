@@ -345,7 +345,7 @@ namespace ShapeGrammar3D.Components
                     break;
             }
 
-            // Save JSON
+            // Save JSON (internal sidecar under temp; primary output is Assembly)
             string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
                 string.Format("GA4_run_{0}.json", _runStore.RunId));
             try

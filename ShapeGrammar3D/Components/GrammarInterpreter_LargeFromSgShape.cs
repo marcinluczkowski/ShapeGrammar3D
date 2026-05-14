@@ -1,7 +1,6 @@
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
-using ShapeGrammar3D.Classes.Elements;
 using ShapeGrammar3D.Classes.Rules;
 using System;
 using System.Collections.Generic;
@@ -38,8 +37,16 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
                 "GA / interpreter settings (population, generations, clusters, metrics, objectives, self-weight, CroSecOpt).",
                 GH_ParamAccess.item);                                                                                                                            // 2
+            pManager.AddTextParameter("JSON Folder", "JsonOut",
+                "Folder only, or full path ending in .json (full path ignores JSON File). Empty folder = system temp.",
+                GH_ParamAccess.item, string.Empty); // 3
+            pManager.AddTextParameter("JSON File", "JsonFile",
+                "File name (e.g. myrun.json). Empty = GI_LargeBnd.json. Same path overwrites existing file.",
+                GH_ParamAccess.item, string.Empty); // 4
 
             pManager[2].Optional = true;
+            pManager[3].Optional = true;
+            pManager[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -101,6 +108,11 @@ namespace ShapeGrammar3D.Components
                 settings = CloneSettings(ghSettings.Value);
             settings.Sanitize();
 
+            string jsonFolderOrFile = string.Empty;
+            DA.GetData(3, ref jsonFolderOrFile);
+            string jsonFileName = string.Empty;
+            DA.GetData(4, ref jsonFileName);
+
             var feas = new FeasibilitySettings
             {
                 WDang = settings.DanglingWeight,
@@ -130,10 +142,7 @@ namespace ShapeGrammar3D.Components
                 : ga.CreateInitialGeneration(settings.PopulationSize, chromosomeLengths, ruleMarkers);
 
             string runId = Guid.NewGuid().ToString("N").Substring(0, 8);
-            string outFolder = Path.GetTempPath();
-            try { Directory.CreateDirectory(outFolder); } catch { outFolder = Path.GetTempPath(); }
-            string fileName = string.Format("GI_LargeBnd_{0}.json", runId);
-            string jsonPath = Path.Combine(outFolder, fileName);
+            string jsonPath = GrammarInterpreterJsonPath.Resolve(jsonFolderOrFile, jsonFileName, "GI_LargeBnd.json");
 
             var header = new RunHeader
             {
