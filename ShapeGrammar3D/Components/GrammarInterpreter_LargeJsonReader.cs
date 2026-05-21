@@ -13,6 +13,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 
+
 namespace ShapeGrammar3D.Components
 {
     /// <summary>
@@ -208,7 +209,11 @@ namespace ShapeGrammar3D.Components
                         foreach (var r in filteredList.OrderBy(r => r.IndexInGen))
                         {
                             filtClust.Append(new GH_Integer(r.Cluster), filtPath);
-                            filtFit.Append(new GH_Number(Safe(r.Fitness)), filtPath);
+                            // Use Sortable so failed individuals surface as MaxValue
+                            // (sorts last in TopK pickers) instead of being squashed to 0
+                            // - which Safe() would do and which can be misread as the best
+                            // individual when minimising fitness.
+                            filtFit.Append(new GH_Number(Sortable(r.Fitness)), filtPath);
                             filtId.Append(new GH_String(r.Id ?? string.Empty), filtPath);
                             if (buildModels) rebuildList.Add(new RebuildItem { Generation = g, Row = r });
                         }
@@ -403,10 +408,14 @@ namespace ShapeGrammar3D.Components
                 double worstVal = ReadDouble(a, "worst", "WorstFitness");
                 double avgVal = ReadDouble(a, "avg", "AvgFitness");
 
+                // Failed clusters were serialised as JSON null and come back as NaN.
+                // Surface them as MaxValue so downstream consumers (min/max math, the
+                // top-K picker, IsInvalidFitness) stay well-defined instead of poisoning
+                // entire branches with NaN.
                 var path = new GH_Path(g, c);
-                best.Append(new GH_Number(bestVal), path);
-                worst.Append(new GH_Number(worstVal), path);
-                avg.Append(new GH_Number(avgVal), path);
+                best.Append(new GH_Number(SanitizeFit(bestVal)), path);
+                worst.Append(new GH_Number(SanitizeFit(worstVal)), path);
+                avg.Append(new GH_Number(SanitizeFit(avgVal)), path);
                 count.Append(new GH_Integer(n), path);
             }
 
@@ -516,35 +525,71 @@ namespace ShapeGrammar3D.Components
                         continue;
                     }
 
+                    // ── Snapshot the GA-time evaluation from JSON BEFORE the rebuild.
+                    // StructuralEvaluator.EvaluatePopulation rewrites the individual in
+                    // place (or zeros/MaxValue's it on failure), so we cache the
+                    // authoritative values here and restore them afterwards. This keeps
+                    // the linear FE result that the original GA recorded.
+                    double jsonFitness = double.IsNaN(row.Fitness) ? double.MaxValue : row.Fitness;
+                    var jsonObj   = row.Objectives != null ? new List<double>(row.Objectives) : new List<double>();
+                    var jsonTopo  = row.Topo       != null ? new List<double>(row.Topo)       : new List<double>();
+                    var jsonShape = row.Shape      != null ? new List<double>(row.Shape)      : new List<double>();
+                    double jsonFeas  = double.IsNaN(row.Feas)  ? 0.0 : row.Feas;
+                    double jsonVDang = double.IsNaN(row.VDang) ? 0.0 : row.VDang;
+                    double jsonVAng  = double.IsNaN(row.VAng)  ? 0.0 : row.VAng;
+                    double jsonVLen  = double.IsNaN(row.VLen)  ? 0.0 : row.VLen;
+
                     var ind = new GAIndividual(row.Chromosome, row.ChromosomeParam, row.Id ?? Guid.NewGuid().ToString("N").Substring(0, 8))
                     {
                         ClustGrp = row.Cluster,
                         Rank = row.Rank,
                         CrowdingDistance = double.IsNaN(row.CrowdingDistance) ? 0.0 : row.CrowdingDistance,
-                        Feas = double.IsNaN(row.Feas) ? 0.0 : row.Feas,
-                        VDang = double.IsNaN(row.VDang) ? 0.0 : row.VDang,
-                        VAng = double.IsNaN(row.VAng) ? 0.0 : row.VAng,
-                        VLen = double.IsNaN(row.VLen) ? 0.0 : row.VLen,
-                        ObjectiveValues = row.Objectives ?? new List<double>(),
-                        TopoValues = row.Topo ?? new List<double>(),
-                        ShpeValues = row.Shape ?? new List<double>(),
-                        Fitness = double.IsNaN(row.Fitness) ? double.MaxValue : row.Fitness
+                        Feas = jsonFeas,
+                        VDang = jsonVDang,
+                        VAng = jsonVAng,
+                        VLen = jsonVLen,
+                        ObjectiveValues = new List<double>(jsonObj),
+                        TopoValues = new List<double>(jsonTopo),
+                        ShpeValues = new List<double>(jsonShape),
+                        Fitness = jsonFitness
                     };
 
+                    SG_Shape rebuiltShape = null;
+                    TB_Model rebuiltModel = null;
                     try
                     {
                         var pop = new List<GAIndividual> { ind };
                         var outcome = StructuralEvaluator.EvaluatePopulation(
                             pop, iniShape.DeepCopy(), orderedRules, settings, feas, deepCopyOutputs: false);
-                        var shape = outcome.Shapes != null && outcome.Shapes.Count > 0 ? outcome.Shapes[0] : null;
-                        var model = outcome.Models != null && outcome.Models.Count > 0 ? outcome.Models[0] : null;
-                        ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(ind, model, shape));
-                        ok++;
+                        rebuiltShape = outcome.Shapes != null && outcome.Shapes.Count > 0 ? outcome.Shapes[0] : null;
+                        rebuiltModel = outcome.Models != null && outcome.Models.Count > 0 ? outcome.Models[0] : null;
                     }
                     catch
                     {
-                        fail++;
+                        // Swallow: we still surface the JSON-recorded individual below
+                        // (without geometry) so the convergence story stays consistent.
                     }
+
+                    // Restore the JSON-stored evaluation - the rebuilt FE solve gave us
+                    // a fresh TB_Model (with displacements) but its computed Fitness /
+                    // Objectives must not silently displace the GA-time values.
+                    ind.Fitness         = jsonFitness;
+                    ind.ObjectiveValues = jsonObj;
+                    ind.TopoValues      = jsonTopo;
+                    ind.ShpeValues      = jsonShape;
+                    ind.Feas  = jsonFeas;
+                    ind.VDang = jsonVDang;
+                    ind.VAng  = jsonVAng;
+                    ind.VLen  = jsonVLen;
+
+                    if (rebuiltShape == null && rebuiltModel == null)
+                    {
+                        fail++;
+                        continue;
+                    }
+
+                    ag.Individuals.Add(AssemblyIndividual.FromGAIndividual(ind, rebuiltModel, rebuiltShape));
+                    ok++;
                 }
                 if (ag.Individuals.Count > 0) assembly.Generations.Add(ag);
             }
@@ -703,6 +748,15 @@ namespace ShapeGrammar3D.Components
         private static double Sortable(double fit)
             => double.IsNaN(fit) || double.IsInfinity(fit) ? double.MaxValue : fit;
 
+        /// <summary>
+        /// Maps NaN/Infinity fitness values (typically produced when an aggregate
+        /// cluster had zero valid individuals or an individual failed FE evaluation)
+        /// onto <see cref="double.MaxValue"/>. Keeps the GH numeric tree usable
+        /// while still marking the value as "invalid" via <see cref="IsInvalidFitness"/>.
+        /// </summary>
+        private static double SanitizeFit(double v)
+            => double.IsNaN(v) || double.IsInfinity(v) ? double.MaxValue : v;
+
         private static Color GetClusterColour(int cluster, int totalClusters)
         {
             if (totalClusters <= 1) return Color.FromArgb(0, 150, 255);
@@ -739,10 +793,94 @@ namespace ShapeGrammar3D.Components
                 if (ml.TryGetProperty("shape", out var sl) && sl.ValueKind == JsonValueKind.Array)
                     sb.AppendLine("Shape: " + string.Join(", ", sl.EnumerateArray().Select(s => s.GetString())));
             }
+
+            // ── Per-generation fitness health (helps catch upstream issues like
+            // "every individual produced rawDisp=MaxValue") ──
+            AppendFitnessDiagnostics(root, sb);
+
             sb.AppendLine("Pareto Raw: X=disp/(span/300), Y=utilisation objective, Z=feas (see component output descriptions).");
             sb.AppendLine("Pareto Normalized: same points scaled per-generation to [0,1]³ for plotting.");
             return sb.ToString();
         }
+
+        /// <summary>
+        /// Walks the per-individual rows once and surfaces, for every generation,
+        /// how many individuals carry a finite/meaningful Fitness (i.e. would
+        /// pass the writer's <c>IsFiniteMeaningful</c> filter) vs how many were
+        /// flagged as failed (MaxValue / Infinity / null). Adds a min/max line for
+        /// the valid subset so users can sanity-check the linear-stress result.
+        /// </summary>
+        private static void AppendFitnessDiagnostics(JsonElement root, StringBuilder sb)
+        {
+            if (!root.TryGetProperty("generations", out var gensEl) || gensEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            int genCount = gensEl.GetArrayLength();
+            if (genCount == 0) return;
+
+            sb.AppendLine();
+            sb.AppendLine("Fitness diagnostics (per generation: valid / total | min / max of valid):");
+
+            int shownRows = 0;
+            int hiddenRows = 0;
+            int totalValidGlobal = 0, totalRowsGlobal = 0;
+            double globalMin = double.MaxValue, globalMax = double.MinValue;
+
+            foreach (var genEl in gensEl.EnumerateArray())
+            {
+                int g = genEl.TryGetProperty("g", out var gE) ? gE.GetInt32() : -1;
+                if (!genEl.TryGetProperty("ind", out var indEl) || indEl.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                int total = 0, valid = 0;
+                double genMin = double.MaxValue, genMax = double.MinValue;
+                foreach (var i in indEl.EnumerateArray())
+                {
+                    total++;
+                    double f = ReadDouble(i, "f");
+                    if (IsFiniteMeaningful(f))
+                    {
+                        valid++;
+                        if (f < genMin) genMin = f;
+                        if (f > genMax) genMax = f;
+                    }
+                }
+
+                totalRowsGlobal += total;
+                totalValidGlobal += valid;
+                if (valid > 0)
+                {
+                    if (genMin < globalMin) globalMin = genMin;
+                    if (genMax > globalMax) globalMax = genMax;
+                }
+
+                // Cap noisy output: first 5, last 2, anything else summarised.
+                bool showLine = shownRows < 5 || (genCount - (totalRowsGlobal > 0 ? 0 : 0) >= 0); // keep simple
+                if (shownRows < 5)
+                {
+                    sb.AppendLine(valid > 0
+                        ? string.Format("  gen {0,3}: {1,5} / {2,5}  |  {3,12:G6} / {4,12:G6}", g, valid, total, genMin, genMax)
+                        : string.Format("  gen {0,3}: {1,5} / {2,5}  |  (no finite fitness)", g, valid, total));
+                    shownRows++;
+                }
+                else
+                {
+                    hiddenRows++;
+                }
+            }
+
+            if (hiddenRows > 0)
+                sb.AppendLine(string.Format("  ... {0} more generations summarised below ...", hiddenRows));
+
+            sb.AppendLine(totalValidGlobal > 0
+                ? string.Format("  TOTAL : {0} / {1} individuals with finite fitness  |  {2:G6} / {3:G6}",
+                    totalValidGlobal, totalRowsGlobal, globalMin, globalMax)
+                : string.Format("  TOTAL : 0 / {0} individuals with finite fitness  →  EVERY individual was flagged as failed (Fitness = MaxValue/Inf/NaN). Likely upstream: no displacement from FE solve, e.g. loads not snapped to nodes or supports missing.",
+                    totalRowsGlobal));
+        }
+
+        private static bool IsFiniteMeaningful(double v)
+            => !double.IsNaN(v) && !double.IsInfinity(v) && v != double.MaxValue && v != double.MinValue;
 
         // ── DTOs ──
 

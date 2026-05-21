@@ -911,11 +911,18 @@ namespace ShapeGrammar3D.Components
             Vector3d loadVec = initRule?.LoadVector ?? Vector3d.Zero;
             Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
 
-            // Preserve user-supplied loads when no init-rule load is configured.
+            // When the init rule has its own LoadVector/AreaLoadVector, the loads
+            // that landed in shape.PointLoads during InitShape's RuleOperation were
+            // placed BEFORE AutoRule02 added the strut tops the area loads should
+            // actually fall on. Wipe and regenerate at the final shape state -
+            // otherwise SolveLS's BC step zeroes the entire RHS (load = support node).
+            bool initRuleAutoGenerates = initRule != null &&
+                (loadVec.Length > 1e-12 || areaLoadVec.Length > 1e-12);
+
             bool hasUserLoads =
                 (shape.PointLoads != null && shape.PointLoads.Count > 0) ||
                 (shape.LineLoads  != null && shape.LineLoads.Count  > 0);
-            if (hasUserLoads)
+            if (hasUserLoads && !initRuleAutoGenerates)
             {
                 shape.PointLoads ??= new List<SG_PointLoad>();
                 shape.LineLoads  ??= new List<SG_LineLoad>();
@@ -925,9 +932,13 @@ namespace ShapeGrammar3D.Components
             shape.PointLoads ??= new List<SG_PointLoad>();
             shape.PointLoads.Clear();
 
+            // Skip placing loads on fully-constrained support nodes - those entries
+            // are zeroed by the BC step in SolveLS anyway and just waste ΣLoadMag.
+            var fullyConstrainedNodeIds = BuildFullyConstrainedNodeIdSet(shape);
+
             if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec);
+                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec, fullyConstrainedNodeIds);
             }
             else
             {
@@ -935,14 +946,33 @@ namespace ShapeGrammar3D.Components
                 foreach (var nd in shape.Nodes)
                 {
                     if (nd == null || !elemNodeIds.Contains(nd.ID)) continue;
+                    if (fullyConstrainedNodeIds.Contains(nd.ID)) continue;
                     shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
                 }
             }
         }
 
+        private static HashSet<int> BuildFullyConstrainedNodeIdSet(SG_Shape shape)
+        {
+            var ids = new HashSet<int>();
+            if (shape?.Nodes == null) return ids;
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd?.Support == null) continue;
+                var conds = nd.Support.GetBoolConditions();
+                if (conds == null || conds.Count != 6) continue;
+                bool allFixed = true;
+                for (int k = 0; k < 6; k++)
+                    if (!conds[k]) { allFixed = false; break; }
+                if (allFixed) ids.Add(nd.ID);
+            }
+            return ids;
+        }
+
         private static void ApplyVoronoiAreaLoads(
             SG_Shape shape, SG_AutoRule_InitShape_3D initRule,
-            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec)
+            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec,
+            HashSet<int> fullyConstrainedNodeIds)
         {
             var bb = initRule.DesignSpace;
             double xMin = bb.Min.X, xMax = bb.Max.X;
@@ -956,6 +986,7 @@ namespace ShapeGrammar3D.Components
             foreach (var n in seedNodes)
             {
                 if (!voronoiAreas.TryGetValue(n.ID, out double area)) continue;
+                if (fullyConstrainedNodeIds != null && fullyConstrainedNodeIds.Contains(n.ID)) continue;
                 shape.PointLoads.Add(new SG_PointLoad(area * areaLoadVec, Vector3d.Zero, n.Pt));
             }
         }

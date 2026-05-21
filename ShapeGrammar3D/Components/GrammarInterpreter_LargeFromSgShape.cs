@@ -177,10 +177,16 @@ namespace ShapeGrammar3D.Components
                             feas,
                             deepCopyOutputs: false);
 
-                        // Surface rule errors (e.g. wrong marker, 0 struts found) from the first generation.
+                        // Surface rule errors (e.g. wrong marker, 0 struts found) and
+                        // info-level diagnostics from the first generation. Warnings turn
+                        // the component orange; Remarks stay white.
                         if (gen == 0)
+                        {
                             foreach (var w in outcome.Warnings)
                                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, w);
+                            foreach (var r in outcome.Remarks)
+                                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, r);
+                        }
 
                         var evaluatedPop = outcome.EvaluatedPopulation;
                         ga.ClusterPopulation(evaluatedPop);

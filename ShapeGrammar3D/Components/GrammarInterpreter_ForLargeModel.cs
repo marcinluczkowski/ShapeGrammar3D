@@ -176,8 +176,12 @@ namespace ShapeGrammar3D.Components
                             deepCopyOutputs: false);
 
                         if (gen == 0)
+                        {
                             foreach (var w in outcome.Warnings)
                                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, w);
+                            foreach (var r in outcome.Remarks)
+                                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, r);
+                        }
 
                         var evaluatedPop = outcome.EvaluatedPopulation;
                         ga.ClusterPopulation(evaluatedPop);
