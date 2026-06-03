@@ -54,13 +54,19 @@ namespace ShapeGrammar3D.Components
                 "Apply cross-section optimization during reconstruction " +
                 "(uses the same algorithm as Auto4 if the run had it enabled)",
                 GH_ParamAccess.item, false);                                                                // 11
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Horizontal spacing between generation columns", GH_ParamAccess.item, 30.0);               // 12
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between individual rows", GH_ParamAccess.item, 30.0);                    // 13
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between generation columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);                       // 12
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between individual rows. Default (0, 0, -30).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingWide);                      // 13
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);                                                                       // 14
 
             pManager[3].Optional = true;
             pManager[4].Optional = true;
+            pManager[14].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -116,8 +122,8 @@ namespace ShapeGrammar3D.Components
             double deformScale = 100.0;
             int loadCase = -1;
             bool useCroSecOpt = false;
-            double xSpacing = 30.0;
-            double ySpacing = 30.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingWide;
 
             DA.GetData(5, ref topPercent);
             DA.GetData(6, ref showMesh);
@@ -126,8 +132,9 @@ namespace ShapeGrammar3D.Components
             DA.GetData(9, ref deformScale);
             DA.GetData(10, ref loadCase);
             DA.GetData(11, ref useCroSecOpt);
-            DA.GetData(12, ref xSpacing);
-            DA.GetData(13, ref ySpacing);
+            DA.GetData(12, ref colSpacing);
+            DA.GetData(13, ref rowSpacing);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 14);
 
             topPercent = Math.Clamp(topPercent, 0.0, 1.0);
 
@@ -285,7 +292,9 @@ namespace ShapeGrammar3D.Components
                 for (int row = 0; row < column.Count; row++)
                 {
                     EntryData entry = column[row];
-                    Vector3d offset = new Vector3d(col * xSpacing, -row * ySpacing, 0);
+                    Vector3d offset = col * colSpacing + row * rowSpacing;
+                    Point3d cellOrigin = Point3d.Origin + offset;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     GH_Path outPath = new GH_Path(col, row);
 
                     Color clusterColour = GetClusterColour(entry.Record.ClustGrp, totalClusters);
@@ -304,6 +313,7 @@ namespace ShapeGrammar3D.Components
                         if (!(elem is SG_Elem1D elem1d)) continue;
 
                         Line ln = new Line(elem1d.Ln.From + offset, elem1d.Ln.To + offset);
+                        ln.Transform(cellXf);
                         linesTree.Append(new GH_Line(ln), outPath);
                         coloursTree.Append(new GH_Colour(clusterColour), outPath);
 
@@ -382,7 +392,11 @@ namespace ShapeGrammar3D.Components
                                 int idA = tbElem.Nodes[0].Id.Value;
                                 int idB = tbElem.Nodes[1].Id.Value;
                                 if (deformedPts.ContainsKey(idA) && deformedPts.ContainsKey(idB))
-                                    deformedTree.Append(new GH_Line(new Line(deformedPts[idA], deformedPts[idB])), outPath);
+                                {
+                                    Line defLn = new Line(deformedPts[idA], deformedPts[idB]);
+                                    defLn.Transform(cellXf);
+                                    deformedTree.Append(new GH_Line(defLn), outPath);
+                                }
                             }
                         }
 

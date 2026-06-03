@@ -30,15 +30,19 @@ namespace ShapeGrammar3D.Components
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per cluster per generation. 0 = all (default). 1 = best one per cluster.", GH_ParamAccess.item, 0);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddNumberParameter("Radius", "R", "Axis length", GH_ParamAccess.item, 1.0);
             pManager.AddIntervalParameter("Metric Domains", "MDom",
                 "Expected [min, max] domain per metric axis for normalization. Order matches assembly MetricNames. If not supplied, each axis uses observed min–max (supports negative metrics).", GH_ParamAccess.list);
             pManager.AddPointParameter("Insert Point", "Pt", "Base point", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddNumberParameter("Text Height", "TxH", "Height for bakeable TextEntity labels [model units].", GH_ParamAccess.item, 0.15);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient grid (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                "Optional plane whose X/Y axes orient each chart's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[5].Optional = true;
             pManager[6].Optional = true;
@@ -79,19 +83,21 @@ namespace ShapeGrammar3D.Components
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
             topN = Math.Max(0, topN);
 
-            double xSpacing = 30.0, ySpacing = 10.0, radius = 1.0, textHeight = 0.15;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double radius = 1.0, textHeight = 0.15;
             Point3d insertPt = Point3d.Origin;
             var rawDomains = new List<GH_Interval>();
             var domains = new List<Interval>();
             DA.GetDataList(7, rawDomains);
             if (rawDomains.Count > 0)
                 domains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(4, ref xSpacing);
-            DA.GetData(5, ref ySpacing);
+            DA.GetData(4, ref colSpacing);
+            DA.GetData(5, ref rowSpacing);
             DA.GetData(6, ref radius);
             DA.GetData(8, ref insertPt);
             DA.GetData(9, ref textHeight);
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 10, insertPt);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 10);
             if (radius <= 0) radius = 1.0;
             textHeight = Math.Max(0.01, textHeight);
 
@@ -215,17 +221,15 @@ namespace ShapeGrammar3D.Components
                     var vals = ind.AllMetrics();
                     if (vals.Count < numAxes) continue;
 
-                    Point3d c = new Point3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d c = insertPt + col * colSpacing + row * rowSpacing;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform(displayPlane, c);
                     GH_Path outPath = new GH_Path(col, row);
 
                     var polygonPts = new List<Point3d>();
                     for (int m = 0; m < numAxes; m++)
                     {
                         Line axisLn = new Line(c, c + axisDirs[m] * radius);
-                        axisLn.Transform(dispXf);
+                        axisLn.Transform(cellXf);
                         axesTree.Append(new GH_Line(axisLn), outPath);
                         double norm = axisRange[m] > 0 && !double.IsNaN(vals[m]) && !double.IsInfinity(vals[m])
                             ? (vals[m] - axisMin[m]) / axisRange[m]
@@ -242,11 +246,11 @@ namespace ShapeGrammar3D.Components
                         double labelOffset = radius + textHeight * 3.5;
                         Point3d labelPt = c + axisDirs[m] * labelOffset;
                         Plane namePl = new Plane(labelPt, xdir, ydir);
-                        namePl.Transform(dispXf);
+                        namePl.Transform(cellXf);
                         textTree.Append(CreateTextEntity(namePl, metricNames[m], textHeight), outPath);
 
                         Plane valPl = new Plane(labelPt - ydir * textHeight * 1.3, xdir, ydir);
-                        valPl.Transform(dispXf);
+                        valPl.Transform(cellXf);
                         textTree.Append(CreateTextEntity(valPl,
                             string.Format("{0:F3} ({1:F2})", vals[m], clampedNorm), textHeight), outPath);
                     }
@@ -254,13 +258,17 @@ namespace ShapeGrammar3D.Components
                     if (polygonPts.Count >= 3)
                     {
                         for (int pi = 0; pi < polygonPts.Count; pi++)
-                            polygonPts[pi].Transform(dispXf);
+                        {
+                            Point3d pt = polygonPts[pi];
+                            pt.Transform(cellXf);
+                            polygonPts[pi] = pt;
+                        }
                         polygonPts.Add(polygonPts[0]);
                         polyTree.Append(new GH_Curve(new Polyline(polygonPts).ToNurbsCurve()), outPath);
                     }
 
                     Plane clPl = new Plane(c - new Vector3d(0, radius * 1.25, 0), Vector3d.XAxis, Vector3d.YAxis);
-                    clPl.Transform(dispXf);
+                    clPl.Transform(cellXf);
                     textTree.Append(CreateTextEntity(clPl,
                         string.Format("Cluster {0}  G{1}  I{2}", ind.ClustGrp, gen.Generation, indIdx),
                         textHeight * 1.1), outPath);

@@ -59,7 +59,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddPointParameter("Insert Point", "Pt",
                 "Base point for graph", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient graph (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                "Optional plane whose X/Y axes orient the graph. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[3].Optional = true;
             pManager[4].Optional = true;

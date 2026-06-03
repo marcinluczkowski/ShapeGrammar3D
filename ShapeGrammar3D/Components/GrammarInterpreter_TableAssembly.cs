@@ -41,8 +41,12 @@ namespace ShapeGrammar3D.Components
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing between columns", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing between rows", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddPointParameter("Insert Point", "InsPt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddIntegerParameter("Generation", "Gen", "Generation indices (-1 = last)", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Individual", "Ind", "Individual indices (-1 = all)", GH_ParamAccess.list, -1);
@@ -51,7 +55,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Text Height", "TxH", "Text height", GH_ParamAccess.item, 0.3);
             pManager.AddNumberParameter("Line Height", "LnH", "Vertical spacing between lines", GH_ParamAccess.item, 0.4);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient table (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                "Optional plane whose X/Y axes orient each table's text. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[3].Optional = true;
             pManager[4].Optional = true;
@@ -80,14 +84,16 @@ namespace ShapeGrammar3D.Components
             }
             var assembly = ghAssembly.Value;
 
-            double xSpacing = 30.0, ySpacing = 10.0, textH = 0.3, lineH = 0.4;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double textH = 0.3, lineH = 0.4;
             Point3d insertPt = Point3d.Origin;
             List<int> genList = new List<int>();
             List<int> indList = new List<int>();
             int lcIndex = -1;
 
-            DA.GetData(1, ref xSpacing);
-            DA.GetData(2, ref ySpacing);
+            DA.GetData(1, ref colSpacing);
+            DA.GetData(2, ref rowSpacing);
             DA.GetData(3, ref insertPt);
             DA.GetDataList(4, genList);
             DA.GetDataList(5, indList);
@@ -100,7 +106,7 @@ namespace ShapeGrammar3D.Components
             DA.GetData(9, ref lineH);
             topN = Math.Max(0, topN);
 
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 10, insertPt);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 10);
 
             _textHeight = Math.Max(0.01, textH);
             var metricNames = assembly.MetricNames ?? new List<string>();
@@ -184,18 +190,14 @@ namespace ShapeGrammar3D.Components
 
                     var ind = gen.Individuals[i];
 
-                    Point3d anchorLayout = new Point3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d anchorLayout = insertPt + col * colSpacing + row * rowSpacing;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform(displayPlane, anchorLayout);
 
                     GH_Path outPath = new GH_Path(col, row);
-                    Point3d anchorOut = anchorLayout;
-                    anchorOut.Transform(dispXf);
-                    tablePtsTree.Append(new GH_Point(anchorOut), outPath);
+                    tablePtsTree.Append(new GH_Point(anchorLayout), outPath);
 
                     int lineIdx = 0;
-                    AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("--- G{0} I{1} ---", genIdx, i));
+                    AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("--- G{0} I{1} ---", genIdx, i));
 
                     double maxDisp = 0;
                     TB_Model model = ind?.Model;
@@ -216,29 +218,29 @@ namespace ShapeGrammar3D.Components
                             }
                         }
                     }
-                    AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("MaxDisp: {0:F4}", maxDisp));
+                    AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("MaxDisp: {0:F4}", maxDisp));
 
                     if (ind != null)
                     {
                         if (ind.Fitness >= 0 && ind.Fitness < double.MaxValue * 0.5)
-                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("Fitness: {0:F4}", ind.Fitness));
-                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("AvgUtil Dev: {0:F4}", ind.ObjUtil));
-                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("Feasibility: {0:F4}", ind.ObjFeas));
+                            AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("Fitness: {0:F4}", ind.Fitness));
+                        AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("AvgUtil Dev: {0:F4}", ind.ObjUtil));
+                        AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("Feasibility: {0:F4}", ind.ObjFeas));
 
                         var metrics = ind.AllMetrics();
                         for (int m = 0; m < metrics.Count; m++)
                         {
                             string name = m < metricNames.Count ? metricNames[m] : string.Format("M{0}", m);
-                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("{0}: {1:F4}", name, metrics[m]));
+                            AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("{0}: {1:F4}", name, metrics[m]));
                         }
 
-                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("Cluster: {0}", ind.ClustGrp));
+                        AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("Cluster: {0}", ind.ClustGrp));
 
-                        AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("Pareto Rank: {0}", ind.Rank));
+                        AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("Pareto Rank: {0}", ind.Rank));
                         if (ind.Rank == 0)
                         {
                             double normDisp = dispRange > 0 ? (maxDisp - dispMin) / dispRange : 0;
-                            AddLabel(anchorLayout, lineH, ref lineIdx, dispXf, string.Format("Pareto front (Disp): {0:F4} (norm {1:F3})", maxDisp, normDisp));
+                            AddLabel(anchorLayout, lineH, ref lineIdx, cellXf, string.Format("Pareto front (Disp): {0:F4} (norm {1:F3})", maxDisp, normDisp));
                         }
                     }
 

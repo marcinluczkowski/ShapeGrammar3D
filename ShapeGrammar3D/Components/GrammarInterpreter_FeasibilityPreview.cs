@@ -203,13 +203,17 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all.", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all.", GH_ParamAccess.list, -1);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing between individuals", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing between individuals", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddPointParameter("Insert Point", "Pt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddIntegerParameter("Load Case", "LC", "Load case for utilization (-1 = last)", GH_ParamAccess.item, -1);
             pManager.AddNumberParameter("Dot Radius", "DotR", "Radius of angle/intersection/dangling dots", GH_ParamAccess.item, 0.15);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient layout (XY through Insert Pt) onto this plane.",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[6].Optional = true;
             pManager[7].Optional = true;
@@ -265,7 +269,8 @@ namespace ShapeGrammar3D.Components
             bool allInds = indList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
 
-            double xSpacing = 30, ySpacing = 10;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
             Point3d insertPt = Point3d.Origin;
             int lcIndex = -1;
             double dotR = 0.15;
@@ -273,14 +278,14 @@ namespace ShapeGrammar3D.Components
             double angMin = 10, angOpt = 30;
             int topN = 0;
 
-            DA.GetData(3, ref xSpacing);
-            DA.GetData(4, ref ySpacing);
+            DA.GetData(3, ref colSpacing);
+            DA.GetData(4, ref rowSpacing);
             DA.GetData(5, ref insertPt);
             DA.GetData(6, ref lcIndex);
             DA.GetData(7, ref dotR);
             _dotRadius = Math.Max(0.01, dotR);
 
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 8, insertPt);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 8);
 
             if (assembly.Config != null)
             {
@@ -400,10 +405,9 @@ namespace ShapeGrammar3D.Components
 
                     FeasibilityResult feas = FeasibilityMetrics.Compute(shape, feasSettings);
 
-                    Vector3d offset = new Vector3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d cellOrigin = insertPt + col * colSpacing + row * rowSpacing;
+                    Vector3d offset = (Vector3d)cellOrigin;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
 
                     GH_Path path = new GH_Path(col, row);
 
@@ -438,6 +442,7 @@ namespace ShapeGrammar3D.Components
                         Line ln = GetElementLine(e1);
                         if (!ln.IsValid) continue;
                         Line offsetLn = new Line(ln.From + offset, ln.To + offset);
+                        offsetLn.Transform(cellXf);
                         lineTree.Append(new GH_Line(offsetLn), path);
 
                         TB_Element_1D modelElem = FindModelElementByLine(model, ln);
@@ -493,13 +498,16 @@ namespace ShapeGrammar3D.Components
                         foreach (var (Node, MinAngleDeg, Classification) in allNodeAngleData)
                         {
                             Point3d pt = Node.Pt + offset;
+                            pt.Transform(cellXf);
                             Color dotColor = Classification >= 0 ? FeasColor(Classification) : Color.FromArgb(180, 160, 160, 160);
                             _angleDots.Add(new DotMark { Position = pt, Colour = dotColor });
                         }
                     }
                     foreach (var (Node, MinAngleDeg, Classification) in allNodeAngleData)
                     {
-                        angleNodePtsTree.Append(new GH_Point(Node.Pt + offset), path);
+                        Point3d ap = Node.Pt + offset;
+                        ap.Transform(cellXf);
+                        angleNodePtsTree.Append(new GH_Point(ap), path);
                         string txt;
                         if (Classification < 0)
                             txt = "—";
@@ -520,6 +528,7 @@ namespace ShapeGrammar3D.Components
                     }
                     else
                         labelPt = insertPt + offset;
+                    labelPt.Transform(cellXf);
                     int angGood = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_GOOD);
                     int angOrange = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_ORANGE);
                     int angBad = allNodeAngleData.Count(x => x.Classification == FeasibilityMetrics.CLS_BAD);
@@ -538,6 +547,7 @@ namespace ShapeGrammar3D.Components
                         {
                             Mesh placed = baseMesh.DuplicateMesh();
                             placed.Translate(offset);
+                            placed.Transform(cellXf);
                             boundaryMeshTree.Append(new GH_Mesh(placed), path);
                             if (ShowBoundary)
                             {
@@ -555,6 +565,7 @@ namespace ShapeGrammar3D.Components
                     foreach (var d in intersectionData)
                     {
                         Point3d ptLayout = d.Point + offset;
+                        ptLayout.Transform(cellXf);
                         intPtsTree.Append(new GH_Point(ptLayout), path);
                         intValTree.Append(new GH_Number(d.Value), path);
                         if (ShowIntersection)
@@ -563,49 +574,17 @@ namespace ShapeGrammar3D.Components
                     if (ShowDangling)
                     {
                         foreach (var (_, MidPoint) in FeasibilityMetrics.GetDanglingElementMidpoints(shape))
-                            _danglingDots.Add(new DotMark { Position = MidPoint + offset, Colour = Color.FromArgb(255, 50, 50) });
+                        {
+                            Point3d dp = MidPoint + offset;
+                            dp.Transform(cellXf);
+                            _danglingDots.Add(new DotMark { Position = dp, Colour = Color.FromArgb(255, 50, 50) });
+                        }
                     }
 
                     totalCount++;
                     row++;
                 }
                 col++;
-            }
-
-            if (!dispXf.IsIdentity)
-            {
-                lineTree = PreviewLayoutTransforms.TransformLineTree(lineTree, dispXf);
-                meshTree = PreviewLayoutTransforms.TransformMeshTree(meshTree, dispXf);
-                angleNodePtsTree = PreviewLayoutTransforms.TransformPointTree(angleNodePtsTree, dispXf);
-                labelPtTree = PreviewLayoutTransforms.TransformPointTree(labelPtTree, dispXf);
-                intPtsTree = PreviewLayoutTransforms.TransformPointTree(intPtsTree, dispXf);
-                boundaryMeshTree = PreviewLayoutTransforms.TransformMeshTree(boundaryMeshTree, dispXf);
-                for (int i = 0; i < _angleDots.Count; i++)
-                {
-                    var d = _angleDots[i];
-                    Point3d p = d.Position;
-                    p.Transform(dispXf);
-                    _angleDots[i] = new DotMark { Position = p, Colour = d.Colour };
-                }
-                for (int i = 0; i < _intersectDots.Count; i++)
-                {
-                    var d = _intersectDots[i];
-                    Point3d p = d.Position;
-                    p.Transform(dispXf);
-                    _intersectDots[i] = new DotMark { Position = p, Colour = d.Colour };
-                }
-                for (int i = 0; i < _danglingDots.Count; i++)
-                {
-                    var d = _danglingDots[i];
-                    Point3d p = d.Position;
-                    p.Transform(dispXf);
-                    _danglingDots[i] = new DotMark { Position = p, Colour = d.Colour };
-                }
-                foreach (var b in _boundaryItems)
-                {
-                    if (b.Mesh != null)
-                        b.Mesh.Transform(dispXf);
-                }
             }
 
             DA.SetDataTree(0, lineTree);
