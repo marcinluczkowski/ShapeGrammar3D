@@ -1,10 +1,8 @@
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Data;
-using Grasshopper.Kernel.Types;
-using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Rules;
 using ShapeGrammar3D.Classes.Toolbox;
+using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -16,19 +14,19 @@ using System.Text.Json;
 namespace ShapeGrammar3D.Components
 {
     /// <summary>
-    /// Reads JSON files written by <see cref="GrammarInterpreter_LargeFromSgShape"/>
-    /// (v2 schema). Outputs convergence aggregates, per-generation Pareto data and -
-    /// when a SG_Shape and rules are supplied - a lightweight assembly with the
-    /// requested individuals' models rebuilt by replaying their genotypes.
+    /// Reads JSON files written by the large grammar interpreters (v2 schema) once and
+    /// packs the parsed run into an <see cref="OptimizationResults"/> bundle for fast,
+    /// repeated previewing (see GI_Opti Preview). Optionally rebuilds the selected
+    /// individuals' models into a lightweight assembly.
     ///
-    /// The reader also tolerates v1 files (aggregates only) so legacy summaries
-    /// keep producing convergence graphs.
+    /// Outputs are kept to a minimum: heavy per-generation Pareto/convergence rendering
+    /// now lives in the dedicated preview component, fed by the single Results output.
     /// </summary>
     public class GrammarInterpreter_LargeJsonReader : GH_Component
     {
         public GrammarInterpreter_LargeJsonReader()
           : base("GI Large JSON Reader", "GI_LargeJson",
-              "Reads GI_LargeSg JSON runs: convergence, Pareto, and on-demand model rebuilds for selected (generation, individual) pairs.",
+              "Parses a GI_LargeSg JSON run once into an Optimization Results bundle (feed GI_Opti Preview). Optionally rebuilds selected individuals' models.",
               UT.CAT, UT.GR_DATA_PREVIEW)
         {
         }
@@ -37,47 +35,29 @@ namespace ShapeGrammar3D.Components
         {
             pManager.AddTextParameter("JSON Path", "JSON", "Path to GI_LargeSg JSON file.", GH_ParamAccess.item);                               // 0
             pManager.AddParameter(new Param_LargeRunContext(), "Run Context", "RunCtx",
-                "Bundle of SG_Shape seed + ordered rules emitted by GI_LargeBnd. Required when Build Models = true so models can be rebuilt without re-wiring SG_Shape and Autorules.",
+                "Bundle of SG_Shape seed + ordered rules emitted by the large interpreter. Required when Build Models = true so models can be rebuilt without re-wiring SG_Shape and Autorules.",
                 GH_ParamAccess.item);                                                                                                          // 1
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all.", GH_ParamAccess.list, -1);                       // 2
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual index(es) within each generation. -1 = all.", GH_ParamAccess.list, -1); // 3
-            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Keep only top N individuals per (gen, cluster). 0 = no filter.", GH_ParamAccess.item, 0);     // 4
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Keep only top N individuals per (gen, cluster). 0 = no filter. Use to trim very large runs.", GH_ParamAccess.item, 0);     // 4
             pManager.AddBooleanParameter("Build Models", "Build", "If true and Run Context supplied, rebuild filtered models into the Assembly output.", GH_ParamAccess.item, false); // 5
-            pManager.AddPointParameter("Insert Pt", "Pt", "Origin for the convergence graph.", GH_ParamAccess.item, Point3d.Origin);            // 6
-            pManager.AddNumberParameter("Graph W", "dX", "Convergence graph width.", GH_ParamAccess.item, 15.0);                                // 7
-            pManager.AddNumberParameter("Graph H", "dY", "Convergence graph height.", GH_ParamAccess.item, 8.0);                                // 8
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[4].Optional = true;
             pManager[5].Optional = true;
-            pManager[6].Optional = true;
-            pManager[7].Optional = true;
-            pManager[8].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Info", "Info", "Run metadata + filter summary.", GH_ParamAccess.item);                                  // 0
-            pManager.AddNumberParameter("Best Fitness", "Best", "Best fitness per {gen;cluster}.", GH_ParamAccess.tree);                       // 1
-            pManager.AddNumberParameter("Worst Fitness", "Worst", "Worst fitness per {gen;cluster}.", GH_ParamAccess.tree);                    // 2
-            pManager.AddNumberParameter("Average Fitness", "Avg", "Average fitness per {gen;cluster}.", GH_ParamAccess.tree);                  // 3
-            pManager.AddIntegerParameter("Counts", "N", "Individual count per {gen;cluster}.", GH_ParamAccess.tree);                           // 4
-            pManager.AddLineParameter("Conv Lines", "CLn", "Best-fitness convergence lines.", GH_ParamAccess.tree);                            // 5
-            pManager.AddColourParameter("Conv Colours", "CCol", "Convergence line colours.", GH_ParamAccess.tree);                             // 6
-            pManager.AddPointParameter("Pareto Raw", "PtoRaw",
-                "Same axes as GI_Pareto (Assembly): X = SLS disp ratio (max disp / span×300), i.e. multi-obj Fitness or single-obj Obj[0]; Y = utilisation objective Obj[1] (deviation or max util per run settings); Z = Obj[2] if 3 objectives else Feas.",
-                GH_ParamAccess.tree);                                                                                                              // 7
-            pManager.AddPointParameter("Pareto Normalized", "PtoNrm",
-                "Per-generation points in [0,1]³: min-max normalize each axis with 5% padding (same idea as GI_Pareto axis mapping). Multiply by your graph W,H,D to overlay the assembly Pareto component.",
-                GH_ParamAccess.tree);                                                                                                              // 8
-            pManager.AddColourParameter("Pareto Colours", "PCol", "Cluster colour per Pareto point (matches Raw + Normalized).", GH_ParamAccess.tree);   // 9
-            pManager.AddIntegerParameter("Filt Cluster", "FCls", "Cluster index of filtered individuals per {gen}.", GH_ParamAccess.tree);     // 10
-            pManager.AddNumberParameter("Filt Fitness", "FFit", "Fitness of filtered individuals per {gen}.", GH_ParamAccess.tree);            // 11
-            pManager.AddTextParameter("Filt Id", "FId", "Stored id of filtered individuals per {gen}.", GH_ParamAccess.tree);                  // 12
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "Lightweight assembly with rebuilt SG_Shape + TB_Model for filtered individuals (only when Build Models = true).", GH_ParamAccess.item); // 13
-            pManager.AddTextParameter("Build Status", "Status", "Notes on rebuild (warnings, mismatches).", GH_ParamAccess.item);              // 14
+            pManager.AddTextParameter("Info", "Info", "Run metadata, filter summary and rebuild status.", GH_ParamAccess.item);               // 0
+            pManager.AddParameter(new Param_OptimizationResults(), "Results", "Res",
+                "Pre-parsed run (aggregates + data points). Wire into GI_Opti Preview for Pareto/convergence with per-cluster sub-branches.",
+                GH_ParamAccess.item);                                                                                                          // 1
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly",
+                "Lightweight assembly with rebuilt SG_Shape + TB_Model for filtered individuals (only when Build Models = true).",
+                GH_ParamAccess.item);                                                                                                          // 2
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -102,16 +82,9 @@ namespace ShapeGrammar3D.Components
 
             int topN = 0;
             bool buildModels = false;
-            Point3d insertPt = Point3d.Origin;
-            double graphW = 15.0, graphH = 8.0;
             DA.GetData(4, ref topN);
             DA.GetData(5, ref buildModels);
-            DA.GetData(6, ref insertPt);
-            DA.GetData(7, ref graphW);
-            DA.GetData(8, ref graphH);
             topN = Math.Max(0, topN);
-            graphW = Math.Max(1.0, graphW);
-            graphH = Math.Max(1.0, graphH);
 
             if (string.IsNullOrWhiteSpace(jsonPath) || !File.Exists(jsonPath))
             {
@@ -143,24 +116,18 @@ namespace ShapeGrammar3D.Components
                 int numClusters = ReadIntPath(root, "settings", "clusters", fallback: 1);
                 int numObjectives = ReadIntPath(root, "settings", "numObjectives", fallback: 1);
 
-                // ── Aggregates → trees + convergence graph ──
-                var (best, worst, avg, count) = BuildAggregateTrees(root);
-                var (lines, lineCols) = BuildConvergenceGraph(root, numClusters, insertPt, graphW, graphH);
-
-                DA.SetDataTree(1, best);
-                DA.SetDataTree(2, worst);
-                DA.SetDataTree(3, avg);
-                DA.SetDataTree(4, count);
-                DA.SetDataTree(5, lines);
-                DA.SetDataTree(6, lineCols);
-
-                // ── Per-generation Pareto + filtered individuals ──
-                var pareto = new GH_Structure<GH_Point>();
-                var paretoNorm = new GH_Structure<GH_Point>();
-                var paretoColours = new GH_Structure<GH_Colour>();
-                var filtClust = new GH_Structure<GH_Integer>();
-                var filtFit = new GH_Structure<GH_Number>();
-                var filtId = new GH_Structure<GH_String>();
+                var results = new OptimizationResults
+                {
+                    JsonPath = jsonPath,
+                    Version = version,
+                    PopulationSize = ReadIntPath(root, "settings", "populationSize", 0),
+                    NumGenerations = ReadIntPath(root, "settings", "generations", 0),
+                    NumClusters = Math.Max(1, numClusters),
+                    NumObjectives = Math.Max(1, numObjectives),
+                    RunId = root.TryGetProperty("runId", out var rid) ? rid.GetString() : null
+                };
+                ReadMetricLabels(root, results);
+                results.Aggregates = BuildAggregates(root);
 
                 var rebuildList = new List<RebuildItem>();
 
@@ -176,23 +143,11 @@ namespace ShapeGrammar3D.Components
                         int idx = 0;
                         foreach (var i in indEl.EnumerateArray())
                         {
-                            var row = ParseIndividual(i, idx, g);
-                            rows.Add(row);
-
-                            if (row.Objectives != null && row.Objectives.Count >= 2)
-                            {
-                                var raw = BuildParetoRawPoint(row, numObjectives);
-                                if (raw.HasValue)
-                                {
-                                    var path = new GH_Path(g);
-                                    pareto.Append(new GH_Point(raw.Value), path);
-                                    paretoColours.Append(new GH_Colour(GetClusterColour(row.Cluster, numClusters)), path);
-                                }
-                            }
+                            rows.Add(ParseIndividual(i, idx, g));
                             idx++;
                         }
 
-                        // Filter: ind index list, then top-N per cluster
+                        // Filter: ind index list, then top-N per cluster.
                         IEnumerable<IndividualRow> filtered = rows;
                         if (!allInds) filtered = filtered.Where(r => indFilter.Contains(r.IndexInGen));
                         var filteredList = filtered.ToList();
@@ -204,26 +159,13 @@ namespace ShapeGrammar3D.Components
                                 .ToList();
                         }
 
-                        var filtPath = new GH_Path(g);
                         foreach (var r in filteredList.OrderBy(r => r.IndexInGen))
                         {
-                            filtClust.Append(new GH_Integer(r.Cluster), filtPath);
-                            filtFit.Append(new GH_Number(Safe(r.Fitness)), filtPath);
-                            filtId.Append(new GH_String(r.Id ?? string.Empty), filtPath);
+                            results.Points.Add(ToOptPoint(r, numObjectives));
                             if (buildModels) rebuildList.Add(new RebuildItem { Generation = g, Row = r });
                         }
                     }
                 }
-
-                if (pareto.DataCount > 0)
-                    paretoNorm = NormalizeParetoPerBranch(pareto);
-
-                DA.SetDataTree(7, pareto);
-                DA.SetDataTree(8, paretoNorm);
-                DA.SetDataTree(9, paretoColours);
-                DA.SetDataTree(10, filtClust);
-                DA.SetDataTree(11, filtFit);
-                DA.SetDataTree(12, filtId);
 
                 // ── Optional rebuild ──
                 string buildStatus;
@@ -250,16 +192,14 @@ namespace ShapeGrammar3D.Components
                 }
                 else
                 {
-                    buildStatus = rebuildList.Count > 0
-                        ? string.Format("{0} individuals filtered (toggle Build Models to materialise their models).", rebuildList.Count)
+                    buildStatus = results.Points.Count > 0
+                        ? string.Format("{0} individuals parsed (toggle Build Models to materialise their models).", results.Points.Count)
                         : "No individuals selected.";
                 }
 
-                DA.SetData(13, new GH_SGAssembly(assembly));
-                DA.SetData(14, buildStatus);
-
-                // ── Info text ──
-                DA.SetData(0, BuildInfo(root, jsonPath, version, rebuildList.Count));
+                DA.SetData(0, BuildInfo(root, jsonPath, version, results.Points.Count, buildStatus));
+                DA.SetData(1, new GH_OptimizationResults(results));
+                DA.SetData(2, new GH_SGAssembly(assembly));
             }
         }
 
@@ -269,12 +209,28 @@ namespace ShapeGrammar3D.Components
             return double.IsNaN(f) || double.IsInfinity(f) || f >= double.MaxValue * 0.5;
         }
 
+        private static OptPoint ToOptPoint(IndividualRow row, int numObjectives)
+        {
+            return new OptPoint
+            {
+                Generation = row.Generation,
+                IndexInGen = row.IndexInGen,
+                Cluster = row.Cluster,
+                Rank = row.Rank,
+                Id = row.Id,
+                Fitness = row.Fitness,
+                Feas = row.Feas,
+                Objectives = row.Objectives ?? new List<double>(),
+                Raw = BuildParetoRawPoint(row, numObjectives) ?? Point3d.Unset
+            };
+        }
+
         /// <summary>
         /// X matches GI_Pareto (Assembly): displacement ratio max_disp / (span/300).
         /// Multi-objective: <see cref="GAIndividual.Fitness"/> is that ratio.
-        /// Single-objective: Fitness may be a composite; Obj[0] is always dispRatio in StructuralEvaluator.
-        /// Y = Obj[1] (utilisation objective: deviation from target or max util — see Json utilObjType).
-        /// Z = Obj[2] for 3 objectives, else total feasibility violation from field <c>fe</c>.
+        /// Single-objective: Obj[0] is always dispRatio in StructuralEvaluator.
+        /// Y = Obj[1] (utilisation objective). Z = Obj[2] for 3 objectives, else feasibility.
+        /// Returns null when the point is invalid (NaN/infinite/sentinel fitness).
         /// </summary>
         private static Point3d? BuildParetoRawPoint(IndividualRow row, int numObjectives)
         {
@@ -285,10 +241,10 @@ namespace ShapeGrammar3D.Components
             if (double.IsNaN(x) || double.IsInfinity(x))
                 return null;
 
-            double y = row.Objectives[1];
+            double y = row.Objectives != null && row.Objectives.Count > 1 ? row.Objectives[1] : double.NaN;
             if (double.IsNaN(y) || double.IsInfinity(y)) return null;
 
-            double z = numObjectives >= 3 && row.Objectives.Count > 2
+            double z = numObjectives >= 3 && row.Objectives != null && row.Objectives.Count > 2
                 ? row.Objectives[2]
                 : row.Feas;
             if (double.IsNaN(z) || double.IsInfinity(z)) z = 0;
@@ -303,60 +259,9 @@ namespace ShapeGrammar3D.Components
             return row.Objectives != null && row.Objectives.Count > 0 ? row.Objectives[0] : row.Fitness;
         }
 
-        /// <summary>Per-path min–max normalise with 5% padding (same as GI_Pareto Assembly).</summary>
-        private static GH_Structure<GH_Point> NormalizeParetoPerBranch(GH_Structure<GH_Point> raw)
-        {
-            var norm = new GH_Structure<GH_Point>();
-            if (raw == null || raw.PathCount == 0) return norm;
-
-            for (int bi = 0; bi < raw.PathCount; bi++)
-            {
-                GH_Path path = raw.get_Path(bi);
-                var branch = raw.get_Branch(path);
-                var pts = new List<Point3d>();
-                foreach (var goo in branch)
-                {
-                    if (goo is GH_Point gp && gp.Value != null) pts.Add(gp.Value);
-                }
-                if (pts.Count == 0) continue;
-
-                double minX = pts.Min(p => p.X), maxX = pts.Max(p => p.X);
-                double minY = pts.Min(p => p.Y), maxY = pts.Max(p => p.Y);
-                double minZ = pts.Min(p => p.Z), maxZ = pts.Max(p => p.Z);
-                PadRange(ref minX, ref maxX);
-                PadRange(ref minY, ref maxY);
-                PadRange(ref minZ, ref maxZ);
-                double rX = maxX - minX, rY = maxY - minY, rZ = maxZ - minZ;
-                if (rX < 1e-18) rX = 1;
-                if (rY < 1e-18) rY = 1;
-                if (rZ < 1e-18) rZ = 1;
-
-                foreach (var goo in branch)
-                {
-                    if (goo is GH_Point gp && gp.Value != null)
-                    {
-                        var p = gp.Value;
-                        double nx = Math.Clamp((p.X - minX) / rX, 0, 1);
-                        double ny = Math.Clamp((p.Y - minY) / rY, 0, 1);
-                        double nz = Math.Clamp((p.Z - minZ) / rZ, 0, 1);
-                        norm.Append(new GH_Point(new Point3d(nx, ny, nz)), path);
-                    }
-                }
-            }
-            return norm;
-        }
-
-        private static void PadRange(ref double min, ref double max)
-        {
-            if (max <= min) max = min + 1;
-            double r = max - min;
-            min -= r * 0.05;
-            max += r * 0.05;
-        }
-
         private static IndividualRow ParseIndividual(JsonElement e, int idxInGen, int gen)
         {
-            var row = new IndividualRow
+            return new IndividualRow
             {
                 Generation = gen,
                 IndexInGen = idxInGen,
@@ -375,20 +280,13 @@ namespace ShapeGrammar3D.Components
                 Chromosome = ReadIntArray(e, "ch"),
                 ChromosomeParam = ReadDoubleArray(e, "p")
             };
-            return row;
         }
 
-        private static (GH_Structure<GH_Number> best, GH_Structure<GH_Number> worst,
-                        GH_Structure<GH_Number> avg, GH_Structure<GH_Integer> count)
-            BuildAggregateTrees(JsonElement root)
+        private static List<OptAggregate> BuildAggregates(JsonElement root)
         {
-            var best = new GH_Structure<GH_Number>();
-            var worst = new GH_Structure<GH_Number>();
-            var avg = new GH_Structure<GH_Number>();
-            var count = new GH_Structure<GH_Integer>();
-
+            var list = new List<OptAggregate>();
             if (!root.TryGetProperty("aggregates", out var aggEl) || aggEl.ValueKind != JsonValueKind.Array)
-                return (best, worst, avg, count);
+                return list;
 
             foreach (var a in aggEl.EnumerateArray())
             {
@@ -399,79 +297,27 @@ namespace ShapeGrammar3D.Components
                 int n = a.TryGetProperty("n", out var nE) ? nE.GetInt32()
                       : a.TryGetProperty("Count", out var nE2) ? nE2.GetInt32() : 0;
 
-                double bestVal = ReadDouble(a, "best", "BestFitness");
-                double worstVal = ReadDouble(a, "worst", "WorstFitness");
-                double avgVal = ReadDouble(a, "avg", "AvgFitness");
-
-                var path = new GH_Path(g, c);
-                best.Append(new GH_Number(bestVal), path);
-                worst.Append(new GH_Number(worstVal), path);
-                avg.Append(new GH_Number(avgVal), path);
-                count.Append(new GH_Integer(n), path);
+                list.Add(new OptAggregate
+                {
+                    Generation = g,
+                    Cluster = c,
+                    Count = n,
+                    Best = ReadDouble(a, "best", "BestFitness"),
+                    Worst = ReadDouble(a, "worst", "WorstFitness"),
+                    Avg = ReadDouble(a, "avg", "AvgFitness")
+                });
             }
-
-            return (best, worst, avg, count);
+            return list;
         }
 
-        private static (GH_Structure<GH_Line> lines, GH_Structure<GH_Colour> cols)
-            BuildConvergenceGraph(JsonElement root, int numClusters, Point3d origin, double w, double h)
+        private static void ReadMetricLabels(JsonElement root, OptimizationResults results)
         {
-            var lines = new GH_Structure<GH_Line>();
-            var cols = new GH_Structure<GH_Colour>();
-            if (!root.TryGetProperty("aggregates", out var aggEl) || aggEl.ValueKind != JsonValueKind.Array)
-                return (lines, cols);
-
-            var byCluster = new Dictionary<int, List<(int g, double best)>>();
-            foreach (var a in aggEl.EnumerateArray())
-            {
-                int g = a.TryGetProperty("g", out var gE) ? gE.GetInt32()
-                      : a.TryGetProperty("Generation", out var gE2) ? gE2.GetInt32() : 0;
-                int c = a.TryGetProperty("c", out var cE) ? cE.GetInt32()
-                      : a.TryGetProperty("Cluster", out var cE2) ? cE2.GetInt32() : 0;
-                double bestVal = ReadDouble(a, "best", "BestFitness");
-                if (!byCluster.TryGetValue(c, out var list))
-                {
-                    list = new List<(int, double)>();
-                    byCluster[c] = list;
-                }
-                list.Add((g, bestVal));
-            }
-            if (byCluster.Count == 0) return (lines, cols);
-
-            var allGens = byCluster.Values.SelectMany(v => v.Select(t => t.g)).Distinct().OrderBy(x => x).ToList();
-            if (allGens.Count < 2) return (lines, cols);
-
-            double subH = h / Math.Max(1, numClusters);
-            for (int c = 0; c < Math.Max(1, numClusters); c++)
-            {
-                if (!byCluster.TryGetValue(c, out var data) || data.Count < 2) continue;
-                data = data.OrderBy(t => t.g).ToList();
-                var valid = data.Where(t => !double.IsNaN(t.best) && !double.IsInfinity(t.best)).ToList();
-                if (valid.Count == 0) continue;
-                double min = valid.Min(t => t.best);
-                double max = valid.Max(t => t.best);
-                if (Math.Abs(max - min) < 1e-12) max = min + 1.0;
-
-                double yBase = origin.Y - c * subH;
-                var path = new GH_Path(c);
-                for (int i = 1; i < data.Count; i++)
-                {
-                    Point3d p0 = MapPoint(data[i - 1].g, data[i - 1].best, allGens.Count, min, max, origin.X, yBase, w, subH * 0.8);
-                    Point3d p1 = MapPoint(data[i].g, data[i].best, allGens.Count, min, max, origin.X, yBase, w, subH * 0.8);
-                    lines.Append(new GH_Line(new Line(p0, p1)), path);
-                    cols.Append(new GH_Colour(GetClusterColour(c, numClusters)), path);
-                }
-            }
-            return (lines, cols);
-        }
-
-        private static Point3d MapPoint(int gen, double best, int genCount, double min, double max,
-            double x0, double y0, double w, double h)
-        {
-            double x = x0 + (genCount <= 1 ? 0.0 : (double)gen / (genCount - 1) * w);
-            double t = (best - min) / (max - min);
-            double y = y0 + (1.0 - t) * h;
-            return new Point3d(x, y, 0);
+            if (!root.TryGetProperty("metricLabels", out var ml) || ml.ValueKind != JsonValueKind.Object)
+                return;
+            if (ml.TryGetProperty("topology", out var tl) && tl.ValueKind == JsonValueKind.Array)
+                results.TopoLabels = tl.EnumerateArray().Select(s => s.GetString() ?? string.Empty).ToList();
+            if (ml.TryGetProperty("shape", out var sl) && sl.ValueKind == JsonValueKind.Array)
+                results.ShapeLabels = sl.EnumerateArray().Select(s => s.GetString() ?? string.Empty).ToList();
         }
 
         private static SGShapeGrammar3DAssembly RebuildAssembly(JsonElement root,
@@ -597,7 +443,6 @@ namespace ShapeGrammar3D.Components
                 && p.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number
                 && el.TryGetInt32(out int v))
                 return v;
-            // legacy v1 may have flat properties
             if (root.TryGetProperty(name, out var el2) && el2.ValueKind == JsonValueKind.Number && el2.TryGetInt32(out int v2))
                 return v2;
             return fallback;
@@ -698,22 +543,10 @@ namespace ShapeGrammar3D.Components
             => p.TryGetProperty(name, out var el) && (el.ValueKind == JsonValueKind.True || el.ValueKind == JsonValueKind.False)
                 ? el.GetBoolean() : fallback;
 
-        private static double Safe(double v) => double.IsNaN(v) || double.IsInfinity(v) ? 0 : v;
-
         private static double Sortable(double fit)
             => double.IsNaN(fit) || double.IsInfinity(fit) ? double.MaxValue : fit;
 
-        private static Color GetClusterColour(int cluster, int totalClusters)
-        {
-            if (totalClusters <= 1) return Color.FromArgb(0, 150, 255);
-            double t = (double)cluster / Math.Max(1, totalClusters - 1);
-            t = Math.Clamp(t, 0.0, 1.0);
-            int g = t <= 0.5 ? (int)(t / 0.5 * 255) : 255;
-            int b = t <= 0.5 ? 255 : (int)((1.0 - (t - 0.5) / 0.5) * 255);
-            return Color.FromArgb(0, Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
-        }
-
-        private static string BuildInfo(JsonElement root, string path, int version, int filteredCount)
+        private static string BuildInfo(JsonElement root, string path, int version, int filteredCount, string buildStatus)
         {
             var sb = new StringBuilder();
             sb.AppendLine("GI_LargeSg JSON summary");
@@ -739,8 +572,9 @@ namespace ShapeGrammar3D.Components
                 if (ml.TryGetProperty("shape", out var sl) && sl.ValueKind == JsonValueKind.Array)
                     sb.AppendLine("Shape: " + string.Join(", ", sl.EnumerateArray().Select(s => s.GetString())));
             }
-            sb.AppendLine("Pareto Raw: X=disp/(span/300), Y=utilisation objective, Z=feas (see component output descriptions).");
-            sb.AppendLine("Pareto Normalized: same points scaled per-generation to [0,1]³ for plotting.");
+            sb.AppendLine("Points parsed into Results: " + filteredCount);
+            sb.AppendLine(buildStatus);
+            sb.AppendLine("Wire Results into GI_Opti Preview for Pareto (raw + normalized), per-cluster sub-branches, lines and labels.");
             return sb.ToString();
         }
 
