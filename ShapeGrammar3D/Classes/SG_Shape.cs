@@ -282,7 +282,41 @@ namespace ShapeGrammar3D.Classes
 
             return clone;
         }
-        
+
+        /// <summary>
+        /// Releases Rhino geometry owned by this transient shape.
+        /// Use only after the shape is no longer needed.
+        /// </summary>
+        public void ReleaseRhinoGeometry()
+        {
+            if (NurbsCurves != null)
+            {
+                foreach (var curve in NurbsCurves)
+                    curve?.Dispose();
+                NurbsCurves.Clear();
+            }
+
+            BoundaryBrep?.Dispose();
+            BoundaryBrep = null;
+            BoundaryMesh?.Dispose();
+            BoundaryMesh = null;
+
+            if (Elems != null)
+            {
+                foreach (var elem in Elems)
+                {
+                    if (elem is SG_Elem1D e1d)
+                    {
+                        e1d.Crv?.Dispose();
+                        e1d.Crv = null;
+                        e1d.Init_Crv?.Dispose();
+                        e1d.Init_Crv = null;
+                        e1d.Joined_Init_Crv?.Dispose();
+                        e1d.Joined_Init_Crv = null;
+                    }
+                }
+            }
+        }
 
     }
 }

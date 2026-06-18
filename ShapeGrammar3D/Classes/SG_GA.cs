@@ -219,6 +219,11 @@ namespace ShapeGrammar3D.Classes
         public int ReclusterInterval { get; set; } = 0; // 0 = only at generation 0
 
         /// <summary>
+        /// Keep every evaluated individual in memory. Disable for streamed large runs.
+        /// </summary>
+        public bool RetainEvaluatedHistory { get; set; } = true;
+
+        /// <summary>
         /// Minimum number of best individuals guaranteed to survive per cluster.
         /// Prevents cluster extinction during evolution. 0 = disabled.
         /// </summary>
@@ -637,7 +642,8 @@ namespace ShapeGrammar3D.Classes
         {
             ClusterPopulation(evaluated);
             _currentPopulation = evaluated;
-            _allEvaluatedIndividuals.AddRange(evaluated);
+            if (RetainEvaluatedHistory)
+                _allEvaluatedIndividuals.AddRange(evaluated);
 
             int totalPop = evaluated.Count;
             int elitePerCluster = Math.Max(0, ClusterEliteCount);

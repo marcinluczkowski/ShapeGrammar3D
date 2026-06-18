@@ -113,7 +113,8 @@ namespace ShapeGrammar3D.Classes
             List<SG_Rule> rules,
             GrammarInterpreterSettings settings,
             FeasibilitySettings feas,
-            bool deepCopyOutputs = true)
+            bool deepCopyOutputs = true,
+            bool collectOutputs = true)
         {
             var outcome = new EvaluationOutcome();
             if (population == null || population.Count == 0)
@@ -125,6 +126,7 @@ namespace ShapeGrammar3D.Classes
             int croSecOpt = settings.CroSecOpt;
             int csOptIters = Math.Max(1, settings.CSOptIterations);
             double shrinkRatio = settings.ShapeShrinkWrapDetailRatio;
+            bool fastShapeMetrics = !collectOutputs;
             int utilObjType = settings.UtilObjType;
             int singleObjType = settings.SingleObjType;
 
@@ -155,10 +157,13 @@ namespace ShapeGrammar3D.Classes
             for (int i = 0; i < population.Count; i++)
             {
                 var individual = population[i];
+                SG_Shape shape = null;
+                TB_Model tbModel = null;
+                TB_Model finalModel = null;
                 try
                 {
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-                    SG_Shape shape = iniShape.DeepCopy();
+                    shape = iniShape.DeepCopy();
 
                     for (int j = 0; j < rules.Count; j++)
                     {
@@ -177,7 +182,7 @@ namespace ShapeGrammar3D.Classes
 
                     var feasResult = FeasibilityMetrics.Compute(shape, feas);
 
-                    var tbModel = new TB_Model(shape);
+                    tbModel = new TB_Model(shape);
 
                     // ── Rescue orphan loads: TB_Model.CheckLoads uses a tight fuzzyTol
                     // (≈ diag·1e-5) and silently leaves point loads with null Node when
@@ -294,7 +299,7 @@ namespace ShapeGrammar3D.Classes
                     }
 
                     var slv = new SolveLS(ref tbModel);
-                    TB_Model finalModel = slv.Mdl;
+                    finalModel = slv.Mdl;
 
                     if (croSecOpt == 1)
                         finalModel = OptimizeCrossSections_Rect(finalModel, csOptIters);
@@ -336,7 +341,7 @@ namespace ShapeGrammar3D.Classes
 
                     var topoVals = topoMetrics.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
                     var shpeVals = shapeMetrics
-                        .Select(mt => ShapeMetrics.Compute(shape, mt, shrinkRatio))
+                        .Select(mt => ShapeMetrics.Compute(shape, mt, shrinkRatio, fastShapeMetrics))
                         .ToList();
 
                     if (numObjectives > 1)
@@ -375,8 +380,11 @@ namespace ShapeGrammar3D.Classes
                         SyncShapeSectionsFromModel(shape, finalModel);
 
                     outcome.EvaluatedPopulation.Add(individual);
-                    outcome.Shapes.Add(deepCopyOutputs ? shape.DeepCopy() : shape);
-                    outcome.Models.Add(deepCopyOutputs ? finalModel?.DeepCopy() : finalModel);
+                    if (collectOutputs)
+                    {
+                        outcome.Shapes.Add(deepCopyOutputs ? shape.DeepCopy() : shape);
+                        outcome.Models.Add(deepCopyOutputs ? finalModel?.DeepCopy() : finalModel);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -392,10 +400,25 @@ namespace ShapeGrammar3D.Classes
                         if (numObjectives >= 3) individual.ObjectiveValues.Add(double.MaxValue);
                     }
                     outcome.EvaluatedPopulation.Add(individual);
-                    outcome.Shapes.Add(null);
-                    outcome.Models.Add(null);
+                    if (collectOutputs)
+                    {
+                        outcome.Shapes.Add(null);
+                        outcome.Models.Add(null);
+                    }
                     outcome.Warnings.Add(string.Format(
                         "Individual {0} evaluation failed: {1}", i, ex.Message));
+                }
+                finally
+                {
+                    if (!collectOutputs)
+                    {
+                        shape?.ReleaseRhinoGeometry();
+                        if (i % 5 == 4)
+                        {
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                        }
+                    }
                 }
             }
 

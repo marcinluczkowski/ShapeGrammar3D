@@ -173,7 +173,8 @@ namespace ShapeGrammar3D.Components
                             orderedRules,
                             settings,
                             feas,
-                            deepCopyOutputs: false);
+                            deepCopyOutputs: false,
+                            collectOutputs: false);
 
                         if (gen == 0)
                         {
@@ -205,17 +206,11 @@ namespace ShapeGrammar3D.Components
                                 ga.IncrementGeneration();
                             }
                         }
-                        else
-                        {
-                            if (isMultiObjective) moga.ProcessEvaluatedIndividuals(evaluatedPop);
-                            else ga.ProcessEvaluatedIndividuals(evaluatedPop);
-                        }
 
                         if (isMultiObjective && settings.ClusterElite > 0 && !isLast)
                             currentPopulation = InjectClusterElites(currentPopulation, evaluatedPop, settings.Clusters, settings.ClusterElite);
 
-                        outcome.Shapes?.Clear();
-                        outcome.Models?.Clear();
+                        ReleaseGenerationReferences(outcome, evaluatedPop, gen, isLast);
                     }
 
                     finalPath = store.Finish();
@@ -285,8 +280,28 @@ namespace ShapeGrammar3D.Components
                 KMeansMaxIterations = s.KMeansIterations,
                 ReclusterInterval = s.ReclusterInterval,
                 MetricDomains = s.MetricDomains != null && s.MetricDomains.Count > 0 ? new List<Interval>(s.MetricDomains) : null,
-                ClusterEliteCount = s.ClusterElite
+                ClusterEliteCount = s.ClusterElite,
+                RetainEvaluatedHistory = false
             };
+        }
+
+        private static void ReleaseGenerationReferences(
+            StructuralEvaluator.EvaluationOutcome outcome,
+            List<GAIndividual> evaluatedPop,
+            int generation,
+            bool isLast)
+        {
+            outcome?.Shapes?.Clear();
+            outcome?.Models?.Clear();
+            outcome?.Warnings?.Clear();
+            outcome?.Remarks?.Clear();
+            evaluatedPop?.Clear();
+
+            if (isLast || generation % 5 == 4)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
         }
 
         private static SG_MOGA CreateMoga(GrammarInterpreterSettings s)
