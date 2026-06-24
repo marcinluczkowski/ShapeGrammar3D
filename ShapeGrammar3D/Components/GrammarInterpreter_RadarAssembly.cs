@@ -1,7 +1,4 @@
-using Grasshopper.GUI;
-using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
@@ -10,163 +7,47 @@ using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    #region RadarAssembly Attributes
-
-    public class RadarAssemblyAttributes : GH_ComponentAttributes
-    {
-        private RectangleF _panelBounds, _btnLabels, _btnCluster;
-        private const float BTN_H = 22f, PAD = 4f, MIN_W = 180f;
-        private GI_RadarAssembly Comp => (GI_RadarAssembly)Owner;
-
-        public RadarAssemblyAttributes(GI_RadarAssembly owner) : base(owner) { }
-
-        protected override void Layout()
-        {
-            base.Layout();
-            float w = Math.Max(Bounds.Width, MIN_W);
-            float x = Bounds.X - (w - Bounds.Width) * 0.5f;
-            float y = Bounds.Bottom + PAD * 2;
-            _btnLabels = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
-            y += BTN_H + PAD;
-            _btnCluster = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
-            _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, y - Bounds.Bottom - PAD);
-            Bounds = new RectangleF(x, Bounds.Y, w, y - Bounds.Y);
-        }
-
-        protected override void Render(GH_Canvas canvas, Graphics g, GH_CanvasChannel channel)
-        {
-            base.Render(canvas, g, channel);
-            if (channel != GH_CanvasChannel.Objects) return;
-            using (var path = RoundRect(_panelBounds, 5))
-            {
-                g.FillPath(new SolidBrush(Color.FromArgb(220, 245, 245, 245)), path);
-                g.DrawPath(new Pen(Color.FromArgb(140, 160, 160, 160), 0.8f), path);
-            }
-            DrawToggle(g, _btnLabels, "Show Labels", Comp.ShowLabels);
-            DrawToggle(g, _btnCluster, "Show Cluster ID", Comp.ShowCluster);
-        }
-
-        private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
-        {
-            Color bg = on ? Color.FromArgb(230, 76, 175, 80) : Color.FromArgb(210, 200, 200, 200);
-            using (var path = RoundRect(r, 4))
-            {
-                g.FillPath(new SolidBrush(bg), path);
-                g.DrawPath(new Pen(on ? Color.FromArgb(56, 142, 60) : Color.FromArgb(165, 165, 165), 0.8f), path);
-            }
-            float chk = 13f;
-            var box = new RectangleF(r.X + 6, r.Y + (r.Height - chk) / 2f, chk, chk);
-            g.FillRectangle(new SolidBrush(on ? Color.White : Color.FromArgb(230, 230, 230)), box);
-            if (on)
-            {
-                using (var pen = new Pen(Color.FromArgb(46, 125, 50), 2f))
-                {
-                    g.DrawLine(pen, box.X + 2, box.Y + chk * 0.5f, box.X + chk * 0.35f, box.Bottom - 2);
-                    g.DrawLine(pen, box.X + chk * 0.35f, box.Bottom - 2, box.Right - 2, box.Y + 2);
-                }
-            }
-            var txt = new RectangleF(box.Right + 6, r.Y, r.Width - chk - 18, r.Height);
-            g.DrawString(text, GH_FontServer.Standard, new SolidBrush(on ? Color.White : Color.FromArgb(70, 70, 70)), txt,
-                new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center });
-        }
-
-        public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
-        {
-            if (e.Button == System.Windows.Forms.MouseButtons.Left)
-            {
-                if (_btnLabels.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Labels"); Comp.ShowLabels = !Comp.ShowLabels; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
-                if (_btnCluster.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Cluster ID"); Comp.ShowCluster = !Comp.ShowCluster; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
-            }
-            return base.RespondToMouseDown(sender, e);
-        }
-
-        private static GraphicsPath RoundRect(RectangleF r, float rad)
-        {
-            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
-            var p = new System.Drawing.Drawing2D.GraphicsPath();
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
-    }
-
-    #endregion
-
+    /// <summary>
+    /// Radar chart from SG Assembly. Outputs axes, polygons, and bakeable
+    /// TextEntity labels (metric names, values, cluster id).
+    /// </summary>
     public class GI_RadarAssembly : GH_Component
     {
-        internal struct RadarLabelA { public Point3d Position; public string Text; public Vector3d XDir; public Vector3d YDir; }
-        internal List<RadarLabelA> _axisLabels = new List<RadarLabelA>();
-        internal List<RadarLabelA> _clusterLabels = new List<RadarLabelA>();
-        internal double _textHeight = 0.15;
-        internal Color _textColor = Color.Black;
-
-        public bool ShowLabels { get; set; } = true;
-        public bool ShowCluster { get; set; } = true;
-
         public GI_RadarAssembly()
           : base("GI_Radar (Assembly)", "GI_Radar_A",
-              "Radar chart from Assembly. Visualises metric fingerprints.",
+              "Radar chart from Assembly. Visualises metric fingerprints. Outputs bakeable TextEntity labels (metrics + cluster id).",
               UT.CAT, UT.GR_DATA_PREVIEW)
         {
-        }
-
-        public override void CreateAttributes() { m_attributes = new RadarAssemblyAttributes(this); }
-
-        public override bool Write(GH_IO.Serialization.GH_IWriter writer)
-        {
-            writer.SetBoolean("ShowLabels", ShowLabels);
-            writer.SetBoolean("ShowCluster", ShowCluster);
-            return base.Write(writer);
-        }
-
-        public override bool Read(GH_IO.Serialization.GH_IReader reader)
-        {
-            if (reader.ItemExists("ShowLabels")) ShowLabels = reader.GetBoolean("ShowLabels");
-            if (reader.ItemExists("ShowCluster")) ShowCluster = reader.GetBoolean("ShowCluster");
-            return base.Read(reader);
-        }
-
-        public override bool IsPreviewCapable => true;
-
-        public override void DrawViewportWires(IGH_PreviewArgs args)
-        {
-            base.DrawViewportWires(args);
-            if (Hidden || Locked) return;
-            if (ShowLabels)
-                foreach (var lbl in _axisLabels)
-                { Plane pl = new Plane(lbl.Position, lbl.XDir, lbl.YDir); args.Display.Draw3dText(lbl.Text, _textColor, pl, _textHeight, "Arial"); }
-            if (ShowCluster)
-                foreach (var lbl in _clusterLabels)
-                { Plane pl = new Plane(lbl.Position, lbl.XDir, lbl.YDir); args.Display.Draw3dText(lbl.Text, _textColor, pl, _textHeight, "Arial"); }
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list,-1);
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list,-1);
+            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all (default).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all (default).", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per cluster per generation. 0 = all (default). 1 = best one per cluster.", GH_ParamAccess.item, 0);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddNumberParameter("Radius", "R", "Axis length", GH_ParamAccess.item, 1.0);
             pManager.AddIntervalParameter("Metric Domains", "MDom",
                 "Expected [min, max] domain per metric axis for normalization. Order matches assembly MetricNames. If not supplied, each axis uses observed min–max (supports negative metrics).", GH_ParamAccess.list);
             pManager.AddPointParameter("Insert Point", "Pt", "Base point", GH_ParamAccess.item, Point3d.Origin);
+            pManager.AddNumberParameter("Text Height", "TxH", "Height for bakeable TextEntity labels [model units].", GH_ParamAccess.item, 0.15);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient grid (XY through Insert Pt) onto this plane. Leave disconnected for world-XY layout.",
+                "Optional plane whose X/Y axes orient each chart's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[5].Optional = true;
             pManager[6].Optional = true;
             pManager[7].Optional = true;
-            pManager[9].Optional = true;
+            pManager[10].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -174,13 +55,13 @@ namespace ShapeGrammar3D.Components
             pManager.AddLineParameter("Axes", "Axes", "Axis lines", GH_ParamAccess.tree);
             pManager.AddCurveParameter("Polygon", "Poly", "Data polygons", GH_ParamAccess.tree);
             pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
+            pManager.AddGeometryParameter("Text Labels", "Txt",
+                "Bakeable TextEntity annotations per chart: metric names, metric values, and cluster id. Tree path {col;row} matches Axes/Poly.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            _axisLabels.Clear();
-            _clusterLabels.Clear();
-
             GH_SGAssembly ghAssembly = null;
             if (!DA.GetData(0, ref ghAssembly) || ghAssembly?.Value == null)
             {
@@ -202,19 +83,23 @@ namespace ShapeGrammar3D.Components
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
             topN = Math.Max(0, topN);
 
-            double xSpacing = 30.0, ySpacing = 10.0, radius = 1.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double radius = 1.0, textHeight = 0.15;
             Point3d insertPt = Point3d.Origin;
             var rawDomains = new List<GH_Interval>();
+            var domains = new List<Interval>();
             DA.GetDataList(7, rawDomains);
-            List<Interval> domains = null;
             if (rawDomains.Count > 0)
                 domains = rawDomains.Select(d => d.Value).ToList();
-            DA.GetData(4, ref xSpacing);
-            DA.GetData(5, ref ySpacing);
+            DA.GetData(4, ref colSpacing);
+            DA.GetData(5, ref rowSpacing);
             DA.GetData(6, ref radius);
             DA.GetData(8, ref insertPt);
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 9, insertPt);
+            DA.GetData(9, ref textHeight);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 10);
             if (radius <= 0) radius = 1.0;
+            textHeight = Math.Max(0.01, textHeight);
 
             var metricNames = assembly.MetricNames ?? new List<string>();
             if (metricNames.Count < 2)
@@ -297,6 +182,7 @@ namespace ShapeGrammar3D.Components
 
             var axesTree = new GH_Structure<GH_Line>();
             var polyTree = new GH_Structure<GH_Curve>();
+            var textTree = new GH_Structure<GH_TextEntity>();
             int col = 0;
             int totalCharts = 0;
 
@@ -335,17 +221,15 @@ namespace ShapeGrammar3D.Components
                     var vals = ind.AllMetrics();
                     if (vals.Count < numAxes) continue;
 
-                    Point3d c = new Point3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d c = insertPt + col * colSpacing + row * rowSpacing;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform(displayPlane, c);
                     GH_Path outPath = new GH_Path(col, row);
 
                     var polygonPts = new List<Point3d>();
                     for (int m = 0; m < numAxes; m++)
                     {
                         Line axisLn = new Line(c, c + axisDirs[m] * radius);
-                        axisLn.Transform(dispXf);
+                        axisLn.Transform(cellXf);
                         axesTree.Append(new GH_Line(axisLn), outPath);
                         double norm = axisRange[m] > 0 && !double.IsNaN(vals[m]) && !double.IsInfinity(vals[m])
                             ? (vals[m] - axisMin[m]) / axisRange[m]
@@ -359,33 +243,35 @@ namespace ShapeGrammar3D.Components
                         Vector3d ydir = new Vector3d(-axisDirs[m].Y, axisDirs[m].X, 0);
                         bool leftSide = axisDirs[m].X < -1e-10 || (Math.Abs(axisDirs[m].X) < 1e-10 && axisDirs[m].Y < 0);
                         if (leftSide) { xdir = -xdir; ydir = -ydir; }
-                        double labelOffset = radius + _textHeight * 3.5;
+                        double labelOffset = radius + textHeight * 3.5;
                         Point3d labelPt = c + axisDirs[m] * labelOffset;
                         Plane namePl = new Plane(labelPt, xdir, ydir);
-                        namePl.Transform(dispXf);
-                        _axisLabels.Add(new RadarLabelA { Position = namePl.Origin, Text = metricNames[m], XDir = namePl.XAxis, YDir = namePl.YAxis });
-                        Plane valPl = new Plane(labelPt - ydir * _textHeight * 1.3, xdir, ydir);
-                        valPl.Transform(dispXf);
-                        _axisLabels.Add(new RadarLabelA { Position = valPl.Origin, Text = string.Format("{0:F3} ({1:F2})", vals[m], clampedNorm), XDir = valPl.XAxis, YDir = valPl.YAxis });
+                        namePl.Transform(cellXf);
+                        textTree.Append(CreateTextEntity(namePl, metricNames[m], textHeight), outPath);
+
+                        Plane valPl = new Plane(labelPt - ydir * textHeight * 1.3, xdir, ydir);
+                        valPl.Transform(cellXf);
+                        textTree.Append(CreateTextEntity(valPl,
+                            string.Format("{0:F3} ({1:F2})", vals[m], clampedNorm), textHeight), outPath);
                     }
 
                     if (polygonPts.Count >= 3)
                     {
                         for (int pi = 0; pi < polygonPts.Count; pi++)
-                            polygonPts[pi].Transform(dispXf);
+                        {
+                            Point3d pt = polygonPts[pi];
+                            pt.Transform(cellXf);
+                            polygonPts[pi] = pt;
+                        }
                         polygonPts.Add(polygonPts[0]);
                         polyTree.Append(new GH_Curve(new Polyline(polygonPts).ToNurbsCurve()), outPath);
                     }
 
                     Plane clPl = new Plane(c - new Vector3d(0, radius * 1.25, 0), Vector3d.XAxis, Vector3d.YAxis);
-                    clPl.Transform(dispXf);
-                    _clusterLabels.Add(new RadarLabelA
-                    {
-                        Position = clPl.Origin,
-                        Text = string.Format("C{0} [G{1} I{2}]", ind.ClustGrp, gen.Generation, indIdx),
-                        XDir = clPl.XAxis,
-                        YDir = clPl.YAxis
-                    });
+                    clPl.Transform(cellXf);
+                    textTree.Append(CreateTextEntity(clPl,
+                        string.Format("Cluster {0}  G{1}  I{2}", ind.ClustGrp, gen.Generation, indIdx),
+                        textHeight * 1.1), outPath);
 
                     row++;
                     totalCharts++;
@@ -396,8 +282,22 @@ namespace ShapeGrammar3D.Components
             string normMode = hasDomains ? "user domains" : "observed min–max";
             DA.SetDataTree(0, axesTree);
             DA.SetDataTree(1, polyTree);
-            DA.SetData(2, string.Format("Radar from Assembly: {0} charts, {1} metrics. Normalization: {2}. Labels: {3}, Cluster: {4}",
-                totalCharts, numAxes, normMode, ShowLabels ? "ON" : "OFF", ShowCluster ? "ON" : "OFF"));
+            DA.SetData(2, string.Format(
+                "Radar from Assembly: {0} charts, {1} metrics. Normalization: {2}. Text labels: {3} entities (bakeable).",
+                totalCharts, numAxes, normMode, textTree.DataCount));
+            DA.SetDataTree(3, textTree);
+        }
+
+        private static GH_TextEntity CreateTextEntity(Plane plane, string text, double height)
+        {
+            var te = new TextEntity
+            {
+                Plane = plane,
+                PlainText = text ?? string.Empty,
+                TextHeight = height,
+                Justification = TextJustification.MiddleCenter
+            };
+            return new GH_TextEntity(te);
         }
 
         protected override Bitmap Icon => Properties.Resources.icons_Generic;

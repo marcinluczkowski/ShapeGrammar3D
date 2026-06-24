@@ -37,8 +37,12 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). Leave empty or -1 = all (default).", GH_ParamAccess.list, -1);
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). Leave empty or -1 = all (default).", GH_ParamAccess.list, -1);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddNumberParameter("Scale", "Scale", "Deformation scale factor (1.0 = true scale)", GH_ParamAccess.item, 1.0);
             pManager.AddIntegerParameter("Load Case", "LC", "Load case index (-1 = last available)", GH_ParamAccess.item, -1);
             pManager.AddNumberParameter("Util Ranges", "URng", "Unused here (kept for parity with GI_Deform)", GH_ParamAccess.list);
@@ -48,7 +52,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Top %", "Top%", "Fraction of best individuals per (generation, cluster) when TopN=0. 1 = all (default).", GH_ParamAccess.item, 1.0);
             pManager.AddNumberParameter("Diagram Scale", "DScl", "Force/moment diagram scale: 1 unit (kN or kNm) → DScl meters in global Z. Default 0.01.", GH_ParamAccess.item, 0.01);
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient layout (XY through Insert Pt) onto this plane.",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);
             pManager[6].Optional = true;
             pManager[7].Optional = true;
@@ -95,11 +99,13 @@ namespace ShapeGrammar3D.Components
             bool allInds = indList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
 
-            double xSpacing = 30.0, ySpacing = 10.0, scale = 1.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double scale = 1.0;
             int lcIndex = -1;
             Point3d insertPt = Point3d.Origin;
-            DA.GetData(3, ref xSpacing);
-            DA.GetData(4, ref ySpacing);
+            DA.GetData(3, ref colSpacing);
+            DA.GetData(4, ref rowSpacing);
             DA.GetData(5, ref scale);
             DA.GetData(6, ref lcIndex);
             // 7: Util Ranges (unused, kept for parity)
@@ -112,7 +118,7 @@ namespace ShapeGrammar3D.Components
             double diagramScale = 0.01;
             DA.GetData(12, ref diagramScale);
 
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 13, insertPt);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 13);
 
             topPercent = Math.Clamp(topPercent, 0, 1.0);
             topN = Math.Max(0, topN);
@@ -183,10 +189,9 @@ namespace ShapeGrammar3D.Components
                     TB_Model model = ind?.Model;
                     if (model == null || model.Elem1Ds == null || model.Nodes == null) { row++; continue; }
 
-                    Vector3d offset = new Vector3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d cellOrigin = insertPt + col * colSpacing + row * rowSpacing;
+                    Vector3d offset = (Vector3d)cellOrigin;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     GH_Path outPath = new GH_Path(col, row);
 
                     int resolvedLC = ResolveLoadCase(model, lcIndex);
@@ -222,7 +227,9 @@ namespace ShapeGrammar3D.Components
                         Point3d p0 = n0.Pt + offset;
                         Point3d p1 = n1.Pt + offset;
                         Line undef = new Line(p0, p1);
-                        undefTree.Append(new GH_Line(undef), outPath);
+                        Line undefXf = undef;
+                        undefXf.Transform(cellXf);
+                        undefTree.Append(new GH_Line(undefXf), outPath);
 
                         Line defLine;
                         if (hasDisps && n0.Id != null && n1.Id != null
@@ -231,8 +238,9 @@ namespace ShapeGrammar3D.Components
                             defLine = new Line(
                                 nodeDefPts[n0.Id.Value] + offset,
                                 nodeDefPts[n1.Id.Value] + offset);
+                            defLine.Transform(cellXf);
                         }
-                        else defLine = undef;
+                        else defLine = undefXf;
                         defTree.Append(new GH_Line(defLine), outPath);
 
                         // Section mesh on the undeformed line
@@ -241,7 +249,7 @@ namespace ShapeGrammar3D.Components
                         else if (elem.Sec is Section_Rect rect) { sw = rect.B; sh = rect.H; }
                         if (sw > 0 && sh > 0)
                         {
-                            Mesh m = ExtrudeRect(undef, sw * 0.001, sh * 0.001, Color.FromArgb(180, 200, 200, 200));
+                            Mesh m = ExtrudeRect(undefXf, sw * 0.001, sh * 0.001, Color.FromArgb(180, 200, 200, 200));
                             if (m != null) secMeshTree.Append(new GH_Mesh(m), outPath);
                         }
 
@@ -269,9 +277,9 @@ namespace ShapeGrammar3D.Components
                                 Mesh meshFy = BuildDiagramQuad(p0, p1, vyStart, vyEnd, diagramScale, colFy);
                                 Mesh meshMy = BuildDiagramQuad(p0, p1, myStart, myEnd, diagramScale, colMy);
 
-                                if (meshFx != null) fxMeshTree.Append(new GH_Mesh(meshFx), outPath);
-                                if (meshFy != null) fyMeshTree.Append(new GH_Mesh(meshFy), outPath);
-                                if (meshMy != null) myMeshTree.Append(new GH_Mesh(meshMy), outPath);
+                                if (meshFx != null) { meshFx.Transform(cellXf); fxMeshTree.Append(new GH_Mesh(meshFx), outPath); }
+                                if (meshFy != null) { meshFy.Transform(cellXf); fyMeshTree.Append(new GH_Mesh(meshFy), outPath); }
+                                if (meshMy != null) { meshMy.Transform(cellXf); myMeshTree.Append(new GH_Mesh(meshMy), outPath); }
                             }
                         }
                     }
@@ -283,6 +291,7 @@ namespace ShapeGrammar3D.Components
                         {
                             if (sup == null) continue;
                             Point3d sPt = sup.Pt + offset;
+                            sPt.Transform(cellXf);
                             reactPtTree.Append(new GH_Point(sPt), outPath);
 
                             Vector3d rF = Vector3d.Zero;
@@ -294,6 +303,8 @@ namespace ShapeGrammar3D.Components
                                 rF = new Vector3d(R[0] * 1e-3, R[1] * 1e-3, R[2] * 1e-3);
                                 rM = new Vector3d(R[3] * 1e-3, R[4] * 1e-3, R[5] * 1e-3);
                             }
+                            rF.Transform(cellXf);
+                            rM.Transform(cellXf);
                             reactFTree.Append(new GH_Vector(rF), outPath);
                             reactMTree.Append(new GH_Vector(rM), outPath);
                         }
@@ -304,19 +315,6 @@ namespace ShapeGrammar3D.Components
                     row++;
                 }
                 col++;
-            }
-
-            if (!dispXf.IsIdentity)
-            {
-                undefTree = PreviewLayoutTransforms.TransformLineTree(undefTree, dispXf);
-                defTree = PreviewLayoutTransforms.TransformLineTree(defTree, dispXf);
-                secMeshTree = PreviewLayoutTransforms.TransformMeshTree(secMeshTree, dispXf);
-                fxMeshTree = PreviewLayoutTransforms.TransformMeshTree(fxMeshTree, dispXf);
-                fyMeshTree = PreviewLayoutTransforms.TransformMeshTree(fyMeshTree, dispXf);
-                myMeshTree = PreviewLayoutTransforms.TransformMeshTree(myMeshTree, dispXf);
-                reactPtTree = PreviewLayoutTransforms.TransformPointTree(reactPtTree, dispXf);
-                reactFTree = PreviewLayoutTransforms.TransformVectorTree(reactFTree, dispXf);
-                reactMTree = PreviewLayoutTransforms.TransformVectorTree(reactMTree, dispXf);
             }
 
             DA.SetDataTree(0, undefTree);

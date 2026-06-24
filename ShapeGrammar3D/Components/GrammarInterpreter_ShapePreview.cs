@@ -34,14 +34,20 @@ namespace ShapeGrammar3D.Components
                 "Generate cross-section extrusion meshes", GH_ParamAccess.item, false);               // 4
             pManager.AddBooleanParameter("Show Labels", "Labels",
                 "Generate cross-section dimension labels", GH_ParamAccess.item, false);               // 5
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Horizontal spacing between generation columns", GH_ParamAccess.item, 30.0);          // 6
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between individual rows", GH_ParamAccess.item, 30.0);               // 7
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between generation columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);                   // 6
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between individual rows. Default (0, 0, -30).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingWide);                  // 7
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);                                                                  // 8
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
             pManager[3].Optional = true;
+            pManager[8].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -75,13 +81,14 @@ namespace ShapeGrammar3D.Components
 
             bool showMesh = false;
             bool showLabels = false;
-            double xSpacing = 30.0;
-            double ySpacing = 30.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingWide;
 
             DA.GetData(4, ref showMesh);
             DA.GetData(5, ref showLabels);
-            DA.GetData(6, ref xSpacing);
-            DA.GetData(7, ref ySpacing);
+            DA.GetData(6, ref colSpacing);
+            DA.GetData(7, ref rowSpacing);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 8);
 
             var genToBranch = new Dictionary<int, int>();
             for (int b = 0; b < shapesTree.PathCount; b++)
@@ -127,7 +134,9 @@ namespace ShapeGrammar3D.Components
                     if (modelBranch != null && i < modelBranch.Count && modelBranch[i] != null)
                         model = modelBranch[i].Value;
 
-                    Vector3d offset = new Vector3d(col * xSpacing, -row * ySpacing, 0);
+                    Vector3d offset = col * colSpacing + row * rowSpacing;
+                    Point3d cellOrigin = Point3d.Origin + offset;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     GH_Path outPath = new GH_Path(col, row);
 
                     if (shape.Elems != null)
@@ -138,6 +147,7 @@ namespace ShapeGrammar3D.Components
                             if (!(elem is SG_Elem1D elem1d)) continue;
 
                             Line ln = new Line(elem1d.Ln.From + offset, elem1d.Ln.To + offset);
+                            ln.Transform(cellXf);
                             linesTree.Append(new GH_Line(ln), outPath);
 
                             double secW = 0, secH = 0;

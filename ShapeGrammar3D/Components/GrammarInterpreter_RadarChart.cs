@@ -244,10 +244,12 @@ namespace ShapeGrammar3D.Components
                 "Generation indices to display (-1 = last)", GH_ParamAccess.list);      // 2
             pManager.AddIntegerParameter("Individual", "Ind",
                 "Individual indices to display (-1 = all)", GH_ParamAccess.list);       // 3
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Horizontal spacing between columns", GH_ParamAccess.item, 30.0);      // 4
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between rows", GH_ParamAccess.item, 10.0);           // 5
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);    // 4
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact); // 5
             pManager.AddNumberParameter("Radius", "R",
                 "Maximum axis length (model units)", GH_ParamAccess.item, 1.0);        // 6
             pManager.AddIntervalParameter("Metric Domains", "MDom",
@@ -264,7 +266,7 @@ namespace ShapeGrammar3D.Components
             pManager.AddColourParameter("Colour", "Col",
                 "Text and label colour", GH_ParamAccess.item, Color.Black);             // 11
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient chart grid (XY through Insert Pt) onto this plane, e.g. XZ. Leave disconnected for world-XY layout.",
+                "Optional plane whose X/Y axes orient each chart's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item);                                                   // 12
 
             pManager[2].Optional = true;
@@ -304,9 +306,11 @@ namespace ShapeGrammar3D.Components
             DA.GetDataList(2, genList);
             DA.GetDataList(3, indList);
 
-            double xSpacing = 30.0, ySpacing = 10.0, radius = 1.0;
-            DA.GetData(4, ref xSpacing);
-            DA.GetData(5, ref ySpacing);
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double radius = 1.0;
+            DA.GetData(4, ref colSpacing);
+            DA.GetData(5, ref rowSpacing);
             DA.GetData(6, ref radius);
             if (radius <= 0) radius = 1.0;
 
@@ -329,7 +333,7 @@ namespace ShapeGrammar3D.Components
             DA.GetData(11, ref inputColour);
             _textColor = inputColour;
 
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 12, insertPt);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 12);
 
             int numAxes = metricNames.Count;
             if (numAxes < 2)
@@ -500,10 +504,8 @@ namespace ShapeGrammar3D.Components
                     if (!allInds && !indSet.Contains(indIdx)) continue;
 
                     double[] vals = kvp.Value;
-                    Point3d c = new Point3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d c = insertPt + col * colSpacing + row * rowSpacing;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform(displayPlane, c);
                     GH_Path outPath = new GH_Path(col, row);
 
                     var polygonPts = new List<Point3d>();
@@ -511,7 +513,7 @@ namespace ShapeGrammar3D.Components
                     for (int m = 0; m < numAxes; m++)
                     {
                         Line axisLn = new Line(c, c + axisDirs[m] * radius);
-                        axisLn.Transform(dispXf);
+                        axisLn.Transform(cellXf);
                         axesTree.Append(new GH_Line(axisLn), outPath);
 
                         double norm = axisRange[m] > 0 && !double.IsNaN(vals[m]) && !double.IsInfinity(vals[m])
@@ -539,7 +541,7 @@ namespace ShapeGrammar3D.Components
                             labelPt = c + axisDirs[m] * (radius + labelGap);
 
                         Plane namePl = new Plane(labelPt, xdir, ydir);
-                        namePl.Transform(dispXf);
+                        namePl.Transform(cellXf);
                         _axisLabels.Add(new RadarLabel
                         {
                             Position = namePl.Origin,
@@ -549,7 +551,7 @@ namespace ShapeGrammar3D.Components
                         });
 
                         Plane valPl = new Plane(labelPt - ydir * _textHeight * 1.3, xdir, ydir);
-                        valPl.Transform(dispXf);
+                        valPl.Transform(cellXf);
                         _axisLabels.Add(new RadarLabel
                         {
                             Position = valPl.Origin,
@@ -562,7 +564,11 @@ namespace ShapeGrammar3D.Components
                     if (polygonPts.Count > 0)
                     {
                         for (int pi = 0; pi < polygonPts.Count; pi++)
-                            polygonPts[pi].Transform(dispXf);
+                        {
+                            Point3d pt = polygonPts[pi];
+                            pt.Transform(cellXf);
+                            polygonPts[pi] = pt;
+                        }
                         polygonPts.Add(polygonPts[0]);
                         Polyline pl = new Polyline(polygonPts);
                         polyTree.Append(new GH_Curve(pl.ToNurbsCurve()), outPath);
@@ -574,7 +580,7 @@ namespace ShapeGrammar3D.Components
                         clustId = cid;
 
                     Plane clPl = new Plane(c + new Vector3d(0, -radius * 1.25, 0), Vector3d.XAxis, Vector3d.YAxis);
-                    clPl.Transform(dispXf);
+                    clPl.Transform(cellXf);
                     _clusterLabels.Add(new RadarLabel
                     {
                         Position = clPl.Origin,

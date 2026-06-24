@@ -5,6 +5,7 @@ using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Elements;
 using ShapeGrammar3D.Classes.Rules;
+using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -40,12 +41,18 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Top %", "Top%",
                 "Show only the top percentage of best structures per generation (0.0–1.0). " +
                 "1.0 = show all.", GH_ParamAccess.item, 1.0);                                            // 5
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Horizontal spacing between generation columns", GH_ParamAccess.item, 30.0);             // 6
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between individuals in a column", GH_ParamAccess.item, 30.0);          // 7
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between generation columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);                      // 6
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between individuals in a column. Default (0, 0, -30).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingWide);                     // 7
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);                                                                     // 8
 
             pManager[3].Optional = true;
+            pManager[8].Optional = true;
         }
 
         // ── Outputs ─────────────────────────────────────────────────────────
@@ -82,13 +89,14 @@ namespace ShapeGrammar3D.Components
 
             int individual = -1;
             double topPercent = 1.0;
-            double xSpacing = 30.0;
-            double ySpacing = 30.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingWide;
 
             DA.GetData(4, ref individual);
             DA.GetData(5, ref topPercent);
-            DA.GetData(6, ref xSpacing);
-            DA.GetData(7, ref ySpacing);
+            DA.GetData(6, ref colSpacing);
+            DA.GetData(7, ref rowSpacing);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 8);
 
             if (topPercent < 0.0) topPercent = 0.0;
             if (topPercent > 1.0) topPercent = 1.0;
@@ -263,7 +271,9 @@ namespace ShapeGrammar3D.Components
                 {
                     ReconstructedEntry entry = column[row];
                     SG_Shape shape = entry.Shape;
-                    Vector3d offset = new Vector3d(col * xSpacing, -row * ySpacing, 0);
+                    Vector3d offset = col * colSpacing + row * rowSpacing;
+                    Point3d cellOrigin = Point3d.Origin + offset;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
 
                     GH_Path outPath = new GH_Path(col, row);
 
@@ -285,6 +295,7 @@ namespace ShapeGrammar3D.Components
                             {
                                 Line ln = elem1d.Ln;
                                 Line translated = new Line(ln.From + offset, ln.To + offset);
+                                translated.Transform(cellXf);
                                 linesTree.Append(new GH_Line(translated), outPath);
                                 coloursTree.Append(new GH_Colour(clusterColour), outPath);
                             }
@@ -299,6 +310,7 @@ namespace ShapeGrammar3D.Components
                             if (node != null)
                             {
                                 Point3d pt = node.Pt + offset;
+                                pt.Transform(cellXf);
                                 pointsTree.Append(new GH_Point(pt), outPath);
                             }
                         }
@@ -337,14 +349,14 @@ namespace ShapeGrammar3D.Components
                 "Selection: {4}, {5}, {6}\n" +
                 "Clusters: {7} (blue → green)\n" +
                 "Layout: {8} columns x {9} max rows\n" +
-                "Spacing: dX={10}, dY={11}",
+                "Spacing: Col={10}, Row={11}",
                 Path.GetFileName(jsonPath),
                 store.RunId,
                 totalShapes, totalFailed,
                 genLabel, indLabel, topLabel,
                 totalClusters,
                 columns.Count, maxRows,
-                xSpacing, ySpacing);
+                colSpacing, rowSpacing);
 
             DA.SetDataTree(0, linesTree);
             DA.SetDataTree(1, pointsTree);

@@ -49,11 +49,13 @@ namespace ShapeGrammar3D.Components
                 GH_ParamAccess.item, 0);                                                                                              // 2
             pManager.AddIntegerParameter("K", "K", "Number of preview candidates.", GH_ParamAccess.item, 5);                          // 3
             pManager.AddIntegerParameter("Pick Index", "Pick", "Index (0..K-1) of the candidate to output as the picked structure.", GH_ParamAccess.item, 0); // 4
-            pManager.AddNumberParameter("Preview Spacing", "dZ", "Spacing step along world Z between mini-preview cells [m].", GH_ParamAccess.item, 15.0); // 5
+            pManager.AddVectorParameter("Stack Spacing", "Stack",
+                "World-space offset between stacked mini-preview cells. Default (0, 0, 15).",
+                GH_ParamAccess.item, new Vector3d(0, 0, 15)); // 5
             pManager.AddNumberParameter("Preview Cell Size", "Cell", "Side length [m] of the bounding cell each mini-preview is scaled to fit. 0 = no scaling.", GH_ParamAccess.item, 10.0); // 6
             pManager.AddBooleanParameter("Show Meshes", "Mesh", "Generate cross-section extrusion meshes for previews.", GH_ParamAccess.item, false); // 7
             pManager.AddPlaneParameter("Display Plane", "Disp",
-                "Optional: orient stacked previews (XY through layout origin) onto this plane.",
+                "Optional plane whose X/Y axes orient each mini-preview's geometry. Defaults to the world XZ plane.",
                 GH_ParamAccess.item); // 8
 
             pManager[1].Optional = true;
@@ -89,12 +91,13 @@ namespace ShapeGrammar3D.Components
             DA.GetData(1, ref initCurve);
 
             int mode = 0, k = 5, pickIndex = 0;
-            double spacing = 15.0, cellSize = 10.0;
+            Vector3d stackSpacing = new Vector3d(0, 0, 15);
+            double cellSize = 10.0;
             bool showMeshes = false;
             DA.GetData(2, ref mode);
             DA.GetData(3, ref k);
             DA.GetData(4, ref pickIndex);
-            DA.GetData(5, ref spacing);
+            DA.GetData(5, ref stackSpacing);
             DA.GetData(6, ref cellSize);
             DA.GetData(7, ref showMeshes);
 
@@ -134,15 +137,14 @@ namespace ShapeGrammar3D.Components
             if (initCurve != null && initCurve.IsValid)
             {
                 var bb = initCurve.GetBoundingBox(true);
-                // First stacked cell sits above the curve in Z; XY aligned to curve centroid.
-                origin = new Point3d(bb.Center.X, bb.Center.Y, bb.Max.Z + spacing);
+                origin = new Point3d(bb.Center.X, bb.Center.Y, bb.Max.Z) + stackSpacing;
             }
             else
             {
                 origin = Point3d.Origin;
             }
 
-            Transform dispXf = PreviewLayoutTransforms.GetOptionalDisplayTransform(DA, 8, origin);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 8);
 
             // ── Build previews ────────────────────────────────────────
             var linesTree = new GH_Structure<GH_Line>();
@@ -156,22 +158,34 @@ namespace ShapeGrammar3D.Components
                 var path = new GH_Path(i);
 
                 var (linesScaled, meshesScaled, cellAnchor, cellTopCenter) =
-                    BuildPreviewCell(ind, origin, i, spacing, cellSize, showMeshes);
+                    BuildPreviewCell(ind, origin, i, stackSpacing, cellSize, showMeshes);
+
+                Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellAnchor);
 
                 foreach (var ln in linesScaled)
-                    linesTree.Append(new GH_Line(ln), path);
+                {
+                    Line lnX = ln;
+                    lnX.Transform(cellXf);
+                    linesTree.Append(new GH_Line(lnX), path);
+                }
 
                 if (showMeshes)
                 {
                     foreach (var m in meshesScaled)
-                        meshesTree.Append(new GH_Mesh(m), path);
+                    {
+                        var mx = m.DuplicateMesh();
+                        mx.Transform(cellXf);
+                        meshesTree.Append(new GH_Mesh(mx), path);
+                    }
                 }
 
+                Point3d topX = cellTopCenter;
+                topX.Transform(cellXf);
                 string label = BuildLabel(ind, i, mode);
                 labelsTree.Append(new GH_String(label), path);
-                labelPtsTree.Append(new GH_Point(cellTopCenter), path);
+                labelPtsTree.Append(new GH_Point(topX), path);
 
-                _viewportLabels.Add((cellTopCenter, label, GetLabelColor(i, picks.Count)));
+                _viewportLabels.Add((topX, label, GetLabelColor(i, picks.Count)));
                 _previewBounds.Union(new BoundingBox(cellAnchor - new Vector3d(cellSize, cellSize, cellSize),
                                                      cellAnchor + new Vector3d(cellSize * 2, cellSize * 2, cellSize)));
             }
@@ -200,21 +214,6 @@ namespace ShapeGrammar3D.Components
             }
             info.AppendLine();
             info.AppendLine("Picked: " + pickedInfo);
-
-            if (!dispXf.IsIdentity)
-            {
-                linesTree = PreviewLayoutTransforms.TransformLineTree(linesTree, dispXf);
-                meshesTree = PreviewLayoutTransforms.TransformMeshTree(meshesTree, dispXf);
-                labelPtsTree = PreviewLayoutTransforms.TransformPointTree(labelPtsTree, dispXf);
-                for (int li = 0; li < _viewportLabels.Count; li++)
-                {
-                    var vl = _viewportLabels[li];
-                    Point3d a = vl.anchor;
-                    a.Transform(dispXf);
-                    _viewportLabels[li] = (a, vl.text, vl.color);
-                }
-                _previewBounds.Transform(dispXf);
-            }
 
             DA.SetData(0, info.ToString());
             DA.SetDataTree(1, linesTree);
@@ -270,7 +269,7 @@ namespace ShapeGrammar3D.Components
         // ─── Preview cell construction ────────────────────────────────
 
         private (List<Line> lines, List<Mesh> meshes, Point3d cellAnchor, Point3d cellTopCenter)
-            BuildPreviewCell(AssemblyIndividual ind, Point3d origin, int slot, double spacing, double cellSize, bool showMeshes)
+            BuildPreviewCell(AssemblyIndividual ind, Point3d origin, int slot, Vector3d stackSpacing, double cellSize, bool showMeshes)
         {
             var rawLines = ExtractLines(ind);
             var rawMeshes = showMeshes ? ExtractMeshes(ind) : new List<Mesh>();
@@ -284,7 +283,7 @@ namespace ShapeGrammar3D.Components
 
             double scale = 1.0;
             Vector3d translation;
-            Point3d cellAnchor = origin + new Vector3d(0, 0, slot * (cellSize + spacing));
+            Point3d cellAnchor = origin + slot * stackSpacing;
 
             if (bb.IsValid && cellSize > 1e-9)
             {
