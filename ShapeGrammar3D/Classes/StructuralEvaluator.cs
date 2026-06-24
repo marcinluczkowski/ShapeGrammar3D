@@ -29,7 +29,19 @@ namespace ShapeGrammar3D.Classes
             public List<GAIndividual> EvaluatedPopulation { get; set; } = new List<GAIndividual>();
             public List<SG_Shape> Shapes { get; set; } = new List<SG_Shape>();
             public List<TB_Model> Models { get; set; } = new List<TB_Model>();
+            /// <summary>
+            /// Actionable issues - things that should be surfaced as Grasshopper warnings
+            /// (orange) because the run will produce degraded or invalid output until they
+            /// are addressed (orphan loads, zero displacement, singular K, etc.).
+            /// </summary>
             public List<string> Warnings { get; set; } = new List<string>();
+            /// <summary>
+            /// Always-on informational diagnostics - intended to be surfaced as Grasshopper
+            /// Remarks (white) so users can see them without the component lighting up
+            /// orange when everything is healthy. Examples: per-population stats, the
+            /// "First individual diagnostics" dump, FE solve summaries.
+            /// </summary>
+            public List<string> Remarks { get; set; } = new List<string>();
         }
 
         // ─── Public entry points ────────────────────────────────────────
@@ -101,7 +113,8 @@ namespace ShapeGrammar3D.Classes
             List<SG_Rule> rules,
             GrammarInterpreterSettings settings,
             FeasibilitySettings feas,
-            bool deepCopyOutputs = true)
+            bool deepCopyOutputs = true,
+            bool collectOutputs = true)
         {
             var outcome = new EvaluationOutcome();
             if (population == null || population.Count == 0)
@@ -113,6 +126,7 @@ namespace ShapeGrammar3D.Classes
             int croSecOpt = settings.CroSecOpt;
             int csOptIters = Math.Max(1, settings.CSOptIterations);
             double shrinkRatio = settings.ShapeShrinkWrapDetailRatio;
+            bool fastShapeMetrics = !collectOutputs;
             int utilObjType = settings.UtilObjType;
             int singleObjType = settings.SingleObjType;
 
@@ -120,13 +134,36 @@ namespace ShapeGrammar3D.Classes
             Vector3d gravityDir = settings.GravityDir;
             if (gravityDir.Length < 1e-9) gravityDir = new Vector3d(0, 0, -1);
 
+            // ── Population-wide load/support diagnostics. Per-individual warnings hide
+            //    issues that affect "most but not all" individuals (the first individual
+            //    happens to be fine but the rest are broken). Aggregate here so we get
+            //    one summary line per failure mode.
+            int popTotalSnappedLoads = 0;
+            int popTotalOrphanLoads = 0;
+            int popTotalSnappedSups  = 0;
+            int popTotalOrphanSups   = 0;
+            int popWithZeroTbLoads = 0;
+            int popWithZeroTbSups = 0;
+            int popWithSgLoadDrop = 0;
+            int popWithMaxValueDisp = 0;     // rawDisp == MaxValue → all-zero displacement (no load reaches lV)
+            int popWithNonFiniteDisp = 0;    // rawDisp Inf/NaN → singular K
+            int popWithZeroConstrainedDOFs = 0;
+            int popWithZeroLoadMagnitude = 0;
+            int popTotalLoadsAtSupportNodes = 0;     // # of TB_Load_Point landing on a supported node (across whole population)
+            int popTotalLoadsAllDofsConstrained = 0; // # of TB_Load_Point fully zeroed by BC (all DOFs they target are constrained)
+            double popSumFreeDofLoadMag = 0.0;       // Σ|F_k|/|M_k| that actually survive BC (RHS that reaches solver)
+            string firstIndDiag = null;      // capture one detailed diagnostic for the first individual
+
             for (int i = 0; i < population.Count; i++)
             {
                 var individual = population[i];
+                SG_Shape shape = null;
+                TB_Model tbModel = null;
+                TB_Model finalModel = null;
                 try
                 {
                     SG_Genotype gt = CreateGenotypeFromIndividual(individual);
-                    SG_Shape shape = iniShape.DeepCopy();
+                    shape = iniShape.DeepCopy();
 
                     for (int j = 0; j < rules.Count; j++)
                     {
@@ -145,9 +182,124 @@ namespace ShapeGrammar3D.Classes
 
                     var feasResult = FeasibilityMetrics.Compute(shape, feas);
 
-                    var tbModel = new TB_Model(shape);
+                    tbModel = new TB_Model(shape);
+
+                    // ── Rescue orphan loads: TB_Model.CheckLoads uses a tight fuzzyTol
+                    // (≈ diag·1e-5) and silently leaves point loads with null Node when
+                    // it can't match them. SolveLS then drops those loads, the system
+                    // has no RHS, displacement = 0, and Fitness collapses to MaxValue
+                    // for every individual. Brute-force nearest-node snap rescues them.
+                    var (snappedLoads, orphanLoads) = SnapOrphanLoads(tbModel);
+                    popTotalSnappedLoads += snappedLoads;
+                    popTotalOrphanLoads  += orphanLoads;
+
+                    var (snappedSups, orphanSups) = SnapOrphanSupports(tbModel);
+                    popTotalSnappedSups += snappedSups;
+                    popTotalOrphanSups  += orphanSups;
+
+                    int sgPointLoadCount = shape.PointLoads?.Count ?? 0;
+                    int tbPointLoadCount = tbModel.Loads?.Count(l => l is TB_Load_Point && ((TB_Load_Point)l).Node != null) ?? 0;
+                    int tbSupportCount   = tbModel.Sups?.Count ?? 0;
+                    int tbAttachedSups   = tbModel.Sups?.Count(s => s != null && s.Node != null) ?? 0;
+                    int totalConstrainedDofs = 0;
+                    if (tbModel.Sups != null)
+                    {
+                        foreach (var s in tbModel.Sups)
+                        {
+                            if (s?.Node == null || s.Conditions == null) continue;
+                            for (int k = 0; k < s.Conditions.Count; k++)
+                                if (s.Conditions[k]) totalConstrainedDofs++;
+                        }
+                    }
+                    double totalLoadMagnitude = 0.0;
+                    double loadMagOnFreeDofs = 0.0;       // Σ of load components that land on FREE DOFs (those that survive the BC zero-out)
+                    int loadsAtSupportNodes = 0;          // # of TB_Load_Point whose host node is also a TB_Support node
+                    int loadsAllDofsConstrained = 0;      // # of TB_Load_Point where every DOF the load uses is constrained → fully zeroed by BC
+                    var supportedNodeIds = new HashSet<int>();
+                    if (tbModel.Sups != null)
+                    {
+                        foreach (var s in tbModel.Sups)
+                            if (s?.Node?.Id != null) supportedNodeIds.Add(s.Node.Id.Value);
+                    }
+                    if (tbModel.Loads != null)
+                    {
+                        foreach (var l in tbModel.Loads)
+                        {
+                            if (!(l is TB_Load_Point lp) || lp.Node == null || lp.Loads == null || lp.Loads.Count < 6) continue;
+
+                            double fx = lp.Loads[0], fy = lp.Loads[1], fz = lp.Loads[2];
+                            double mx = lp.Loads[3], my = lp.Loads[4], mz = lp.Loads[5];
+                            totalLoadMagnitude += Math.Sqrt(fx * fx + fy * fy + fz * fz);
+                            totalLoadMagnitude += Math.Sqrt(mx * mx + my * my + mz * mz);
+
+                            bool atSupport = lp.Node.Id != null && supportedNodeIds.Contains(lp.Node.Id.Value);
+                            if (atSupport) loadsAtSupportNodes++;
+
+                            // Figure out which of the load's 6 DOFs survive BC at this node.
+                            // n.Sup is set in CheckSupports; default to "all free" if not.
+                            bool[] freeMask = new bool[] { true, true, true, true, true, true };
+                            if (lp.Node.Sup?.Conditions != null && lp.Node.Sup.Conditions.Count == 6)
+                                for (int k = 0; k < 6; k++)
+                                    freeMask[k] = !lp.Node.Sup.Conditions[k];
+
+                            double[] comps = new double[] { fx, fy, fz, mx, my, mz };
+                            bool anyFreeNonZero = false;
+                            for (int k = 0; k < 6; k++)
+                            {
+                                if (freeMask[k])
+                                {
+                                    loadMagOnFreeDofs += Math.Abs(comps[k]);
+                                    if (Math.Abs(comps[k]) > 1e-12) anyFreeNonZero = true;
+                                }
+                            }
+                            if (atSupport && !anyFreeNonZero) loadsAllDofsConstrained++;
+                        }
+                    }
+
+                    if (tbPointLoadCount == 0) popWithZeroTbLoads++;
+                    if (tbSupportCount == 0) popWithZeroTbSups++;
+                    if (sgPointLoadCount > 0 && tbPointLoadCount == 0) popWithSgLoadDrop++;
+                    if (totalConstrainedDofs == 0) popWithZeroConstrainedDOFs++;
+                    if (totalLoadMagnitude < 1e-12) popWithZeroLoadMagnitude++;
+                    popTotalLoadsAtSupportNodes += loadsAtSupportNodes;
+                    popTotalLoadsAllDofsConstrained += loadsAllDofsConstrained;
+                    popSumFreeDofLoadMag += loadMagOnFreeDofs;
+
+                    if (i == 0)
+                    {
+                        // Pick one element to sample E and Area (the very first one with a usable section).
+                        double sampleE = 0.0, sampleA = 0.0, sampleWy = 0.0;
+                        string sampleSecName = "?";
+                        if (tbModel.Elem1Ds != null)
+                        {
+                            foreach (var el in tbModel.Elem1Ds)
+                            {
+                                if (el?.Sec?.Mat == null) continue;
+                                sampleE = el.Sec.Mat.E;
+                                sampleA = el.Sec.Area;
+                                sampleWy = el.Sec.Wy;
+                                sampleSecName = el.Sec.Tag ?? "?";
+                                break;
+                            }
+                        }
+                        firstIndDiag = string.Format(
+                            "First individual diagnostics: nodes={0}, elems={1}, sg_sups={2}, tb_sups_attached={3}/{4}, constrained_DOFs={5}, sg_loads={6}, tb_loads_attached={7}/{8}, ΣLoadMag={9:G4}, loads_at_support_nodes={10}/{11}, loads_fully_zeroed_by_BC={12}, ΣLoadMag_after_BC={13:G4}, sample sec='{14}' (E={15:G4}, A={16:G4}, Wy={17:G4}).",
+                            tbModel.Nodes?.Count ?? 0,
+                            tbModel.Elem1Ds?.Count ?? 0,
+                            shape.Supports?.Count ?? 0,
+                            tbAttachedSups, tbSupportCount,
+                            totalConstrainedDofs,
+                            sgPointLoadCount,
+                            tbPointLoadCount, tbModel.Loads?.Count(l => l is TB_Load_Point) ?? 0,
+                            totalLoadMagnitude,
+                            loadsAtSupportNodes, tbPointLoadCount,
+                            loadsAllDofsConstrained,
+                            loadMagOnFreeDofs,
+                            sampleSecName, sampleE, sampleA, sampleWy);
+                    }
+
                     var slv = new SolveLS(ref tbModel);
-                    TB_Model finalModel = slv.Mdl;
+                    finalModel = slv.Mdl;
 
                     if (croSecOpt == 1)
                         finalModel = OptimizeCrossSections_Rect(finalModel, csOptIters);
@@ -162,6 +314,15 @@ namespace ShapeGrammar3D.Classes
                     }
 
                     double rawDisp = CalculateMaxNodalDisplacement(finalModel);
+                    bool dispIsAllZero = rawDisp >= double.MaxValue * 0.5;            // CalculateMax... returns MaxValue when every disp is 0
+                    bool dispIsNonFinite = double.IsInfinity(rawDisp) || double.IsNaN(rawDisp);
+                    if (dispIsAllZero) popWithMaxValueDisp++;
+                    else if (dispIsNonFinite) popWithNonFiniteDisp++;
+
+                    if (i == 0 && firstIndDiag != null)
+                        firstIndDiag += string.Format(" rawDisp={0:G6} (MaxValueSentinel={1}, Inf/NaN={2}).",
+                            rawDisp, dispIsAllZero, dispIsNonFinite);
+
                     double spanL = ComputeSpanL(finalModel);
                     double slsLimit = spanL / 300.0;
                     double dispRatio = (slsLimit > 1e-12) ? rawDisp / slsLimit : double.MaxValue;
@@ -180,7 +341,7 @@ namespace ShapeGrammar3D.Classes
 
                     var topoVals = topoMetrics.Select(mt => TopologyMetrics.Compute(shape, mt)).ToList();
                     var shpeVals = shapeMetrics
-                        .Select(mt => ShapeMetrics.Compute(shape, mt, shrinkRatio))
+                        .Select(mt => ShapeMetrics.Compute(shape, mt, shrinkRatio, fastShapeMetrics))
                         .ToList();
 
                     if (numObjectives > 1)
@@ -219,8 +380,11 @@ namespace ShapeGrammar3D.Classes
                         SyncShapeSectionsFromModel(shape, finalModel);
 
                     outcome.EvaluatedPopulation.Add(individual);
-                    outcome.Shapes.Add(deepCopyOutputs ? shape.DeepCopy() : shape);
-                    outcome.Models.Add(deepCopyOutputs ? finalModel?.DeepCopy() : finalModel);
+                    if (collectOutputs)
+                    {
+                        outcome.Shapes.Add(deepCopyOutputs ? shape.DeepCopy() : shape);
+                        outcome.Models.Add(deepCopyOutputs ? finalModel?.DeepCopy() : finalModel);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -236,12 +400,94 @@ namespace ShapeGrammar3D.Classes
                         if (numObjectives >= 3) individual.ObjectiveValues.Add(double.MaxValue);
                     }
                     outcome.EvaluatedPopulation.Add(individual);
-                    outcome.Shapes.Add(null);
-                    outcome.Models.Add(null);
+                    if (collectOutputs)
+                    {
+                        outcome.Shapes.Add(null);
+                        outcome.Models.Add(null);
+                    }
                     outcome.Warnings.Add(string.Format(
                         "Individual {0} evaluation failed: {1}", i, ex.Message));
                 }
+                finally
+                {
+                    if (!collectOutputs)
+                    {
+                        shape?.ReleaseRhinoGeometry();
+                        if (i % 5 == 4)
+                        {
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                        }
+                    }
+                }
             }
+
+            // ── Population-wide diagnostics. Surface only when a failure mode hits
+            //    a noticeable fraction of the population, so a single weird individual
+            //    doesn't spam the component.
+            int popN = population.Count;
+            // Diagnostic dump for the first individual - always emitted as a Remark
+            // (info) so the user can read it without the component lighting up orange
+            // when nothing is actually wrong.
+            if (firstIndDiag != null)
+                outcome.Remarks.Add(firstIndDiag);
+            if (popTotalSnappedLoads > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Loads: {0} point load(s) across the population needed nearest-node rescue snap (CheckLoads fuzzyTol too tight or shape moved post-load creation).",
+                    popTotalSnappedLoads));
+            if (popTotalOrphanLoads > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Loads: {0} point load(s) across the population stayed orphan after rescue snap and were dropped by SolveLS.",
+                    popTotalOrphanLoads));
+            if (popTotalSnappedSups > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Supports: {0} support(s) across the population needed nearest-node rescue snap (CheckSupports tolerance miss).",
+                    popTotalSnappedSups));
+            if (popTotalOrphanSups > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Supports: {0} support(s) across the population stayed orphan after rescue snap and are ignored by SolveLS.",
+                    popTotalOrphanSups));
+            if (popWithSgLoadDrop > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Loads: {0}/{1} individuals had SG point loads but TB_Model ended up with 0 - SG_Shape→TB_Model conversion dropped them all.",
+                    popWithSgLoadDrop, popN));
+            if (popWithZeroTbLoads > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Loads: {0}/{1} individuals reached SolveLS with 0 nodal loads - zero RHS ⇒ zero displacement ⇒ Fitness=MaxValue. Check rule LoadVector/AreaLoadVector and RepairSupportsAndLoads.",
+                    popWithZeroTbLoads, popN));
+            if (popWithZeroTbSups > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Supports: {0}/{1} individuals reached SolveLS with 0 supports - unconstrained linear system ⇒ singular K ⇒ NaN/Inf displacement.",
+                    popWithZeroTbSups, popN));
+            if (popWithZeroLoadMagnitude > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Loads: {0}/{1} individuals have Σ|Force+Moment| ≈ 0 even though TB_Load_Point objects exist - load vectors are zero (LoadVector/AreaLoadVector not propagated, or rule overwrote forces).",
+                    popWithZeroLoadMagnitude, popN));
+            if (popWithZeroConstrainedDOFs > 0)
+                outcome.Warnings.Add(string.Format(
+                    "Supports: {0}/{1} individuals have 0 constrained DOFs total (TB_Support.Conditions all false or null) - SolveLS applies no BC ⇒ singular K. Check SupportCondition string on the rule.",
+                    popWithZeroConstrainedDOFs, popN));
+            if (popWithMaxValueDisp > 0)
+                outcome.Warnings.Add(string.Format(
+                    "FE solve: {0}/{1} individuals returned ALL-ZERO displacement (rawDisp=MaxValue sentinel). Means SolveLS ran fine but lV·disp = 0 ⇒ no force is being applied. Look at ΣLoadMag in the 'First individual diagnostics' line above.",
+                    popWithMaxValueDisp, popN));
+            if (popTotalLoadsAtSupportNodes > 0)
+            {
+                string overlapMsg = string.Format(
+                    "Load/Support overlap: {0} point load(s) across the population are applied AT supported nodes; {1} of them are fully zeroed by the BC step (all 6 DOFs of that node are constrained). Total ΣLoadMag actually reaching the solver's RHS = {2:G4}.",
+                    popTotalLoadsAtSupportNodes, popTotalLoadsAllDofsConstrained, popSumFreeDofLoadMag);
+                // Only escalate to a Warning when BC actually wipes load - partial-fix
+                // support nodes that keep some DOFs free still let the load through and
+                // are not a problem.
+                if (popTotalLoadsAllDofsConstrained > 0)
+                    outcome.Warnings.Add(overlapMsg);
+                else
+                    outcome.Remarks.Add(overlapMsg);
+            }
+            if (popWithNonFiniteDisp > 0)
+                outcome.Warnings.Add(string.Format(
+                    "FE solve: {0}/{1} individuals returned Inf/NaN displacement. Means K is singular (insufficient supports, zero stiffness, or LU pivot blew up). Look at constrained_DOFs in the 'First individual diagnostics' line above.",
+                    popWithNonFiniteDisp, popN));
 
             return outcome;
         }
@@ -253,6 +499,96 @@ namespace ShapeGrammar3D.Classes
             var intGenes = new List<int>(individual.Chromosome);
             var dGenes = new List<double>(individual.ChromosomeParam);
             return new SG_Genotype(intGenes, dGenes);
+        }
+
+        /// <summary>
+        /// Rescue step run right after <see cref="TB_Model"/> construction.
+        /// <see cref="TB_Model.CheckLoads"/> uses a tight <c>fuzzyTol ≈ diag·1e-5</c>
+        /// and silently leaves a <see cref="TB_Load_Point"/>'s <c>Node</c> as
+        /// <c>null</c> when it can't match it - those loads then never enter the
+        /// solver's RHS. This brute-force nearest-neighbour pass attaches every
+        /// remaining orphan to its closest FEM node (regardless of distance), so a
+        /// 1 mm projection drift no longer wipes the entire load case. Returns
+        /// (snapped, stillOrphan) counts so callers can surface a warning instead
+        /// of failing silently.
+        /// </summary>
+        private static (int snapped, int orphan) SnapOrphanLoads(TB_Model tbModel)
+        {
+            int snapped = 0, orphan = 0;
+            if (tbModel?.Loads == null || tbModel.Nodes == null || tbModel.Nodes.Count == 0)
+                return (0, 0);
+
+            foreach (var l in tbModel.Loads)
+            {
+                if (!(l is TB_Load_Point pl)) continue;
+                if (pl.Node != null) continue;
+
+                Node nearest = null;
+                double best = double.MaxValue;
+                foreach (var n in tbModel.Nodes)
+                {
+                    if (n == null || n.Id == null) continue;
+                    double d = n.Pt.DistanceToSquared(pl.Pt);
+                    if (d < best) { best = d; nearest = n; }
+                }
+
+                if (nearest != null)
+                {
+                    pl.Node = nearest;
+                    pl.Pt = nearest.Pt;
+                    snapped++;
+                }
+                else
+                {
+                    orphan++;
+                }
+            }
+            return (snapped, orphan);
+        }
+
+        /// <summary>
+        /// Same rescue as <see cref="SnapOrphanLoads"/> but for supports.
+        /// <see cref="TB_Model.CheckSupports"/> uses <c>Node.FindNode</c> (bucket
+        /// hash + <c>Common.PRES</c> tolerance) and silently leaves a
+        /// <see cref="TB_Support"/>'s <c>Node</c> as <c>null</c> if no node sits
+        /// on its <c>Pt</c>. <see cref="SolveLS"/> then skips that support
+        /// because its BC loop is keyed off <c>Mdl.Nodes.Where(n => n.Sup != null)</c>,
+        /// so the system silently becomes unconstrained (singular K → Inf/NaN disp).
+        /// This pass force-snaps each orphan to its nearest TB node and writes
+        /// the back-reference, restoring the BC application in SolveLS.
+        /// </summary>
+        private static (int snapped, int orphan) SnapOrphanSupports(TB_Model tbModel)
+        {
+            int snapped = 0, orphan = 0;
+            if (tbModel?.Sups == null || tbModel.Nodes == null || tbModel.Nodes.Count == 0)
+                return (0, 0);
+
+            foreach (var s in tbModel.Sups)
+            {
+                if (s == null) continue;
+                if (s.Node != null) continue;
+
+                Node nearest = null;
+                double best = double.MaxValue;
+                foreach (var n in tbModel.Nodes)
+                {
+                    if (n == null || n.Id == null) continue;
+                    double d = n.Pt.DistanceToSquared(s.Pt);
+                    if (d < best) { best = d; nearest = n; }
+                }
+
+                if (nearest != null)
+                {
+                    s.Node = nearest;
+                    nearest.Sup = s;
+                    snapped++;
+                }
+                else
+                {
+                    orphan++;
+                }
+            }
+            return (snapped, orphan);
         }
 
         // ─── Boundary / supports / loads ───────────────────────────────
@@ -304,14 +640,26 @@ namespace ShapeGrammar3D.Classes
             Vector3d loadVec = initRule?.LoadVector ?? Vector3d.Zero;
             Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
 
-            // If the user supplied loads through the Assembly AND no init-rule load
-            // is configured, preserve them as-is. This is the path taken by the new
+            // When the init rule has LoadVector / AreaLoadVector configured, it already
+            // dropped loads into shape.PointLoads during its own RuleOperation - but it
+            // did so at the InitShape stage, BEFORE AutoRule02 added the strut tops the
+            // area loads should actually land on. CollectAreaLoadVoronoiSeedNodes therefore
+            // fell back to beam endpoints, which coincide 1:1 with the supports. SolveLS's
+            // BC step then zeroes every load entry at supported DOFs and the entire RHS
+            // collapses to 0 → every individual returns rawDisp = MaxValue sentinel.
+            // Wipe the stale InitShape-stage loads and regenerate below at the FINAL
+            // shape state (where RULE020 struts exist and load nodes ≠ support nodes).
+            bool initRuleAutoGenerates = initRule != null &&
+                (loadVec.Length > 1e-12 || areaLoadVec.Length > 1e-12);
+
+            // If the user supplied loads through the Assembly AND the init rule is NOT
+            // auto-generating, preserve them as-is. This is the path taken by the new
             // curve+CurveLoad assembly: loads (including line loads) come from the
             // input shape and must survive every GA generation.
             bool hasUserLoads =
                 (shape.PointLoads != null && shape.PointLoads.Count > 0) ||
                 (shape.LineLoads  != null && shape.LineLoads.Count  > 0);
-            if (hasUserLoads)
+            if (hasUserLoads && !initRuleAutoGenerates)
             {
                 shape.PointLoads ??= new List<SG_PointLoad>();
                 shape.LineLoads  ??= new List<SG_LineLoad>();
@@ -381,9 +729,17 @@ namespace ShapeGrammar3D.Classes
             shape.PointLoads ??= new List<SG_PointLoad>();
             shape.PointLoads.Clear();
 
+            // Build a set of nodes whose every translational+rotational DOF will be
+            // zeroed by the SolveLS BC step. A point load on such a node never enters
+            // the RHS, so we skip placing one to avoid wasted ΣLoadMag (see the
+            // "loads_fully_zeroed_by_BC" diagnostic line). Partially-constrained
+            // nodes still receive the load - SolveLS keeps load components on free
+            // DOFs of partially-constrained supports.
+            var fullyConstrainedNodeIds = BuildFullyConstrainedNodeIdSet(shape);
+
             if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec);
+                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec, fullyConstrainedNodeIds);
             }
             else
             {
@@ -391,14 +747,39 @@ namespace ShapeGrammar3D.Classes
                 foreach (var nd in shape.Nodes)
                 {
                     if (nd == null || !elemNodeIds.Contains(nd.ID)) continue;
+                    if (fullyConstrainedNodeIds.Contains(nd.ID)) continue;
                     shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
                 }
             }
         }
 
+        /// <summary>
+        /// Collects IDs of SG nodes whose support constrains every one of the 6 DOFs
+        /// (so the SolveLS BC step would zero out any nodal load on them). Nodes
+        /// without a support, or with a support that leaves at least one DOF free,
+        /// are NOT included - those still benefit from receiving a load.
+        /// </summary>
+        private static HashSet<int> BuildFullyConstrainedNodeIdSet(SG_Shape shape)
+        {
+            var ids = new HashSet<int>();
+            if (shape?.Nodes == null) return ids;
+            foreach (var nd in shape.Nodes)
+            {
+                if (nd?.Support == null) continue;
+                var conds = nd.Support.GetBoolConditions();
+                if (conds == null || conds.Count != 6) continue;
+                bool allFixed = true;
+                for (int k = 0; k < 6; k++)
+                    if (!conds[k]) { allFixed = false; break; }
+                if (allFixed) ids.Add(nd.ID);
+            }
+            return ids;
+        }
+
         private static void ApplyVoronoiAreaLoads(
             SG_Shape shape, SG_AutoRule_InitShape_3D initRule,
-            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec)
+            HashSet<int> elemEndpoints, Vector3d areaLoadVec, Vector3d fallbackLoadVec,
+            HashSet<int> fullyConstrainedNodeIds)
         {
             var bb = initRule.DesignSpace;
             double xMin = bb.Min.X, xMax = bb.Max.X;
@@ -406,12 +787,18 @@ namespace ShapeGrammar3D.Classes
 
             var seedNodes = VoronoiAreaLoadUtil.CollectAreaLoadVoronoiSeedNodes(shape, bb);
             if (seedNodes.Count == 0) return;
+
+            // Voronoi areas are still computed over the full seed set so that
+            // tributary areas reflect the geometric Voronoi cells the user
+            // expects. We then skip emitting loads for seeds that sit on a
+            // fully-fixed support, which would otherwise be wasted by BC.
             var seeds = seedNodes.Select(n => (n.ID, n.Pt.X, n.Pt.Y)).ToList();
             var voronoiAreas = ComputeVoronoiAreas(seeds, xMin, xMax, yMin, yMax);
 
             foreach (var n in seedNodes)
             {
                 if (!voronoiAreas.TryGetValue(n.ID, out double area)) continue;
+                if (fullyConstrainedNodeIds != null && fullyConstrainedNodeIds.Contains(n.ID)) continue;
                 shape.PointLoads.Add(new SG_PointLoad(area * areaLoadVec, Vector3d.Zero, n.Pt));
             }
         }

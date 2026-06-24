@@ -440,15 +440,30 @@ namespace ShapeGrammar3D.Classes
             _w.WriteEndArray();
         }
 
+        /// <summary>
+        /// JSON-writable scalar test. Only NaN / ±Infinity are written as JSON null
+        /// (those are the only values the spec cannot represent). <see cref="double.MaxValue"/>
+        /// / <see cref="double.MinValue"/> are emitted verbatim so the reader can
+        /// distinguish "GA marked this individual as failed" (MaxValue) from "no
+        /// value at all" (null) on round-trip.
+        /// </summary>
         private static bool IsValidScalar(double v)
         {
-            return !double.IsNaN(v)
-                && !double.IsInfinity(v)
-                && v != double.MaxValue
-                && v != double.MinValue;
+            return !double.IsNaN(v) && !double.IsInfinity(v);
         }
 
-        private static bool IsValidScalar(GAIndividual ind) => IsValidScalar(ind.Fitness);
+        /// <summary>
+        /// Aggregate inclusion test. An individual contributes to best/worst/avg only
+        /// when its fitness is a finite, GA-meaningful number - MaxValue (the failure
+        /// sentinel) and MinValue must be excluded so a single failed individual does
+        /// not pull the cluster average to ±1e308.
+        /// </summary>
+        private static bool IsFiniteMeaningful(double v)
+        {
+            return IsValidScalar(v) && v != double.MaxValue && v != double.MinValue;
+        }
+
+        private static bool IsValidScalar(GAIndividual ind) => IsFiniteMeaningful(ind.Fitness);
 
         private void EnsureWriter()
         {
