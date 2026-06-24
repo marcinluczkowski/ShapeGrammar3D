@@ -54,6 +54,9 @@ namespace ShapeGrammar3D.Components
             pManager.AddNumberParameter("Point Size", "PtSz", "Cross marker size.", GH_ParamAccess.item, 0.08);                                              // 9
             pManager.AddNumberParameter("View Gap", "Gap", "Spacing between views. Empty/0 = max(W,H) * 0.6.", GH_ParamAccess.item, 0.0);                     // 10
             pManager.AddNumberParameter("Miniature Size", "Mini", "Target size of each structure miniature (when Assembly connected). Empty/0 = min(W,H) * 0.12.", GH_ParamAccess.item, 0.0); // 11
+            pManager.AddBooleanParameter("Unitized", "Unit",
+                "Axis tick labels: false = real data values, true = unitized 0..1 (data normalized per axis). Geometry layout is unchanged; only the tick text differs.",
+                GH_ParamAccess.item, false);                                                                                                                // 12
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
@@ -66,6 +69,7 @@ namespace ShapeGrammar3D.Components
             pManager[9].Optional = true;
             pManager[10].Optional = true;
             pManager[11].Optional = true;
+            pManager[12].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -75,9 +79,13 @@ namespace ShapeGrammar3D.Components
             pManager.AddColourParameter("Point Colours", "PCol", "Cluster colour per point (matches Points).", GH_ParamAccess.tree);                 // 2
             pManager.AddLineParameter("Miniatures", "Mini", "Scaled structure lines per {view; gen; cluster} (only when Assembly connected).", GH_ParamAccess.tree); // 3
             pManager.AddColourParameter("Miniature Colours", "MCol", "Cluster colour per miniature line (matches Miniatures).", GH_ParamAccess.tree); // 4
-            pManager.AddLineParameter("Lines", "Ln", "Axis, grid, marker and convergence lines.", GH_ParamAccess.tree);                              // 5
-            pManager.AddColourParameter("Line Colours", "LCol", "Colour per line (matches Lines).", GH_ParamAccess.tree);                            // 6
-            pManager.AddGeometryParameter("Labels", "Txt", "Bakeable TextEntity labels: axis names, tick values, cluster legend, titles.", GH_ParamAccess.tree); // 7
+            pManager.AddLineParameter("Marker Lines", "Mk", "Point cross markers per {CROSS_BASE+view; gen} (omitted where a miniature is drawn).", GH_ParamAccess.tree); // 5
+            pManager.AddColourParameter("Marker Colours", "MkCol", "Colour per marker line.", GH_ParamAccess.tree);                                  // 6
+            pManager.AddLineParameter("Axis Lines", "Ax", "Axis system: frames, grid, ticks and cluster legend swatches (no data/convergence). Bakeable.", GH_ParamAccess.tree); // 7
+            pManager.AddColourParameter("Axis Colours", "AxCol", "Colour per axis line.", GH_ParamAccess.tree);                                      // 8
+            pManager.AddLineParameter("Convergence Lines", "CLn", "Per-cluster convergence polyline segments (separated from the axis system). Bakeable.", GH_ParamAccess.tree); // 9
+            pManager.AddColourParameter("Convergence Colours", "CLCol", "Colour per convergence line.", GH_ParamAccess.tree);                        // 10
+            pManager.AddGeometryParameter("Labels", "Txt", "Bakeable TextEntity labels: axis names, tick values, cluster legend, titles.", GH_ParamAccess.tree); // 11
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -98,6 +106,7 @@ namespace ShapeGrammar3D.Components
             var genList = new List<int>();
             var clusterList = new List<int>();
             double graphW = 10.0, graphH = 6.0, graphD = 6.0, textH = 0.12, ptSize = 0.08, viewGap = 0.0, miniSize = 0.0;
+            bool unitized = false;
 
             DA.GetData(2, ref plane);
             DA.GetDataList(3, genList);
@@ -109,6 +118,7 @@ namespace ShapeGrammar3D.Components
             DA.GetData(9, ref ptSize);
             DA.GetData(10, ref viewGap);
             DA.GetData(11, ref miniSize);
+            DA.GetData(12, ref unitized);
 
             if (genList.Count == 0) genList.Add(-1);
             if (clusterList.Count == 0) clusterList.Add(-1);
@@ -160,8 +170,12 @@ namespace ShapeGrammar3D.Components
             var ptCols = new GH_Structure<GH_Colour>();
             var minis = new GH_Structure<GH_Line>();
             var miniCols = new GH_Structure<GH_Colour>();
-            var lines = new GH_Structure<GH_Line>();
-            var lineCols = new GH_Structure<GH_Colour>();
+            var markerLines = new GH_Structure<GH_Line>();
+            var markerCols = new GH_Structure<GH_Colour>();
+            var axisLines = new GH_Structure<GH_Line>();
+            var axisCols = new GH_Structure<GH_Colour>();
+            var convLines = new GH_Structure<GH_Line>();
+            var convCols = new GH_Structure<GH_Colour>();
             var labels = new GH_Structure<GH_TextEntity>();
 
             if (records.Count == 0)
@@ -172,9 +186,13 @@ namespace ShapeGrammar3D.Components
                 DA.SetDataTree(2, ptCols);
                 DA.SetDataTree(3, minis);
                 DA.SetDataTree(4, miniCols);
-                DA.SetDataTree(5, lines);
-                DA.SetDataTree(6, lineCols);
-                DA.SetDataTree(7, labels);
+                DA.SetDataTree(5, markerLines);
+                DA.SetDataTree(6, markerCols);
+                DA.SetDataTree(7, axisLines);
+                DA.SetDataTree(8, axisCols);
+                DA.SetDataTree(9, convLines);
+                DA.SetDataTree(10, convCols);
+                DA.SetDataTree(11, labels);
                 return;
             }
 
@@ -204,11 +222,11 @@ namespace ShapeGrammar3D.Components
 
             foreach (var view in views)
             {
-                BuildFrame(lines, lineCols, labels, new GH_Path(view.Index), view.Origin, xDir, yDir, zDir,
+                BuildFrame(axisLines, axisCols, labels, new GH_Path(view.Index), view.Origin, xDir, yDir, zDir,
                     graphW, graphH, graphD, view.HasZ,
                     axMin[view.AxX], axRng[view.AxX], axMin[view.AxY], axRng[view.AxY],
                     view.HasZ ? axMin[view.AxZ] : 0, view.HasZ ? axRng[view.AxZ] : 1,
-                    textH, axName[view.AxX], axName[view.AxY], view.HasZ ? axName[view.AxZ] : "", view.Title);
+                    textH, axName[view.AxX], axName[view.AxY], view.HasZ ? axName[view.AxZ] : "", view.Title, unitized);
             }
 
             // Assembly lookup for miniatures.
@@ -267,7 +285,7 @@ namespace ShapeGrammar3D.Components
                     {
                         pts.Append(new GH_Point(pt), path);
                         ptCols.Append(new GH_Colour(col), path);
-                        AppendCross(lines, lineCols, pt, xDir, yDir, zDir, ptSize, view.HasZ, col,
+                        AppendCross(markerLines, markerCols, pt, xDir, yDir, zDir, ptSize, view.HasZ, col,
                             new GH_Path(CROSS_BASE + view.Index, r.Gen));
                     }
                 }
@@ -282,21 +300,22 @@ namespace ShapeGrammar3D.Components
                 Color col = GetClusterColour(cl, clusterSpan);
                 double legendY = graphH - i * textH * 1.8;
                 Point3d legendPt = O + xDir * (graphW + textH * 1.5) + yDir * legendY;
-                lines.Append(new GH_Line(new Line(legendPt - xDir * (textH * 1.2), legendPt - xDir * (textH * 0.2))), new GH_Path(V_3D));
-                lineCols.Append(new GH_Colour(col), new GH_Path(V_3D));
+                axisLines.Append(new GH_Line(new Line(legendPt - xDir * (textH * 1.2), legendPt - xDir * (textH * 0.2))), new GH_Path(V_3D));
+                axisCols.Append(new GH_Colour(col), new GH_Path(V_3D));
                 labels.Append(MakeLabel(legendPt, xDir, yDir, string.Format("C{0}", cl), textH * 0.9, col), new GH_Path(V_3D));
             }
 
-            // Convergence below the 3D view.
+            // Convergence below the 3D view: frame → axis outputs, polylines → convergence outputs.
             int convCount = BuildConvergence(res, presentClusters, allClusters, clusterSpan,
                 O - yDir * (graphH + viewGap), xDir, yDir, graphW, graphH, textH,
-                lines, lineCols, labels);
+                axisLines, axisCols, convLines, convCols, labels);
 
             string info = string.Format(
-                "Opti Preview ({0} obj)\nPoints: {1}  Clusters: {2}  Gens: {3}\nViews: 3D (D x U x F) + DU + DF + UF; convergence series: {4}\nMiniatures: {5}\nLabels: {6} (bakeable)\nTree paths: {{view; gen; cluster}}  (view 0=3D, 1=DU, 2=DF, 3=UF)",
+                "Opti Preview ({0} obj)\nPoints: {1}  Clusters: {2}  Gens: {3}\nViews: 3D (D x U x F) + DU + DF + UF; convergence series: {4}\nMiniatures: {5}\nAxis ticks: {6}\nLabels: {7} (bakeable)\nTree paths: {{view; gen; cluster}}  (view 0=3D, 1=DU, 2=DF, 3=UF)",
                 numObj, records.Count, presentClusters.Count,
                 allGens ? "all" : string.Join(",", genList), convCount,
                 useMini ? string.Format("{0} drawn (Assembly connected)", miniDrawn) : "off (connect Assembly)",
+                unitized ? "unitized 0..1" : "real values",
                 labels.DataCount);
 
             DA.SetData(0, info);
@@ -304,9 +323,13 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(2, ptCols);
             DA.SetDataTree(3, minis);
             DA.SetDataTree(4, miniCols);
-            DA.SetDataTree(5, lines);
-            DA.SetDataTree(6, lineCols);
-            DA.SetDataTree(7, labels);
+            DA.SetDataTree(5, markerLines);
+            DA.SetDataTree(6, markerCols);
+            DA.SetDataTree(7, axisLines);
+            DA.SetDataTree(8, axisCols);
+            DA.SetDataTree(9, convLines);
+            DA.SetDataTree(10, convCols);
+            DA.SetDataTree(11, labels);
         }
 
         private static void BuildFrame(
@@ -314,7 +337,7 @@ namespace ShapeGrammar3D.Components
             GH_Path path, Point3d origin, Vector3d xDir, Vector3d yDir, Vector3d zDir,
             double w, double h, double d, bool hasZ,
             double minX, double rngX, double minY, double rngY, double minZ, double rngZ,
-            double textH, string xName, string yName, string zName, string title)
+            double textH, string xName, string yName, string zName, string title, bool unitized)
         {
             Color axisColor = Color.FromArgb(120, 120, 120);
             Color gridColor = Color.FromArgb(225, 225, 225);
@@ -342,7 +365,7 @@ namespace ShapeGrammar3D.Components
                 Point3d tickEnd = tickBase - yDir * (textH * 0.3);
                 AddLine(lines, cols, path, tickBase, tickEnd, axisColor);
                 if (t > 0 && t < ticks) AddLine(lines, cols, path, tickBase, tickBase + yDir * h, gridColor);
-                labels.Append(MakeLabel(tickEnd - yDir * (textH * 1.0), xDir, yDir, FormatTick(minX + frac * rngX), textH * 0.8, textColor), path);
+                labels.Append(MakeLabel(tickEnd - yDir * (textH * 1.0), xDir, yDir, TickText(minX, rngX, frac, unitized), textH * 0.8, textColor), path);
             }
             for (int t = 0; t <= ticks; t++)
             {
@@ -351,7 +374,7 @@ namespace ShapeGrammar3D.Components
                 Point3d tickEnd = tickBase - xDir * (textH * 0.3);
                 AddLine(lines, cols, path, tickBase, tickEnd, axisColor);
                 if (t > 0 && t < ticks) AddLine(lines, cols, path, tickBase, tickBase + xDir * w, gridColor);
-                labels.Append(MakeLabel(tickEnd - xDir * (textH * 1.6), xDir, yDir, FormatTick(minY + frac * rngY), textH * 0.8, textColor), path);
+                labels.Append(MakeLabel(tickEnd - xDir * (textH * 1.6), xDir, yDir, TickText(minY, rngY, frac, unitized), textH * 0.8, textColor), path);
             }
             if (hasZ)
             {
@@ -361,7 +384,7 @@ namespace ShapeGrammar3D.Components
                     Point3d tickBase = origin + zDir * (frac * d);
                     Point3d tickEnd = tickBase - xDir * (textH * 0.3);
                     AddLine(lines, cols, path, tickBase, tickEnd, axisColor);
-                    labels.Append(MakeLabel(tickEnd - xDir * (textH * 1.6), zDir, xDir, FormatTick(minZ + frac * rngZ), textH * 0.8, textColor), path);
+                    labels.Append(MakeLabel(tickEnd - xDir * (textH * 1.6), zDir, xDir, TickText(minZ, rngZ, frac, unitized), textH * 0.8, textColor), path);
                 }
             }
 
@@ -372,7 +395,9 @@ namespace ShapeGrammar3D.Components
 
         private static int BuildConvergence(OptimizationResults res, List<int> presentClusters, bool allClusters, int clusterSpan,
             Point3d origin, Vector3d xDir, Vector3d yDir, double w, double h, double textH,
-            GH_Structure<GH_Line> lines, GH_Structure<GH_Colour> cols, GH_Structure<GH_TextEntity> labels)
+            GH_Structure<GH_Line> axisLines, GH_Structure<GH_Colour> axisCols,
+            GH_Structure<GH_Line> convLines, GH_Structure<GH_Colour> convCols,
+            GH_Structure<GH_TextEntity> labels)
         {
             if (res.Aggregates == null || res.Aggregates.Count == 0) return 0;
 
@@ -392,10 +417,10 @@ namespace ShapeGrammar3D.Components
             double globalMax = byCluster.Values.SelectMany(v => v.Select(a => a.Best)).Max();
             if (Math.Abs(globalMax - globalMin) < 1e-12) globalMax = globalMin + 1.0;
 
-            // Frame for convergence chart.
+            // Frame for convergence chart → axis outputs.
             Color axisColor = Color.FromArgb(120, 120, 120);
-            AddLine(lines, cols, new GH_Path(CONV_BRANCH), origin, origin + xDir * w, axisColor);
-            AddLine(lines, cols, new GH_Path(CONV_BRANCH), origin, origin + yDir * h, axisColor);
+            AddLine(axisLines, axisCols, new GH_Path(CONV_BRANCH), origin, origin + xDir * w, axisColor);
+            AddLine(axisLines, axisCols, new GH_Path(CONV_BRANCH), origin, origin + yDir * h, axisColor);
 
             int series = 0;
             foreach (var kvp in byCluster.OrderBy(k => k.Key))
@@ -408,8 +433,8 @@ namespace ShapeGrammar3D.Components
                 {
                     Point3d p0 = ConvPoint(data[i - 1].Generation, data[i - 1].Best, genMin, genMax, globalMin, globalMax, origin, xDir, yDir, w, h);
                     Point3d p1 = ConvPoint(data[i].Generation, data[i].Best, genMin, genMax, globalMin, globalMax, origin, xDir, yDir, w, h);
-                    lines.Append(new GH_Line(new Line(p0, p1)), path);
-                    cols.Append(new GH_Colour(col), path);
+                    convLines.Append(new GH_Line(new Line(p0, p1)), path);
+                    convCols.Append(new GH_Colour(col), path);
                 }
                 series++;
             }
@@ -509,6 +534,9 @@ namespace ShapeGrammar3D.Components
         }
 
         private static bool IsInvalid(double v) => double.IsNaN(v) || double.IsInfinity(v) || v >= double.MaxValue * 0.5;
+
+        private static string TickText(double min, double rng, double frac, bool unitized)
+            => unitized ? frac.ToString("F2") : FormatTick(min + frac * rng);
 
         private static string FormatTick(double v)
         {

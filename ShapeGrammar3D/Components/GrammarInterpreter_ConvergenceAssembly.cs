@@ -71,14 +71,17 @@ namespace ShapeGrammar3D.Components
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddLineParameter("Lines", "Ln", "Graph lines", GH_ParamAccess.tree);
-            pManager.AddColourParameter("Colours", "Col", "Line colours", GH_ParamAccess.tree);
-            pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
-            pManager.AddCurveParameter("Curves Best", "Best", "Best objective curve per fitness source", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("Curves Worst", "Worst", "Worst objective curve per fitness source", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("Curves Avg", "Avg", "Average objective curve per fitness source", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("Curves Cluster", "Clust", "Best per cluster curves", GH_ParamAccess.tree);
-            pManager.AddColourParameter("CurveColours", "CCol", "Curve colours (cluster curves)", GH_ParamAccess.tree);
+            pManager.AddLineParameter("Axis Lines", "Ax", "Axis system + grid lines only (no convergence curves). Bakeable.", GH_ParamAccess.tree);   // 0
+            pManager.AddColourParameter("Axis Colours", "AxCol", "Colours for axis lines.", GH_ParamAccess.tree);                                       // 1
+            pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);                                                                  // 2
+            pManager.AddCurveParameter("Curves Best", "Best", "Best objective curve per fitness source", GH_ParamAccess.tree);                          // 3
+            pManager.AddCurveParameter("Curves Worst", "Worst", "Worst objective curve per fitness source", GH_ParamAccess.tree);                       // 4
+            pManager.AddCurveParameter("Curves Avg", "Avg", "Average objective curve per fitness source", GH_ParamAccess.tree);                         // 5
+            pManager.AddCurveParameter("Curves Cluster", "Clust", "Best per cluster curves", GH_ParamAccess.tree);                                      // 6
+            pManager.AddColourParameter("CurveColours", "CCol", "Curve colours (cluster curves)", GH_ParamAccess.tree);                                 // 7
+            pManager.AddLineParameter("Convergence Lines", "CLn", "Per-cluster convergence polyline segments (separated from the axis system). Bakeable.", GH_ParamAccess.tree); // 8
+            pManager.AddColourParameter("Convergence Colours", "CLCol", "Colours for convergence lines.", GH_ParamAccess.tree);                         // 9
+            pManager.AddGeometryParameter("Labels", "Txt", "Bakeable TextEntity axis descriptions: generation ticks, value ticks and metric names.", GH_ParamAccess.tree); // 10
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -184,6 +187,8 @@ namespace ShapeGrammar3D.Components
 
             var linesTree = new GH_Structure<GH_Line>();
             var colorsTree = new GH_Structure<GH_Colour>();
+            var convLinesTree = new GH_Structure<GH_Line>();
+            var convColorsTree = new GH_Structure<GH_Colour>();
             var curvesBestTree = new GH_Structure<GH_Curve>();
             var curvesWorstTree = new GH_Structure<GH_Curve>();
             var curvesAvgTree = new GH_Structure<GH_Curve>();
@@ -359,8 +364,8 @@ namespace ShapeGrammar3D.Components
                         {
                             var p1 = curvePoints[curvePoints.Count - 2];
                             var p2 = curvePoints[curvePoints.Count - 1];
-                            linesTree.Append(new GH_Line(new Line(p1, p2)), curvePath);
-                            colorsTree.Append(new GH_Colour(clColor), curvePath);
+                            convLinesTree.Append(new GH_Line(new Line(p1, p2)), curvePath);
+                            convColorsTree.Append(new GH_Colour(clColor), curvePath);
                         }
                     }
                     if (curvePoints.Count >= 2)
@@ -426,6 +431,7 @@ namespace ShapeGrammar3D.Components
             if (!dispXf.IsIdentity)
             {
                 linesTree = PreviewLayoutTransforms.TransformLineTree(linesTree, dispXf);
+                convLinesTree = PreviewLayoutTransforms.TransformLineTree(convLinesTree, dispXf);
                 curvesBestTree = PreviewLayoutTransforms.TransformCurveTree(curvesBestTree, dispXf);
                 curvesWorstTree = PreviewLayoutTransforms.TransformCurveTree(curvesWorstTree, dispXf);
                 curvesAvgTree = PreviewLayoutTransforms.TransformCurveTree(curvesAvgTree, dispXf);
@@ -447,6 +453,11 @@ namespace ShapeGrammar3D.Components
                 }
             }
 
+            // Bakeable text labels (axis descriptions) built from the same labels drawn in the viewport.
+            var labelsTree = new GH_Structure<GH_TextEntity>();
+            foreach (var L in _labels)
+                labelsTree.Append(MakeTextEntity(L), new GH_Path(0));
+
             DA.SetDataTree(0, linesTree);
             DA.SetDataTree(1, colorsTree);
             DA.SetData(2, string.Format("Convergence from Assembly: {0} gens. Best/Worst/Avg + cluster curves.", numGens));
@@ -455,6 +466,22 @@ namespace ShapeGrammar3D.Components
             DA.SetDataTree(5, curvesAvgTree);
             DA.SetDataTree(6, curvesClusterTree);
             DA.SetDataTree(7, curveColorsTree);
+            DA.SetDataTree(8, convLinesTree);
+            DA.SetDataTree(9, convColorsTree);
+            DA.SetDataTree(10, labelsTree);
+        }
+
+        private static GH_TextEntity MakeTextEntity(GraphLabel label)
+        {
+            var plane = new Plane(label.Position, label.XDir, label.YDir);
+            var te = new TextEntity
+            {
+                Plane = plane,
+                PlainText = label.Text ?? string.Empty,
+                TextHeight = Math.Max(0.001, label.Height),
+                Justification = TextJustification.MiddleCenter
+            };
+            return new GH_TextEntity(te);
         }
 
         private static string FormatValue(double v)
