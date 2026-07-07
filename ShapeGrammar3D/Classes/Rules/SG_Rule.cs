@@ -15,7 +15,7 @@ namespace ShapeGrammar3D.Classes.Rules
         Nodes,
         /// <summary>Iterates over shape elements (e.g. Rule01 subdivision).</summary>
         Elements,
-        /// <summary>Iterates over stud elements produced by earlier rules (e.g. Rule031, Rule041).</summary>
+        /// <summary>Iterates over stud elements produced by earlier rules (e.g. Rule031, Rule032, Rule041).</summary>
         Studs
     }
 

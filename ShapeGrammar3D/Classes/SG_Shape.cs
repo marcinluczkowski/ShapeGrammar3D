@@ -68,6 +68,28 @@ namespace ShapeGrammar3D.Classes
                 Nodes.Add(nd);
                 nodeCount++;
             }
+
+            if (_e.MidNodes != null)
+            {
+                for (int k = 0; k < _e.MidNodes.Count; k++)
+                {
+                    SG_Node nd = _e.MidNodes[k];
+                    if (nd == null) continue;
+
+                    SG_Node existing = Nodes.FirstOrDefault(n => n.Pt.DistanceToSquared(nd.Pt) < 0.001);
+                    if (existing != null)
+                    {
+                        if (!existing.Elements.Contains(_e)) existing.Elements.Add(_e);
+                        _e.MidNodes[k] = existing;
+                        continue;
+                    }
+
+                    nd.ID = nodeCount;
+                    if (!nd.Elements.Contains(_e)) nd.Elements.Add(_e);
+                    Nodes.Add(nd);
+                    nodeCount++;
+                }
+            }
         }
 
         public void RemoveUnusedNodes()
@@ -91,6 +113,15 @@ namespace ShapeGrammar3D.Classes
                     continue;
                 if (!e.Nodes[0].Elements.Contains(e)) e.Nodes[0].Elements.Add(e);
                 if (!e.Nodes[1].Elements.Contains(e)) e.Nodes[1].Elements.Add(e);
+
+                if (e is SG_Elem1D e1d && e1d.MidNodes != null)
+                {
+                    foreach (SG_Node mn in e1d.MidNodes)
+                    {
+                        if (mn == null) continue;
+                        if (!mn.Elements.Contains(e)) mn.Elements.Add(e);
+                    }
+                }
             }
         }
 
@@ -184,6 +215,30 @@ namespace ShapeGrammar3D.Classes
                             else if (elemClone.Nodes[i] != null)
                             {
                                 elemClone.Nodes[i].Elements.Add(elemClone);
+                            }
+                        }
+                    }
+
+                    if (elem is SG_Elem1D srcE1d && elemClone is SG_Elem1D dstE1d)
+                    {
+                        var srcMids = srcE1d.MidNodes;
+                        var dstMids = dstE1d.MidNodes ?? new List<SG_Node>();
+                        if (srcMids != null)
+                        {
+                            for (int i = 0; i < srcMids.Count && i < dstMids.Count; i++)
+                            {
+                                var src = srcMids[i];
+                                if (src != null && nodeMap.TryGetValue(src, out var mapped))
+                                {
+                                    dstMids[i] = mapped;
+                                    if (!mapped.Elements.Contains(elemClone))
+                                        mapped.Elements.Add(elemClone);
+                                }
+                                else if (dstMids[i] != null)
+                                {
+                                    if (!dstMids[i].Elements.Contains(elemClone))
+                                        dstMids[i].Elements.Add(elemClone);
+                                }
                             }
                         }
                     }

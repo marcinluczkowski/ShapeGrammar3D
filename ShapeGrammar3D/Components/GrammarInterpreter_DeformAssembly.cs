@@ -19,7 +19,7 @@ namespace ShapeGrammar3D.Components
 
     public class DeformAssemblyAttributes : GH_ComponentAttributes
     {
-        private RectangleF _panelBounds, _btnMesh, _btnUtilText, _btnTop;
+        private RectangleF _panelBounds, _btnMesh, _btnUtilText;
         private const float BTN_H = 22f, PAD = 4f, MIN_W = 180f;
         private GI_DeformAssembly Comp => (GI_DeformAssembly)Owner;
 
@@ -34,8 +34,6 @@ namespace ShapeGrammar3D.Components
             _btnMesh = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
             y += BTN_H + PAD;
             _btnUtilText = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
-            y += BTN_H + PAD;
-            _btnTop = new RectangleF(x + PAD, y, w - PAD * 2, BTN_H);
             _panelBounds = new RectangleF(x, Bounds.Bottom + PAD, w, y - Bounds.Bottom - PAD);
             Bounds = new RectangleF(x, Bounds.Y, w, y - Bounds.Y);
         }
@@ -51,8 +49,6 @@ namespace ShapeGrammar3D.Components
             }
             DrawToggle(g, _btnMesh, "Utilization Mesh", Comp.ShowMesh);
             DrawToggle(g, _btnUtilText, "Utilization Text", Comp.ShowUtilText);
-            string topLbl = Comp.ShowTopPercent ? string.Format("Top {0}%", (Comp.CachedTopPercent * 100).ToString("F0")) : "Show Top %";
-            DrawToggle(g, _btnTop, topLbl, Comp.ShowTopPercent);
         }
 
         private void DrawToggle(Graphics g, RectangleF r, string text, bool on)
@@ -82,13 +78,27 @@ namespace ShapeGrammar3D.Components
 
         public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)
         {
+            // Toggles handled on MouseUp — Grasshopper often captures MouseDown for canvas drag,
+            // so clicks on the panel never reliably fire here.
+            return base.RespondToMouseDown(sender, e);
+        }
+
+        public override GH_ObjectResponse RespondToMouseUp(GH_Canvas sender, GH_CanvasMouseEvent e)
+        {
             if (e.Button == System.Windows.Forms.MouseButtons.Left)
             {
-                if (_btnMesh.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Utilization Mesh"); Comp.ShowMesh = !Comp.ShowMesh; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
-                if (_btnUtilText.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Utilization Text"); Comp.ShowUtilText = !Comp.ShowUtilText; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
-                if (_btnTop.Contains(e.CanvasLocation)) { Owner.RecordUndoEvent("Toggle Top %"); Comp.ShowTopPercent = !Comp.ShowTopPercent; Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
+                var pt = e.CanvasLocation;
+                if (Expands(pt, _btnMesh, 2f)) { Owner.RecordUndoEvent("Toggle Utilization Mesh"); Comp.ShowMesh = !Comp.ShowMesh; Owner.OnDisplayExpired(true); Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
+                if (Expands(pt, _btnUtilText, 2f)) { Owner.RecordUndoEvent("Toggle Utilization Text"); Comp.ShowUtilText = !Comp.ShowUtilText; Owner.OnDisplayExpired(true); Owner.ExpireSolution(true); return GH_ObjectResponse.Handled; }
             }
-            return base.RespondToMouseDown(sender, e);
+            return base.RespondToMouseUp(sender, e);
+        }
+
+        /// <summary>Inflat hit rectangles slightly so toggles are easier to hit.</summary>
+        private static bool Expands(PointF pt, RectangleF r, float pad)
+        {
+            r.Inflate(pad, pad);
+            return r.Contains(pt);
         }
 
         private static GraphicsPath RoundRect(RectangleF r, float rad)
@@ -111,14 +121,13 @@ namespace ShapeGrammar3D.Components
     /// </summary>
     public class GI_DeformAssembly : GH_Component
     {
-        private struct UtilLabelA { public Point3d Position; public string Text; public Color Colour; }
+        private struct UtilLabelA { public Plane TextPlane; public string Text; public Color Colour; }
         private List<UtilLabelA> _utilLabels = new List<UtilLabelA>();
         private double _textHeight = 0.3;
 
         public bool ShowMesh { get; set; } = true;
         public bool ShowUtilText { get; set; } = true;
-        public bool ShowTopPercent { get; set; } = false;
-        internal double CachedTopPercent { get; set; } = 0.05;
+        internal double CachedTopPercent { get; set; } = 1.0;
 
         public GI_DeformAssembly()
           : base("GI_Deform (Assembly)", "GI_Def_A",
@@ -133,7 +142,6 @@ namespace ShapeGrammar3D.Components
         {
             writer.SetBoolean("ShowMesh", ShowMesh);
             writer.SetBoolean("ShowUtilText", ShowUtilText);
-            writer.SetBoolean("ShowTopPercent", ShowTopPercent);
             return base.Write(writer);
         }
 
@@ -141,7 +149,6 @@ namespace ShapeGrammar3D.Components
         {
             if (reader.ItemExists("ShowMesh")) ShowMesh = reader.GetBoolean("ShowMesh");
             if (reader.ItemExists("ShowUtilText")) ShowUtilText = reader.GetBoolean("ShowUtilText");
-            if (reader.ItemExists("ShowTopPercent")) ShowTopPercent = reader.GetBoolean("ShowTopPercent");
             return base.Read(reader);
         }
 
@@ -152,10 +159,7 @@ namespace ShapeGrammar3D.Components
             base.DrawViewportWires(args);
             if (!ShowUtilText || _utilLabels == null || _utilLabels.Count == 0) return;
             foreach (var lbl in _utilLabels)
-            {
-                Plane pl = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
-                args.Display.Draw3dText(lbl.Text, lbl.Colour, pl, _textHeight, "Arial");
-            }
+                args.Display.Draw3dText(lbl.Text, lbl.Colour, lbl.TextPlane, _textHeight, "Arial");
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
@@ -163,21 +167,29 @@ namespace ShapeGrammar3D.Components
             pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). Leave empty or -1 = all (default).", GH_ParamAccess.list,-1);
             pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). Leave empty or -1 = all (default).", GH_ParamAccess.list,-1);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing", GH_ParamAccess.item, 10.0);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
             pManager.AddNumberParameter("Scale", "Scale", "Deformation scale factor (1.0 = true scale)", GH_ParamAccess.item, 1.0);
             pManager.AddIntegerParameter("Load Case", "LC", "Load case index (-1 = last available)", GH_ParamAccess.item, -1);
             pManager.AddNumberParameter("Util Ranges", "URng", "5 utilization thresholds (%) - default 50,80,95,100,110", GH_ParamAccess.list);
             pManager.AddPointParameter("Insert Point", "Pt", "Base point", GH_ParamAccess.item, Point3d.Origin);
             pManager.AddNumberParameter("Text Height", "TxH", "Utilization label text height", GH_ParamAccess.item, 0.3);
-            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per cluster per generation. 0 = all (default). 1 = best one per cluster. Overrides Top % when > 0.", GH_ParamAccess.item, 0);
-            pManager.AddNumberParameter("Top %", "Top%", "Top fraction per cluster when button ON and TopN=0 (0.0–1.0). 0.05 = 5%.", GH_ParamAccess.item, 0.05);
+            pManager.AddIntegerParameter("Top N per Cluster", "TopN", "Show only top N best per (generation, cluster). 0 = use Top % only (default with Top%=1 shows all).", GH_ParamAccess.item, 0);
+            pManager.AddNumberParameter("Top %", "Top%", "Fraction of best individuals per (generation, cluster) when TopN=0. 1 = all (default). 0.25 = top quarter.", GH_ParamAccess.item, 1.0);
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);
             pManager[6].Optional = true;
             pManager[7].Optional = true;
             pManager[8].Optional = true;
             pManager[9].Optional = true;
             pManager[10].Optional = true;
             pManager[11].Optional = true;
+            pManager[12].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -213,31 +225,45 @@ namespace ShapeGrammar3D.Components
             bool allInds = indList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
 
-            double xSpacing = 30.0, ySpacing = 10.0, scale = 1.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
+            double scale = 1.0;
             int lcIndex = -1;
             Point3d insertPt = Point3d.Origin;
             var rawRanges = new List<double>();
-            DA.GetData(3, ref xSpacing);
-            DA.GetData(4, ref ySpacing);
+            DA.GetData(3, ref colSpacing);
+            DA.GetData(4, ref rowSpacing);
             DA.GetData(5, ref scale);
             DA.GetData(6, ref lcIndex);
             DA.GetDataList(7, rawRanges);
             DA.GetData(8, ref insertPt);
-            double textH = 0.3, topPercent = 0.05;
+            double textH = 0.3, topPercent = 1.0;
             int topN = 0;
             DA.GetData(9, ref textH);
             DA.GetData(10, ref topN);
             DA.GetData(11, ref topPercent);
             _textHeight = Math.Max(0.01, textH);
-            topPercent = Math.Clamp(topPercent, 0.001, 1.0);
+            topPercent = Math.Clamp(topPercent, 0, 1.0);
             CachedTopPercent = topPercent;
             topN = Math.Max(0, topN);
 
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 12);
+
             double[] thresholds = ParseThresholds(rawRanges);
 
-            // Build elite set: top N per cluster or top N% when ShowTopPercent and topN=0
+            const double topFracEps = 1e-12;
+            bool useEliteFilter = topN > 0 || topPercent < 1.0 - topFracEps;
+            int maxPerCluster = MaxIndividualsPerClusterInAnyGeneration(assembly);
+            if (useEliteFilter && maxPerCluster <= 1 && (topN > 1 || topPercent < 1.0 - topFracEps))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    "This assembly has at most one individual per (generation, cluster). Top N and Top % need several per cluster " +
+                    "(e.g. use GI_FromSg, or GI_Large input 'Asm K/Clust' > 1).");
+            }
+
+            // Build elite set: top N per (gen, cluster), or top fraction when TopN=0
             var eliteSet = new HashSet<(int gen, int ind)>();
-            if (topN > 0 || ShowTopPercent)
+            if (useEliteFilter)
             {
                 var candidates = new List<(int gen, int ind, double fit, int clust)>();
                 foreach (var gen in assembly.Generations ?? new List<AssemblyGeneration>())
@@ -254,7 +280,9 @@ namespace ShapeGrammar3D.Components
                 foreach (var grp in candidates.GroupBy(c => (c.gen, c.clust)))
                 {
                     var ordered = grp.OrderBy(c => c.fit).ToList();
-                    int keep = topN > 0 ? Math.Min(topN, ordered.Count) : Math.Max(1, (int)Math.Ceiling(ordered.Count * topPercent));
+                    int keep = topN > 0
+                        ? Math.Min(topN, ordered.Count)
+                        : Math.Max(1, (int)Math.Ceiling(ordered.Count * topPercent));
                     for (int k = 0; k < keep && k < ordered.Count; k++)
                         eliteSet.Add((ordered[k].gen, ordered[k].ind));
                 }
@@ -276,15 +304,14 @@ namespace ShapeGrammar3D.Components
                 for (int indIdx = 0; indIdx < (gen.Individuals?.Count ?? 0); indIdx++)
                 {
                     if (!allInds && (indSet == null || !indSet.Contains(indIdx))) continue;
-                    if ((topN > 0 || ShowTopPercent) && !eliteSet.Contains((gen.Generation, indIdx))) continue;
+                    if (useEliteFilter && !eliteSet.Contains((gen.Generation, indIdx))) continue;
                     var ind = gen.Individuals[indIdx];
                     TB_Model model = ind?.Model;
                     if (model == null || model.Elem1Ds == null || model.Nodes == null) { row++; continue; }
 
-                    Vector3d offset = new Vector3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d cellOrigin = insertPt + col * colSpacing + row * rowSpacing;
+                    Vector3d offset = (Vector3d)cellOrigin;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     GH_Path outPath = new GH_Path(col, row);
 
                     int resolvedLC = ResolveLoadCase(model, lcIndex);
@@ -318,6 +345,7 @@ namespace ShapeGrammar3D.Components
                         if (n0 == null || n1 == null) continue;
 
                         Line undef = new Line(n0.Pt + offset, n1.Pt + offset);
+                        undef.Transform(cellXf);
                         undefTree.Append(new GH_Line(undef), outPath);
 
                         Line defLine;
@@ -327,6 +355,7 @@ namespace ShapeGrammar3D.Components
                             defLine = new Line(
                                 nodeDefPts[n0.Id.Value] + offset,
                                 nodeDefPts[n1.Id.Value] + offset);
+                            defLine.Transform(cellXf);
                         }
                         else defLine = undef;
                         defTree.Append(new GH_Line(defLine), outPath);
@@ -339,7 +368,15 @@ namespace ShapeGrammar3D.Components
                         if (ShowUtilText)
                         {
                             Point3d midPt = defLine.PointAt(0.5);
-                            _utilLabels.Add(new UtilLabelA { Position = midPt, Text = string.Format("{0:F1}%", util * 100.0), Colour = clr });
+                            Plane tpl = displayPlane.IsValid
+                                ? new Plane(midPt, displayPlane.XAxis, displayPlane.YAxis)
+                                : new Plane(midPt, Vector3d.XAxis, Vector3d.YAxis);
+                            _utilLabels.Add(new UtilLabelA
+                            {
+                                TextPlane = tpl,
+                                Text = string.Format("{0:F1}%", util * 100.0),
+                                Colour = clr
+                            });
                         }
 
                         if (ShowMesh)
@@ -375,6 +412,18 @@ namespace ShapeGrammar3D.Components
         }
 
         #region Helpers
+
+        private static int MaxIndividualsPerClusterInAnyGeneration(SGShapeGrammar3DAssembly assembly)
+        {
+            int m = 0;
+            foreach (var gen in assembly.Generations ?? Enumerable.Empty<AssemblyGeneration>())
+            {
+                if (gen?.Individuals == null || gen.Individuals.Count == 0) continue;
+                foreach (var grp in gen.Individuals.GroupBy(ind => ind.ClustGrp))
+                    m = Math.Max(m, grp.Count());
+            }
+            return m;
+        }
 
         private static double[] ParseThresholds(List<double> raw)
         {
@@ -515,7 +564,7 @@ namespace ShapeGrammar3D.Components
 
         #endregion
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => Properties.Resources.icons_Generic;
         public override Guid ComponentGuid => new Guid("C3D4E5F6-A7B8-9012-CDEF-012345678902");
     }
 }

@@ -39,14 +39,23 @@ namespace ShapeGrammar3D.Classes.Rules
         }
 
         /// <summary>
-        /// Adds braces between each RULE020 strut tip and the tip of its neighbouring
-        /// strut(s) along the shared RULE010 base beam.
+        /// Adds braces between strut tips (RULE020) along the shared RULE010 base
+        /// subdivision chain.
         ///
-        /// For every strut we locate its base curve (RULE010 Joined_Init_Crv) and the
-        /// parameter t of its foot on that curve. Studs that share the same base curve
-        /// are sorted by t and only the immediately adjacent ones are candidates. The
-        /// option (1 = previous neighbour, 2 = next neighbour, 3 = both) is wrapped from
-        /// the D-gene. End struts connect to the single available neighbour only.
+        /// Neighbours are discovered by walking the actual graph of RULE010
+        /// sub-elements through their shared SG_Nodes — NOT by reference equality
+        /// of <c>Joined_Init_Crv</c> (which is broken by <c>SG_Shape.DeepCopy()</c>
+        /// when the iniShape contains several beams sharing one joined parent
+        /// curve). From each strut foot we walk both incident RULE010 elements
+        /// and return the FIRST node along that chain that carries another strut
+        /// foot. Intermediate subdivision nodes without struts are skipped.
+        ///
+        /// The rule connects strut tip → strut tip only. If a strut has no
+        /// neighbour in a direction (chain end with no further strut), no brace
+        /// is added in that direction. Option (0 = none for this stud,
+        /// 1 = previous neighbour, 2 = next neighbour, 3 = both) from the D-gene
+        /// mapped to the integer domain; previous / next are disambiguated by
+        /// projecting the neighbour foot onto the parent beam's direction.
         /// </summary>
         public override string RuleOperation(ref SG_Shape ss_ref, ref SG_Genotype gt)
         {
@@ -77,112 +86,165 @@ namespace ShapeGrammar3D.Classes.Rules
                 .OfType<SG_Elem1D>()
                 .Where(e => e.Name == "3DAR2")
                 .ToList();
-            var activated = new bool[studElements.Count];
-            var eligible = new List<int>();
+            if (studElements.Count == 0)
+                return "Auto-rule 051-3D: no struts";
 
-            // Gather (stud, base curve, base param t) for every strut that has a valid
-            // RULE010 parent curve at its foot.
-            var studData = new List<StudLocation>();
-            foreach (var se in studElements)
+            // node → list of RULE010 sub-elements incident to that node.
+            // This is the actual base-beam subdivision graph: walking it via
+            // shared nodes is independent of any Curve reference identity.
+            var nodeToR010 = new Dictionary<SG_Node, List<SG_Elem1D>>();
+            foreach (var e in ss_ref.Elems.OfType<SG_Elem1D>()
+                         .Where(x => x.Autorule == UT.RULE010_MARKER))
             {
-                if (se.Nodes == null || se.Nodes.Length < 2 || se.Nodes[0] == null || se.Nodes[1] == null)
-                    continue;
-
-                var baseElem = se.Nodes[0].Elements
-                    .OfType<SG_Elem1D>()
-                    .FirstOrDefault(e => e.Autorule == UT.RULE010_MARKER);
-                if (baseElem == null) continue;
-
-                var baseCrv = baseElem.Joined_Init_Crv;
-                if (baseCrv == null) continue;
-                if (!baseCrv.ClosestPoint(se.Nodes[0].Pt, out double t)) continue;
-
-                studData.Add(new StudLocation(se, baseCrv, t));
-            }
-
-            // Group by base curve identity (reference equality on the Curve instance)
-            // and sort each group by t so neighbours are adjacent indices.
-            var groups = new Dictionary<Curve, List<StudLocation>>(CurveReferenceComparer.Instance);
-            foreach (var s in studData)
-            {
-                if (!groups.TryGetValue(s.BaseCurve, out var lst))
+                if (e.Nodes == null) continue;
+                foreach (var nd in e.Nodes)
                 {
-                    lst = new List<StudLocation>();
-                    groups[s.BaseCurve] = lst;
+                    if (nd == null) continue;
+                    if (!nodeToR010.TryGetValue(nd, out var lst))
+                    {
+                        lst = new List<SG_Elem1D>();
+                        nodeToR010[nd] = lst;
+                    }
+                    lst.Add(e);
                 }
-                lst.Add(s);
             }
 
-            var studLookup = new Dictionary<SG_Elem1D, (List<StudLocation> group, int index)>();
-            foreach (var kv in groups)
+            // Foot-node → strut. Multiple struts at one foot are not expected;
+            // first-wins keeps behaviour deterministic.
+            var footToStud = new Dictionary<SG_Node, SG_Elem1D>();
+            foreach (var s in studElements)
             {
-                kv.Value.Sort((a, b) => a.T.CompareTo(b.T));
-                for (int i = 0; i < kv.Value.Count; i++)
-                    studLookup[kv.Value[i].Stud] = (kv.Value, i);
+                if (s.Nodes != null && s.Nodes.Length >= 2 && s.Nodes[0] != null
+                    && !footToStud.ContainsKey(s.Nodes[0]))
+                    footToStud[s.Nodes[0]] = s;
+            }
+
+            // Walks the RULE010 subdivision chain from `start` through `firstElem`
+            // and returns the first node (other than start) that hosts a strut foot.
+            // Intermediate nodes without struts are skipped. Returns null if the
+            // chain ends without finding a strut.
+            SG_Node WalkToNeighbourFoot(SG_Node start, SG_Elem1D firstElem)
+            {
+                if (firstElem?.Nodes == null || firstElem.Nodes.Length < 2) return null;
+                var visited = new HashSet<SG_Elem1D> { firstElem };
+                SG_Node prev = start;
+                SG_Elem1D curr = firstElem;
+                for (int safety = 0; safety < 100000; safety++)
+                {
+                    var other = ReferenceEquals(curr.Nodes[0], prev) ? curr.Nodes[1] : curr.Nodes[0];
+                    if (other == null) return null;
+                    if (footToStud.ContainsKey(other)) return other;
+
+                    if (!nodeToR010.TryGetValue(other, out var nextList)) return null;
+                    var nextElem = nextList.FirstOrDefault(x => !visited.Contains(x));
+                    if (nextElem == null) return null;
+
+                    visited.Add(nextElem);
+                    prev = other;
+                    curr = nextElem;
+                }
+                return null;
+            }
+
+            // For each strut, find prev/next neighbour foot along the rule010 chain.
+            // prev/next is decided by projecting the neighbour foot onto the parent
+            // beam's direction (Joined_Init_Crv if available, else Init_Crv, else
+            // a fallback world axis).
+            var prevFoot = new Dictionary<SG_Elem1D, SG_Node>();
+            var nextFoot = new Dictionary<SG_Elem1D, SG_Node>();
+            foreach (var stud in studElements)
+            {
+                if (stud.Nodes == null || stud.Nodes.Length < 2) continue;
+                var foot = stud.Nodes[0];
+                if (foot == null) continue;
+                if (!nodeToR010.TryGetValue(foot, out var r010s)) continue;
+                if (r010s.Count == 0) continue;
+
+                // Reference axis from the parent beam direction.
+                Vector3d axis = Vector3d.XAxis;
+                Curve refCrv = r010s[0].Joined_Init_Crv ?? r010s[0].Init_Crv;
+                if (refCrv != null)
+                {
+                    var v = refCrv.PointAtEnd - refCrv.PointAtStart;
+                    if (v.SquareLength > 1e-24 && v.Unitize()) axis = v;
+                }
+                double Project(Point3d p) => (p - Point3d.Origin) * axis;
+                double tFoot = Project(foot.Pt);
+
+                foreach (var r010 in r010s)
+                {
+                    var nb = WalkToNeighbourFoot(foot, r010);
+                    if (nb == null) continue;
+                    double tNb = Project(nb.Pt);
+                    if (tNb < tFoot - UT.PRES * 0.5)
+                    {
+                        // Keep the closest below tFoot
+                        if (!prevFoot.TryGetValue(stud, out var ex) || ex == null
+                            || tNb > Project(ex.Pt))
+                            prevFoot[stud] = nb;
+                    }
+                    else if (tNb > tFoot + UT.PRES * 0.5)
+                    {
+                        // Keep the closest above tFoot
+                        if (!nextFoot.TryGetValue(stud, out var ex) || ex == null
+                            || tNb < Project(ex.Pt))
+                            nextFoot[stud] = nb;
+                    }
+                }
             }
 
             int addedCount = 0;
+            var activated = new bool[studElements.Count];
+            var eligible = new List<int>();
+
             for (int i = 0; i < studElements.Count; i++)
             {
+                var stud = studElements[i];
                 int geneIdx = i % geneCount;
                 bool shouldActivate = selectedIntGenes[geneIdx] != 0;
 
                 double optionDbl = selectedDGenes[geneIdx] * range + Domain[0];
                 int optionNumber = (int)Math.Round(optionDbl, MidpointRounding.AwayFromZero);
 
-                var stud0 = studElements[i];
-                if (!studLookup.TryGetValue(stud0, out var loc)) continue;
+                // 0 = no braces for this stud (domain must include 0, e.g. [0,3])
+                if (optionNumber == 0)
+                    continue;
 
-                var group = loc.group;
-                int idx = loc.index;
+                bool hasPrev = TryGetTip(prevFoot, footToStud, stud, out Point3d prevTipPt);
+                bool hasNext = TryGetTip(nextFoot, footToStud, stud, out Point3d nextTipPt);
 
-                SG_Node prevTip = idx > 0 ? group[idx - 1].Stud.Nodes[1] : null;
-                SG_Node nextTip = idx < group.Count - 1 ? group[idx + 1].Stud.Nodes[1] : null;
-
-                var targets = new List<SG_Node>();
-                if (prevTip == null && nextTip == null) continue;
-
-                if (prevTip == null)
+                var targets = new List<Point3d>();
+                switch (optionNumber)
                 {
-                    // Start of base curve: only next neighbour available.
-                    targets.Add(nextTip);
-                }
-                else if (nextTip == null)
-                {
-                    // End of base curve: only previous neighbour available.
-                    targets.Add(prevTip);
-                }
-                else
-                {
-                    switch (optionNumber)
-                    {
-                        case 1: targets.Add(prevTip); break;
-                        case 2: targets.Add(nextTip); break;
-                        case 3:
-                            targets.Add(prevTip);
-                            targets.Add(nextTip);
-                            break;
-                        default: continue;
-                    }
+                    case 1:
+                        if (hasPrev) targets.Add(prevTipPt);
+                        break;
+                    case 2:
+                        if (hasNext) targets.Add(nextTipPt);
+                        break;
+                    case 3:
+                        if (hasPrev) targets.Add(prevTipPt);
+                        if (hasNext) targets.Add(nextTipPt);
+                        break;
+                    default:
+                        continue;
                 }
                 if (targets.Count > 0) eligible.Add(i);
+                if (!shouldActivate) continue;
 
-                foreach (var tip in targets)
+                var studTip = stud.Nodes[1].Pt;
+                foreach (var targetPt in targets)
                 {
-                    if (!shouldActivate) break;
-                    if (tip == null) continue;
-                    var ln = new Line(stud0.Nodes[1].Pt, tip.Pt);
+                    var ln = new Line(studTip, targetPt);
                     if (!ln.IsValid || ln.Length <= UT.PRES) continue;
-                    // Guard against duplicate braces: the "prev of j" / "next of i"
-                    // relation is reciprocal so adjacent struts would otherwise add
-                    // the same brace twice.
+                    // The "prev of j" / "next of i" relation is reciprocal so
+                    // adjacent struts would otherwise add the same brace twice.
                     if (Rule06xHelper.LineAlreadyPresent(ss_ref, ln)) continue;
 
-                    var brace = new SG_Elem1D(ln, -999, "3DAR51", def_crosec)
+                    ss_ref.AddNewElement(new SG_Elem1D(ln, -999, "3DAR51", def_crosec)
                     {
                         Autorule = UT.RULE051_MARKER
-                    };
-                    ss_ref.AddNewElement(brace);
+                    });
                     addedCount++;
                     activated[i] = true;
                 }
@@ -195,22 +257,20 @@ namespace ShapeGrammar3D.Classes.Rules
                 for (int i = 0; i < studElements.Count && activeCount < target; i++)
                 {
                     if (!eligible.Contains(i) || activated[i]) continue;
-                    var stud0 = studElements[i];
-                    if (!studLookup.TryGetValue(stud0, out var loc)) continue;
-                    var group = loc.group;
-                    int idx = loc.index;
-                    SG_Node prevTip = idx > 0 ? group[idx - 1].Stud.Nodes[1] : null;
-                    SG_Node nextTip = idx < group.Count - 1 ? group[idx + 1].Stud.Nodes[1] : null;
-                    var fallbackTargets = new List<SG_Node>();
-                    if (prevTip != null) fallbackTargets.Add(prevTip);
-                    if (nextTip != null) fallbackTargets.Add(nextTip);
-                    foreach (var tip in fallbackTargets)
+                    var stud = studElements[i];
+                    bool hasPrev = TryGetTip(prevFoot, footToStud, stud, out Point3d prevTipPt);
+                    bool hasNext = TryGetTip(nextFoot, footToStud, stud, out Point3d nextTipPt);
+                    var fallbackTargets = new List<Point3d>();
+                    if (hasPrev) fallbackTargets.Add(prevTipPt);
+                    if (hasNext) fallbackTargets.Add(nextTipPt);
+                    var studTip = stud.Nodes[1].Pt;
+                    foreach (var targetPt in fallbackTargets)
                     {
-                        if (tip == null) continue;
-                        var ln = new Line(stud0.Nodes[1].Pt, tip.Pt);
+                        var ln = new Line(studTip, targetPt);
                         if (!ln.IsValid || ln.Length <= UT.PRES) continue;
                         if (Rule06xHelper.LineAlreadyPresent(ss_ref, ln)) continue;
-                        ss_ref.AddNewElement(new SG_Elem1D(ln, -999, "3DAR51", def_crosec) { Autorule = UT.RULE051_MARKER });
+                        ss_ref.AddNewElement(new SG_Elem1D(ln, -999, "3DAR51", def_crosec)
+                        { Autorule = UT.RULE051_MARKER });
                         addedCount++;
                         activated[i] = true;
                         activeCount++;
@@ -219,33 +279,26 @@ namespace ShapeGrammar3D.Classes.Rules
                 }
             }
 
-            return $"Auto-rule 051-3D: {addedCount} braces added from {studElements.Count} studs (neighbour mode)";
+            return $"Auto-rule 051-3D: {addedCount} braces added from {studElements.Count} studs (chain mode)";
+        }
+
+        private static bool TryGetTip(
+            Dictionary<SG_Elem1D, SG_Node> map,
+            Dictionary<SG_Node, SG_Elem1D> footToStud,
+            SG_Elem1D stud,
+            out Point3d tip)
+        {
+            tip = Point3d.Origin;
+            if (!map.TryGetValue(stud, out var foot) || foot == null) return false;
+            if (!footToStud.TryGetValue(foot, out var nbStud) || nbStud == null) return false;
+            if (nbStud.Nodes == null || nbStud.Nodes.Length < 2 || nbStud.Nodes[1] == null) return false;
+            tip = nbStud.Nodes[1].Pt;
+            return true;
         }
 
         public override State GetNextState()
         {
             throw new NotImplementedException();
-        }
-
-        private sealed class StudLocation
-        {
-            public SG_Elem1D Stud { get; }
-            public Curve BaseCurve { get; }
-            public double T { get; }
-
-            public StudLocation(SG_Elem1D stud, Curve baseCurve, double t)
-            {
-                Stud = stud;
-                BaseCurve = baseCurve;
-                T = t;
-            }
-        }
-
-        private sealed class CurveReferenceComparer : IEqualityComparer<Curve>
-        {
-            public static readonly CurveReferenceComparer Instance = new CurveReferenceComparer();
-            public bool Equals(Curve x, Curve y) => ReferenceEquals(x, y);
-            public int GetHashCode(Curve obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
         }
     }
 }

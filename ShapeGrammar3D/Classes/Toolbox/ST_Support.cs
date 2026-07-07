@@ -133,7 +133,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
     {
         public Param_Support() : base(
             new GH_InstanceDescription(
-                "Support", "Sup", "Support conditions", Common.category, Common.sub_param
+                "Support", "Sup", "Boundary condition encoded as six DOF flags at a point.", Common.category, Common.sub_param
                 )
             )
         { }
@@ -141,7 +141,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public override Guid ComponentGuid => new Guid("f68802d0-5bcf-47c4-89e3-68e3888bb14d");
 
         protected override System.Drawing.Bitmap Icon { get {
-                return null;// Properties.Resources.icons_P_Sup; 
+                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;// Properties.Resources.icons_P_Sup; 
             } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Support> values)

@@ -6,72 +6,85 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
     /// <summary>
-    /// Large-run interpreter with wired <see cref="SG_Shape"/> seed and automatic rules.
-    /// Streams every individual into a single JSON v2 file (settings, genotypes, objectives,
-    /// cluster info, per-cluster aggregates). Exposes JSON path + <see cref="LargeRunContext"/>
-    /// for <c>GI_LargeJson Reader</c> rebuilds without re-wiring inputs.
+    /// Large-run interpreter seeded from boundary/init-shape autorule data. The component
+    /// runs the GA, streams every individual into a single JSON v2 file
+    /// (settings + per-individual genotype/objectives/cluster + per-cluster
+    /// aggregates) and exposes only that file path. Designed for runs of
+    /// hundreds of thousands of individuals where keeping models in memory
+    /// would crash Grasshopper.
     /// </summary>
-    public class GrammarInterpreter_ForLargeModel : GH_Component
+    public class GrammarInterpreter_LargeFromSgShape : GH_Component
     {
         private const bool MAXIMIZE = false;
 
-        public GrammarInterpreter_ForLargeModel()
-          : base("Grammar Interpreter Large from SG_Shape", "GI_LargeSg",
-              "Large-scale GA with SG_Shape + Autorules. Streams the full run to one JSON file. " +
-              "Outputs JSON path and Run Context for GI_LargeJson Reader.",
+        public GrammarInterpreter_LargeFromSgShape()
+          : base("Grammar Interpreter Large from Boundary Shape", "GI_LargeBnd",
+              "Large-scale GA without SG_Shape input. First rule must be AutoRule_InitShape_3D. Streams the full run to a single JSON file (settings, genotypes, objectives, cluster info, per-cluster aggregates). Use GI_LargeJson Reader to inspect.",
               UT.CAT, UT.GR_INT)
         {
         }
 
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("SG_Shape", "SG_Shape", "Initial SG shape seed.", GH_ParamAccess.item); // 0
-            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter.", GH_ParamAccess.list); // 1
-            pManager.AddBooleanParameter("Reset", "Reset", "Reset & run the large analysis.", GH_ParamAccess.item, false); // 2
+            pManager.AddGenericParameter("Automatic Rules", "Autorules", "Rules for Automatic Interpreter (first rule must be AutoRule_InitShape_3D)", GH_ParamAccess.list); // 0
+            pManager.AddBooleanParameter("Reset", "Reset", "Reset & run the large analysis.", GH_ParamAccess.item, false);                                           // 1
             pManager.AddParameter(new Param_GrammarInterpreterSettings(), "Settings", "Settings",
                 "GA / interpreter settings (population, generations, clusters, metrics, objectives, self-weight, CroSecOpt).",
-                GH_ParamAccess.item); // 3
+                GH_ParamAccess.item);                                                                                                                            // 2
             pManager.AddTextParameter("JSON Folder", "JsonOut",
                 "Folder only, or full path ending in .json (full path ignores JSON File). Empty folder = system temp.",
-                GH_ParamAccess.item, string.Empty); // 4
+                GH_ParamAccess.item, string.Empty); // 3
             pManager.AddTextParameter("JSON File", "JsonFile",
-                "File name (e.g. myrun.json). Empty = GI_LargeSg.json. Same path overwrites existing file.",
-                GH_ParamAccess.item, string.Empty); // 5
+                "File name (e.g. myrun.json). Empty = GI_LargeBnd.json. Same path overwrites existing file.",
+                GH_ParamAccess.item, string.Empty); // 4
 
+            pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[4].Optional = true;
-            pManager[5].Optional = true;
         }
 
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("JSON Path", "JSON", "Path of the streamed run JSON (v2). Wire to GI_LargeJson Reader.", GH_ParamAccess.item); // 0
+            pManager.AddTextParameter("Info", "Info", "Run summary and progress text.", GH_ParamAccess.item); // 0
+            pManager.AddTextParameter("JSON Path", "JSON", "Path of the streamed run JSON.", GH_ParamAccess.item); // 1
             pManager.AddParameter(new Param_LargeRunContext(), "Run Context", "RunCtx",
-                "SG_Shape seed + ordered rules for this run. Wire to GI_LargeJson Reader to rebuild models.",
-                GH_ParamAccess.item); // 1
+                "Bundle of the SG_Shape seed + ordered rules used by this run. Feed into GI_LargeJson Reader to rebuild models without re-wiring SG_Shape and Autorules.",
+                GH_ParamAccess.item); // 2
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            SG_Shape iniShape = null;
             var rules = new List<SG_Rule>();
             bool reset = false;
-            if (!DA.GetData(0, ref iniShape) || iniShape == null)
+            if (!DA.GetDataList(0, rules)) return;
+            DA.GetData(1, ref reset);
+
+            if (!rules.OfType<SG_AutoRule_InitShape_3D>().Any())
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "SG_Shape input is required.");
-                DA.SetData(0, string.Empty);
-                DA.SetData(1, null);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error,
+                    "The first rule must be AutoRule_InitShape_3D (no SG_Shape input is provided).");
+                DA.SetData(0, "GI_LargeBnd invalid input: missing AutoRule_InitShape_3D.");
+                DA.SetData(1, string.Empty);
+                DA.SetData(2, null);
                 return;
             }
 
-            if (!DA.GetDataList(1, rules)) return;
-            DA.GetData(2, ref reset);
+            var iniShape = new SG_Shape
+            {
+                Nodes = new List<SG_Node>(),
+                Supports = new List<SG_Support>(),
+                PointLoads = new List<SG_PointLoad>(),
+                LineLoads = new List<SG_LineLoad>()
+            };
 
+            // Build the context bundle early so it is always available downstream,
+            // even before Reset is toggled (so the reader can prebuild Run Context wires).
             var idleOrderedRules = StructuralEvaluator.EnsureInitShapeFirst(rules);
             var idleContext = new LargeRunContext
             {
@@ -83,21 +96,22 @@ namespace ShapeGrammar3D.Components
 
             if (!reset)
             {
-                DA.SetData(0, string.Empty);
-                DA.SetData(1, new GH_LargeRunContext(idleContext));
+                DA.SetData(0, "GI_LargeBnd idle. Toggle Reset true to run.");
+                DA.SetData(1, string.Empty);
+                DA.SetData(2, new GH_LargeRunContext(idleContext));
                 return;
             }
 
             var settings = DefaultSettings();
             GH_GrammarInterpreterSettings ghSettings = null;
-            if (DA.GetData(3, ref ghSettings) && ghSettings?.Value != null)
+            if (DA.GetData(2, ref ghSettings) && ghSettings?.Value != null)
                 settings = CloneSettings(ghSettings.Value);
             settings.Sanitize();
 
             string jsonFolderOrFile = string.Empty;
-            DA.GetData(4, ref jsonFolderOrFile);
+            DA.GetData(3, ref jsonFolderOrFile);
             string jsonFileName = string.Empty;
-            DA.GetData(5, ref jsonFileName);
+            DA.GetData(4, ref jsonFileName);
 
             var feas = new FeasibilitySettings
             {
@@ -123,23 +137,12 @@ namespace ShapeGrammar3D.Components
 
             List<int> chromosomeLengths = StructuralEvaluator.GetChromosomeLengths(orderedRules, iniShape);
             List<int> ruleMarkers = orderedRules.Select(r => r.RuleMarker).ToList();
-
-            FixedGenotypes.Reset();
-
-            List<GAIndividual> currentPopulation;
-            if (settings.FixedSeed)
-            {
-                currentPopulation = FixedGenotypes.Get(settings.PopulationSize, chromosomeLengths, ruleMarkers);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                    string.Format("Using fixed-seed population ({0} individuals)", currentPopulation.Count));
-            }
-            else if (isMultiObjective)
-                currentPopulation = moga.CreateInitialGeneration(settings.PopulationSize, chromosomeLengths, ruleMarkers);
-            else
-                currentPopulation = ga.CreateInitialGeneration(settings.PopulationSize, chromosomeLengths, ruleMarkers);
+            List<GAIndividual> currentPopulation = isMultiObjective
+                ? moga.CreateInitialGeneration(settings.PopulationSize, chromosomeLengths, ruleMarkers)
+                : ga.CreateInitialGeneration(settings.PopulationSize, chromosomeLengths, ruleMarkers);
 
             string runId = Guid.NewGuid().ToString("N").Substring(0, 8);
-            string jsonPath = GrammarInterpreterJsonPath.Resolve(jsonFolderOrFile, jsonFileName, "GI_LargeSg.json");
+            string jsonPath = GrammarInterpreterJsonPath.Resolve(jsonFolderOrFile, jsonFileName, "GI_LargeBnd.json");
 
             var header = new RunHeader
             {
@@ -157,7 +160,6 @@ namespace ShapeGrammar3D.Components
 
             var watch = Stopwatch.StartNew();
             string finalPath = string.Empty;
-
             using (var store = new LargeRunJsonStore())
             {
                 try
@@ -175,6 +177,7 @@ namespace ShapeGrammar3D.Components
                             feas,
                             deepCopyOutputs: false);
 
+                        // Surface rule errors (e.g. wrong marker, 0 struts found) from the first generation.
                         if (gen == 0)
                             foreach (var w in outcome.Warnings)
                                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, w);
@@ -218,9 +221,10 @@ namespace ShapeGrammar3D.Components
                 }
                 catch (Exception ex)
                 {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GI_LargeSg failed: " + ex.Message);
-                    DA.SetData(0, string.Empty);
-                    DA.SetData(1, new GH_LargeRunContext(new LargeRunContext
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "GI_LargeBnd failed: " + ex.Message);
+                    DA.SetData(0, string.Format("GI_LargeBnd failed at gen {0}: {1}", store.TotalIndividualsRecorded, ex.Message));
+                    DA.SetData(1, string.Empty);
+                    DA.SetData(2, new GH_LargeRunContext(new LargeRunContext
                     {
                         IniShape = iniShape,
                         Rules = orderedRules,
@@ -232,19 +236,32 @@ namespace ShapeGrammar3D.Components
             }
             watch.Stop();
 
-            DA.SetData(0, finalPath ?? string.Empty);
-            DA.SetData(1, new GH_LargeRunContext(new LargeRunContext
+            FileInfo fi = null;
+            try { fi = new FileInfo(finalPath); } catch { fi = null; }
+            string fileSizeStr = fi != null && fi.Exists
+                ? string.Format("{0:F1} MB", fi.Length / (1024.0 * 1024.0))
+                : "?";
+
+            string info = string.Format(
+                "GI_LargeBnd run {0}: {1} pop × {2} gen × {3} clusters in {4:F1}s\n" +
+                "Individuals streamed: {5}\nJSON: {6} ({7})",
+                runId,
+                settings.PopulationSize, settings.Generations, settings.Clusters, watch.Elapsed.TotalSeconds,
+                settings.PopulationSize * settings.Generations,
+                finalPath ?? "(none)", fileSizeStr);
+
+            DA.SetData(0, info);
+            DA.SetData(1, finalPath ?? string.Empty);
+            DA.SetData(2, new GH_LargeRunContext(new LargeRunContext
             {
                 IniShape = iniShape,
                 Rules = orderedRules,
                 JsonPath = finalPath ?? string.Empty,
                 RunId = runId
             }));
-
-            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
-                string.Format("GI_LargeSg run {0} finished in {1:F1}s — {2}",
-                    runId, watch.Elapsed.TotalSeconds, finalPath ?? "(none)"));
         }
+
+        // ── helpers ──
 
         private static GrammarInterpreterSettings DefaultSettings()
         {
@@ -356,7 +373,6 @@ namespace ShapeGrammar3D.Components
         }
 
         protected override Bitmap Icon => Properties.Resources.icons_Generic;
-
-        public override Guid ComponentGuid => new Guid("A7B8C9D0-E1F2-4A3B-8C5D-6E7F8A9B0C1D");
+        public override Guid ComponentGuid => new Guid("C22E4CCB-33A2-4827-B66C-58B0B1437F30");
     }
 }

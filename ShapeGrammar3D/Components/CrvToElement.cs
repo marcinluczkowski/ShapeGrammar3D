@@ -14,7 +14,7 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         public CrvToElement()
           : base("CurveToElement", "crvToEl",
-              "Creates a SH_Element from a Curve",
+              "Create a 1D element (SG_Elem1D) from a NURBS/curve axis, cross-section, and optional name. Chord line connects curve endpoints; full curve kept for geometry and load snapping.",
               UT.CAT, UT.GR_ELM)
         {
         }
@@ -24,9 +24,12 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddCurveParameter("Initial Crv", "initCrv", "Curve to be used in the simple grammar derivaiton.", GH_ParamAccess.item); // 0
-            pManager.AddGenericParameter("Cross Section", "crossSec", "Cross Section to assign the element", GH_ParamAccess.item); // 1
-            pManager.AddTextParameter("ElementName", "name", "Name of the element", GH_ParamAccess.item); // 2
+            pManager.AddCurveParameter("Initial Curve", "initCrv",
+                "Member axis curve; duplicated as Init_Crv on the element.", GH_ParamAccess.item); // 0
+            pManager.AddGenericParameter("Cross Section", "crossSec",
+                "Beam section (SH_CrossSection_Beam).", GH_ParamAccess.item); // 1
+            pManager.AddTextParameter("Element Name", "name",
+                "Optional label (line loads can target this name).", GH_ParamAccess.item); // 2
 
             pManager[2].Optional = true;
         }
@@ -36,7 +39,8 @@ namespace ShapeGrammar3D.Components
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("SH_Element", "sH_el", "An instance of a SH_Element", GH_ParamAccess.item);
+            pManager.AddGenericParameter("SH_Element", "sH_el",
+                "New SG_Elem1D for Assembly.", GH_ParamAccess.item);
         }
 
         /// <summary>

@@ -389,13 +389,19 @@ namespace ShapeGrammar3D.Components
                 "Load case index (-1 = last)", GH_ParamAccess.item, -1);                       // 6
             pManager.AddBooleanParameter("CroSec Opt", "CSOpt",
                 "Apply cross-section optimization", GH_ParamAccess.item, false);               // 7
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Column spacing", GH_ParamAccess.item, 30.0);                                 // 8
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Row spacing", GH_ParamAccess.item, 30.0);                                    // 9
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between generation columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);          // 8
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between individual rows. Default (0, 0, -30).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingWide);         // 9
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);                                                         // 10
 
             pManager[3].Optional = true;
             pManager[4].Optional = true;
+            pManager[10].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -440,13 +446,15 @@ namespace ShapeGrammar3D.Components
             double topPct = 1.0;
             int loadCase = -1;
             bool croSecOpt = false;
-            double dX = 30.0, dY = 30.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingWide;
 
             DA.GetData(5, ref topPct);
             DA.GetData(6, ref loadCase);
             DA.GetData(7, ref croSecOpt);
-            DA.GetData(8, ref dX);
-            DA.GetData(9, ref dY);
+            DA.GetData(8, ref colSpacing);
+            DA.GetData(9, ref rowSpacing);
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 10);
             topPct = Math.Clamp(topPct, 0, 1);
 
             if (!File.Exists(jsonPath))
@@ -557,7 +565,9 @@ namespace ShapeGrammar3D.Components
                 for (int r = 0; r < col.Count; r++)
                 {
                     var e = col[r];
-                    var off = new Vector3d(c * dX, -r * dY, 0);
+                    var off = c * colSpacing + r * rowSpacing;
+                    Point3d cellOrigin = Point3d.Origin + off;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     var path = new GH_Path(c, r);
 
                     shpT.Append(new GH_ObjectWrapper(e.Shape), path);
@@ -570,6 +580,7 @@ namespace ShapeGrammar3D.Components
                     {
                         if (!(elem is SG_Elem1D e1d)) continue;
                         Line ln = new Line(e1d.Ln.From + off, e1d.Ln.To + off);
+                        ln.Transform(cellXf);
                         linesT.Append(new GH_Line(ln), path);
 
                         if (ShowSectionMesh)
@@ -621,6 +632,7 @@ namespace ShapeGrammar3D.Components
                                     pt += dv * scale;
                                 }
                             }
+                            pt.Transform(cellXf);
                             defPts[nd.Id.Value] = pt;
                             if (mag > maxD) { maxD = mag; maxPt = pt; }
                         }

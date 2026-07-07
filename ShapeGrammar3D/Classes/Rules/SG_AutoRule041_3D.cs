@@ -94,6 +94,10 @@ namespace ShapeGrammar3D.Classes.Rules
                 double roundedOptDbl = Math.Round(optionDbl, 0);
                 int optionNumber = (int)roundedOptDbl;
 
+                // 0 = no diagonals for this stud (domain must include 0, e.g. [0,3])
+                if (optionNumber == 0)
+                    continue;
+
                 var re = (SG_Elem1D)relevantElems[i];
                 var rightElems = initialElems.
                     Where(e => e.Nodes[0].Pt.DistanceTo(re.Nodes[0].Pt) < UT.PRES).ToList();

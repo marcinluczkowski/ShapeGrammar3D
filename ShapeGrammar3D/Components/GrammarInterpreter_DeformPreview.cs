@@ -164,7 +164,7 @@ namespace ShapeGrammar3D.Components
 
         private struct UtilLabel
         {
-            public Point3d Position;
+            public Plane TextPlane;
             public string Text;
             public Color Colour;
         }
@@ -191,10 +191,7 @@ namespace ShapeGrammar3D.Components
             if (!ShowUtilText || _utilLabels == null || _utilLabels.Count == 0) return;
 
             foreach (var lbl in _utilLabels)
-            {
-                Plane txtPlane = new Plane(lbl.Position, Vector3d.XAxis, Vector3d.YAxis);
-                args.Display.Draw3dText(lbl.Text, lbl.Colour, txtPlane, _textHeight, "Arial");
-            }
+                args.Display.Draw3dText(lbl.Text, lbl.Colour, lbl.TextPlane, _textHeight, "Arial");
         }
 
         public override bool Write(GH_IO.Serialization.GH_IWriter writer)
@@ -223,10 +220,12 @@ namespace ShapeGrammar3D.Components
                 "Deformation scale factor (1.0 = true scale)", GH_ParamAccess.item, 1.0);            // 3
             pManager.AddIntegerParameter("Load Case", "LC",
                 "Load case index (-1 = last available)", GH_ParamAccess.item, -1);                    // 4
-            pManager.AddNumberParameter("X Spacing", "dX",
-                "Horizontal spacing between generation columns", GH_ParamAccess.item, 30.0);          // 5
-            pManager.AddNumberParameter("Y Spacing", "dY",
-                "Vertical spacing between individual rows", GH_ParamAccess.item, 10.0);               // 6
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);                    // 5
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);                // 6
             pManager.AddNumberParameter("Util Ranges", "URng",
                 "5 utilization thresholds (%) defining 6 colour bands.\n" +
                 "Default: 50, 80, 95, 100, 110\n" +
@@ -236,10 +235,14 @@ namespace ShapeGrammar3D.Components
                 "Base point for the grid layout", GH_ParamAccess.item, Point3d.Origin);               // 8
             pManager.AddNumberParameter("Text Height", "TxH",
                 "Text height in model units for utilization labels", GH_ParamAccess.item, 0.3);       // 9
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);                                                          // 10
 
             pManager[1].Optional = true;
             pManager[2].Optional = true;
             pManager[7].Optional = true;
+            pManager[10].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -280,14 +283,14 @@ namespace ShapeGrammar3D.Components
 
             double scale = 1.0;
             int lcIndex = -1;
-            double xSpacing = 30.0;
-            double ySpacing = 10.0;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
             Point3d insertPt = Point3d.Origin;
 
             DA.GetData(3, ref scale);
             DA.GetData(4, ref lcIndex);
-            DA.GetData(5, ref xSpacing);
-            DA.GetData(6, ref ySpacing);
+            DA.GetData(5, ref colSpacing);
+            DA.GetData(6, ref rowSpacing);
 
             var rawRanges = new List<double>();
             DA.GetDataList(7, rawRanges);
@@ -298,6 +301,8 @@ namespace ShapeGrammar3D.Components
             double textH = 0.3;
             DA.GetData(9, ref textH);
             _textHeight = Math.Max(0.01, textH);
+
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 10);
 
             _utilLabels.Clear();
 
@@ -343,10 +348,9 @@ namespace ShapeGrammar3D.Components
                     TB_Model model = modelBranch[i].Value;
                     if (model.Elem1Ds == null || model.Nodes == null) continue;
 
-                    Vector3d offset = new Vector3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d cellOrigin = insertPt + col * colSpacing + row * rowSpacing;
+                    Vector3d offset = (Vector3d)cellOrigin;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
                     GH_Path outPath = new GH_Path(col, row);
 
                     int resolvedLC = ResolveLoadCase(model, lcIndex);
@@ -382,6 +386,7 @@ namespace ShapeGrammar3D.Components
                         if (n0 == null || n1 == null) continue;
 
                         Line undef = new Line(n0.Pt + offset, n1.Pt + offset);
+                        undef.Transform(cellXf);
                         undefTree.Append(new GH_Line(undef), outPath);
 
                         Line defLine;
@@ -392,6 +397,7 @@ namespace ShapeGrammar3D.Components
                             defLine = new Line(
                                 nodeDefPts[n0.Id.Value] + offset,
                                 nodeDefPts[n1.Id.Value] + offset);
+                            defLine.Transform(cellXf);
                         }
                         else
                         {
@@ -408,9 +414,12 @@ namespace ShapeGrammar3D.Components
                         if (ShowUtilText)
                         {
                             Point3d midPt = defLine.PointAt(0.5);
+                            Plane tpl = displayPlane.IsValid
+                                ? new Plane(midPt, displayPlane.XAxis, displayPlane.YAxis)
+                                : new Plane(midPt, Vector3d.XAxis, Vector3d.YAxis);
                             _utilLabels.Add(new UtilLabel
                             {
-                                Position = midPt,
+                                TextPlane = tpl,
                                 Text = string.Format("{0:F1}%", util * 100.0),
                                 Colour = clr
                             });

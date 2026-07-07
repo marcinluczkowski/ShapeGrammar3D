@@ -238,6 +238,25 @@ namespace ShapeGrammar3D.Components
 
             SG_Shape deep_copied_inishape = CloneShape(ini_Shape);
 
+            // Auto-reset when rules change (new rule added / removed / reordered).
+            // The stored population has chromosomes built for the OLD rule set,
+            // so FindRange silently fails for any new marker.
+            if (_currentPopulation != null && _currentPopulation.Count > 0)
+            {
+                var expectedMarkers = rls.Select(r => r.RuleMarker).ToList();
+                var sampleChromosome = _currentPopulation[0].Chromosome;
+                bool compatible = expectedMarkers.All(m => sampleChromosome.Contains(m))
+                                  && sampleChromosome.Distinct().Where(v => v < -1).OrderBy(v => v)
+                                     .SequenceEqual(expectedMarkers.Concat(new[] { UT.RULE_END_MARKER }).Distinct().OrderBy(v => v));
+                if (!compatible)
+                {
+                    _currentPopulation = null;
+                    _currentGeneration = 0;
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                        "Rules changed — population regenerated automatically (marker mismatch).");
+                }
+            }
+
             if (_currentPopulation == null)
             {
                 List<int> chromosomeLengths = GetChromosomeLengths(rls, ini_Shape);
@@ -326,7 +345,7 @@ namespace ShapeGrammar3D.Components
                     break;
             }
 
-            // Save JSON
+            // Save JSON (internal sidecar under temp; primary output is Assembly)
             string jsonPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
                 string.Format("GA4_run_{0}.json", _runStore.RunId));
             try
@@ -582,6 +601,10 @@ namespace ShapeGrammar3D.Components
                     for (int j = 0; j < rules.Count; j++)
                     {
                         string message = rules[j].RuleOperation(ref shape, ref gt);
+                        // Surface rule errors on the first individual so they are visible in GH.
+                        if (i == 0 && message != null && (message.Contains("wrong marker")
+                                                          || message.Contains("0 struts")))
+                            AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
                     }
 
                     shape.RegisterElemsToNodes();
@@ -857,14 +880,19 @@ namespace ShapeGrammar3D.Components
             shape.Supports ??= new List<SG_Support>();
             shape.Supports.Clear();
 
-            var elemEndpoints = new HashSet<int>();
+            // Treat both endpoint and mid-element nodes as valid load-bearing FEM nodes.
+            var elemNodeIds = new HashSet<int>();
             if (shape.Elems != null)
             {
                 foreach (var e in shape.Elems)
                 {
-                    if (e?.Nodes == null) continue;
-                    foreach (var n in e.Nodes)
-                        if (n != null) elemEndpoints.Add(n.ID);
+                    if (e?.Nodes != null)
+                        foreach (var n in e.Nodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
+
+                    if (e is SG_Elem1D e1d && e1d.MidNodes != null)
+                        foreach (var n in e1d.MidNodes)
+                            if (n != null) elemNodeIds.Add(n.ID);
                 }
             }
 
@@ -872,7 +900,7 @@ namespace ShapeGrammar3D.Components
             {
                 if (nd?.Support == null) continue;
                 if (nd.Support.SupportCondition == 0) continue;
-                if (!elemEndpoints.Contains(nd.ID)) continue;
+                if (!elemNodeIds.Contains(nd.ID)) continue;
 
                 nd.Support.Pt = nd.Pt;
                 nd.Support.Node = nd;
@@ -880,21 +908,33 @@ namespace ShapeGrammar3D.Components
             }
 
             var initRule = rules?.OfType<SG_AutoRule_InitShape_3D>().FirstOrDefault();
-            Vector3d loadVec = initRule?.LoadVector ?? new Vector3d(0, 0, -100);
+            Vector3d loadVec = initRule?.LoadVector ?? Vector3d.Zero;
             Vector3d areaLoadVec = initRule?.AreaLoadVector ?? Vector3d.Zero;
+
+            // Preserve user-supplied loads when no init-rule load is configured.
+            bool hasUserLoads =
+                (shape.PointLoads != null && shape.PointLoads.Count > 0) ||
+                (shape.LineLoads  != null && shape.LineLoads.Count  > 0);
+            if (hasUserLoads)
+            {
+                shape.PointLoads ??= new List<SG_PointLoad>();
+                shape.LineLoads  ??= new List<SG_LineLoad>();
+                return;
+            }
 
             shape.PointLoads ??= new List<SG_PointLoad>();
             shape.PointLoads.Clear();
 
             if (areaLoadVec.Length > 1e-12 && initRule != null)
             {
-                ApplyVoronoiAreaLoads(shape, initRule, elemEndpoints, areaLoadVec, loadVec);
+                ApplyVoronoiAreaLoads(shape, initRule, elemNodeIds, areaLoadVec, loadVec);
             }
             else
             {
+                if (loadVec.Length < 1e-12) loadVec = new Vector3d(0, 0, -100);
                 foreach (var nd in shape.Nodes)
                 {
-                    if (nd == null || !elemEndpoints.Contains(nd.ID)) continue;
+                    if (nd == null || !elemNodeIds.Contains(nd.ID)) continue;
                     shape.PointLoads.Add(new SG_PointLoad(loadVec, Vector3d.Zero, nd.Pt));
                 }
             }

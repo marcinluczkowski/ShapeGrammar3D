@@ -4,6 +4,7 @@ using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Elements;
+using ShapeGrammar3D.Classes.Toolbox;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,24 +26,43 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid => new Guid("A7F2E9B1-4C3D-5E6F-8A9B-0C1D2E3F4A5B");
 
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Assembly", "SG Assembly from GI_FromSg", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Generation", "Gen", "Which generation(s). -1 = all.", GH_ParamAccess.list, -1);
-            pManager.AddIntegerParameter("Individual", "Ind", "Which individual(s). -1 = all.", GH_ParamAccess.list, -1);
-            pManager.AddNumberParameter("X Spacing", "dX", "Horizontal spacing between individuals", GH_ParamAccess.item, 30.0);
-            pManager.AddNumberParameter("Y Spacing", "dY", "Vertical spacing between individuals", GH_ParamAccess.item, 10.0);
-            pManager.AddPointParameter("Insert Point", "Pt", "Base point for layout", GH_ParamAccess.item, Point3d.Origin);
+            pManager.AddParameter(new Param_SGAssembly(), "Assembly", "Asm",
+                "GA output bundle from GI_FromSg / GI_LargeSg containing evaluated individuals.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Generation", "Gen",
+                "Generation index filter (-1 lists every generation stored in the assembly).", GH_ParamAccess.list, -1);
+            pManager.AddIntegerParameter("Individual", "Ind",
+                "Individual index filter inside each generation (-1 keeps full population).", GH_ParamAccess.list, -1);
+            pManager.AddVectorParameter("Column Spacing", "Col",
+                "World-space offset between columns. Default (30, 0, 0).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultColumnSpacing);
+            pManager.AddVectorParameter("Row Spacing", "Row",
+                "World-space offset between rows. Default (0, 0, -10).",
+                GH_ParamAccess.item, PreviewLayoutTransforms.DefaultRowSpacingCompact);
+            pManager.AddPointParameter("Layout origin", "Pt",
+                "Anchor point for the preview grid (optional).", GH_ParamAccess.item, Point3d.Origin);
+            pManager.AddPlaneParameter("Display Plane", "Disp",
+                "Optional plane whose X/Y axes orient each cell's geometry. Defaults to the world XZ plane.",
+                GH_ParamAccess.item);
             pManager[5].Optional = true;
+            pManager[6].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Scores", "Scores", "All topology and shape metric scores per individual (metric name: value)", GH_ParamAccess.tree);
-            pManager.AddPointParameter("Node Pts", "Nodes", "Node geometry (for node count)", GH_ParamAccess.tree);
-            pManager.AddLineParameter("Lines", "Lines", "Element line geometry (for line/element count)", GH_ParamAccess.tree);
-            pManager.AddMeshParameter("Area Mesh", "Mesh", "Mesh from lines (for area metric). More accurate than hull.", GH_ParamAccess.tree);
-            pManager.AddTextParameter("Info", "Info", "Summary", GH_ParamAccess.item);
+            pManager.AddTextParameter("Score tree", "Scores",
+                "Tree of textual lines summarizing topology/shape metrics for each previewed structure.", GH_ParamAccess.tree);
+            pManager.AddPointParameter("Nodes", "Nodes",
+                "Grasshopper point tree mirroring node locations (for counting / overlays).", GH_ParamAccess.tree);
+            pManager.AddLineParameter("Members", "Ln",
+                "Line tree mirroring member axes for the same layout slots.", GH_ParamAccess.tree);
+            pManager.AddMeshParameter("Metric mesh", "Mesh",
+                "Optional mesh derived from the line network to support area-based shape metrics.", GH_ParamAccess.tree);
+            pManager.AddTextParameter("Summary", "Info",
+                "High-level statistics about how many structures were processed.", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -64,11 +84,14 @@ namespace ShapeGrammar3D.Components
             bool allInds = indList.Contains(-1);
             var indSet = allInds ? null : new HashSet<int>(indList.Where(x => x >= 0));
 
-            double xSpacing = 30, ySpacing = 10;
+            Vector3d colSpacing = PreviewLayoutTransforms.DefaultColumnSpacing;
+            Vector3d rowSpacing = PreviewLayoutTransforms.DefaultRowSpacingCompact;
             Point3d insertPt = Point3d.Origin;
-            DA.GetData(3, ref xSpacing);
-            DA.GetData(4, ref ySpacing);
+            DA.GetData(3, ref colSpacing);
+            DA.GetData(4, ref rowSpacing);
             DA.GetData(5, ref insertPt);
+
+            Plane displayPlane = PreviewLayoutTransforms.GetOptionalDisplayPlane(DA, 6);
 
             var gens = assembly.Generations ?? new List<AssemblyGeneration>();
             if (gens.Count == 0)
@@ -100,10 +123,9 @@ namespace ShapeGrammar3D.Components
 
                     shape.RegisterElemsToNodes();
 
-                    Vector3d offset = new Vector3d(
-                        insertPt.X + col * xSpacing,
-                        insertPt.Y - row * ySpacing,
-                        insertPt.Z);
+                    Point3d cellOrigin = insertPt + col * colSpacing + row * rowSpacing;
+                    Vector3d offset = (Vector3d)cellOrigin;
+                    Transform cellXf = PreviewLayoutTransforms.GetCellOrientTransform3D(displayPlane, cellOrigin);
 
                     GH_Path path = new GH_Path(col, row);
 
@@ -125,7 +147,11 @@ namespace ShapeGrammar3D.Components
                         foreach (var node in shape.Nodes)
                         {
                             if (node != null)
-                                nodeTree.Append(new GH_Point(node.Pt + offset), path);
+                            {
+                                Point3d p = node.Pt + offset;
+                                p.Transform(cellXf);
+                                nodeTree.Append(new GH_Point(p), path);
+                            }
                         }
                     }
 
@@ -134,6 +160,7 @@ namespace ShapeGrammar3D.Components
                         if (elem is SG_Elem1D e1d && e1d.Ln.IsValid)
                         {
                             var ln = new Line(e1d.Ln.From + offset, e1d.Ln.To + offset);
+                            ln.Transform(cellXf);
                             lineTree.Append(new GH_Line(ln), path);
                         }
                     }
@@ -142,6 +169,7 @@ namespace ShapeGrammar3D.Components
                     if (mesh != null && mesh.IsValid)
                     {
                         mesh.Translate(offset);
+                        mesh.Transform(cellXf);
                         meshTree.Append(new GH_Mesh(mesh), path);
                     }
 
