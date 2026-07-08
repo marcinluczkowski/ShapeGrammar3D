@@ -73,7 +73,7 @@ namespace ShapeGrammar3D.Components
             DA.SetData(0, load);
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_C_Load_P;
 
         public override Guid ComponentGuid => new Guid("3F4D8C12-2A5B-4E7E-91A0-7C0E3B58D2A1");
     }

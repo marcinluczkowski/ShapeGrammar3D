@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using ShapeGrammar3D.Classes;
@@ -43,7 +43,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             DA.SetData(0, rule);
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Rule12;
 
         public override Guid ComponentGuid => new Guid("3D9B7E2B-A8F4-4E5A-AB53-12E74E8F8A21");
     }

@@ -12,7 +12,8 @@ namespace ShapeGrammar3D.Components
     /// Select a standard Square Hollow Section from the catalog via right-click menus.
     /// Outputs both ShapeGrammar (SH) and Toolbox (TB) section objects.
     /// </summary>
-    public class SHSPresetSection : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class SHSPresetSection : GH_Component
     {
         private int _selectedSize = 100;
         private int _selectedThickness = 4;
@@ -202,7 +203,9 @@ namespace ShapeGrammar3D.Components
         #endregion
 
         protected override System.Drawing.Bitmap Icon
-            => Properties.Resources.icons_Generic;
+            => Properties.Resources.icons_C_Sec_I;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("F6A7B8C9-0D1E-2F3A-4B5C-D6E7F8A9B0C1");

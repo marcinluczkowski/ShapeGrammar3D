@@ -123,7 +123,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         {
             get
             {
-                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+                return global::ShapeGrammar3D.Properties.Resources.icons_P_Load_P;
             }
         } //Set icon image
 

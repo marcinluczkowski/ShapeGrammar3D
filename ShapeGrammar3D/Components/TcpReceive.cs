@@ -17,7 +17,8 @@ using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar3D.Components
 {
-    public class TcpReceive : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class TcpReceive : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the TcpIpReceive class.
@@ -89,13 +90,15 @@ namespace ShapeGrammar3D.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Utilities;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("e9d7bc0a-8cca-4039-b9ca-0a4952b81512"); }

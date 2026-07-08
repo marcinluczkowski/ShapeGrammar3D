@@ -314,7 +314,8 @@ namespace ShapeGrammar3D.Classes
         public static double MeshAreaFromLines(SG_Shape shape)
         {
             if (shape?.Elems == null || shape.Elems.Count == 0) return 0.0;
-            var (area, _) = MeshAreaFromLinesWithMesh(shape);
+            var (area, mesh) = MeshAreaFromLinesWithMesh(shape);
+            mesh?.Dispose();
             return area;
         }
 
@@ -469,6 +470,10 @@ namespace ShapeGrammar3D.Classes
             {
                 return 0.0;
             }
+            finally
+            {
+                mesh.Dispose();
+            }
         }
 
         /// <summary>
@@ -554,6 +559,10 @@ namespace ShapeGrammar3D.Classes
                 return Math.Abs(vp?.Volume ?? 0.0);
             }
             catch { return 0.0; }
+            finally
+            {
+                m.Dispose();
+            }
         }
 
         public static Mesh ShrinkWrapMesh(SG_Shape shape, double detailRatio = DefaultShrinkWrapDetailRatio)
@@ -591,7 +600,7 @@ namespace ShapeGrammar3D.Classes
             if (diag < 1e-9) return null;
 
             double targetEdge = Math.Max(1e-6, diag * effectiveRatio);
-            var pc = new PointCloud();
+            using var pc = new PointCloud();
             foreach (var n in shape.Nodes)
             {
                 if (n == null) continue;

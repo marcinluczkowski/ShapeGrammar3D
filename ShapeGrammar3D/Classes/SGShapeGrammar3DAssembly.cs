@@ -167,11 +167,11 @@ namespace ShapeGrammar3D.Classes
             new GH_InstanceDescription(
                 "SG Assembly", "Assembly",
                 "Lightweight container for an entire GA run: per-generation individuals with chromosomes, fitness, TB_Model snapshots and SG_Shape geometry.",
-                UT.CAT, UT.GR_DATA_PREVIEW))
+                UT.CAT, UT.GR_PARAM))
         { }
 
         public override Guid ComponentGuid => new Guid("E8A1B2C3-4D5E-6F7A-8B9C-0D1E2F3A4B5C");
-        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_P_Assembly;
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_SGAssembly> values) => GH_GetterResult.success;
         protected override GH_GetterResult Prompt_Singular(ref GH_SGAssembly value) => GH_GetterResult.success;

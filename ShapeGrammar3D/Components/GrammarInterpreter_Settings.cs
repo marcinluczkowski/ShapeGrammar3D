@@ -13,7 +13,7 @@ namespace ShapeGrammar3D.Components
         public GrammarInterpreter_Settings()
           : base("GrammarInterpreter_Settings", "GI_Settings",
               "Collects all GA/interpreter analysis settings into one object for Grammar Interpreter from SG_Shape (GI_FromSg).",
-              UT.CAT, UT.GR_INT)
+              UT.CAT, UT.GR_PARAM)
         {
         }
 
@@ -277,7 +277,7 @@ namespace ShapeGrammar3D.Components
                 $"Obj={settings.NumObjectives}, CSOpt={settings.CroSecOpt}, KIter={settings.KMeansIterations}");
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_P_Settings;
 
         public override Guid ComponentGuid => new Guid("7A6B5C4D-3E2F-4A1B-9C8D-7E6F5A4B3C2D");
     }

@@ -14,6 +14,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 
+#pragma warning disable CS0618 // Archived component is intentionally referenced by its custom attributes.
+
 namespace ShapeGrammar3D.Components
 {
     #region Custom Attributes
@@ -167,7 +169,8 @@ namespace ShapeGrammar3D.Components
     #endregion
 
     #region Component
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class GI_RadarChart : GH_Component
     {
         public bool ShowLabels { get; set; } = true;
@@ -610,7 +613,9 @@ namespace ShapeGrammar3D.Components
             DA.SetData(2, info);
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("F6A7B8C9-0D1E-2F3A-4B5C-6D7E8F9A0B12");

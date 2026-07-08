@@ -4,7 +4,8 @@ using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar3D.Components
 {
-    public class RHSCrossSection : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class RHSCrossSection : GH_Component
     {
         public RHSCrossSection()
           : base("RHSCrossSection", "rhs_crossec",
@@ -58,7 +59,9 @@ namespace ShapeGrammar3D.Components
         }
 
         protected override System.Drawing.Bitmap Icon
-            => Properties.Resources.icons_Generic;
+            => Properties.Resources.icons_C_Sec_I;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("D4E5F6A7-8B9C-0D1E-2F3A-B4C5D6E7F8A9");

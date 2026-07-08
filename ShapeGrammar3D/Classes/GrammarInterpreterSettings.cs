@@ -166,11 +166,11 @@ namespace ShapeGrammar3D.Classes
             new GH_InstanceDescription(
                 "GI Settings", "Settings",
                 "Bundle of GA / interpreter options (population, generations, objectives, feasibility weights, cross-section optimisation, etc.).",
-                UT.CAT, UT.GR_INT))
+                UT.CAT, UT.GR_PARAM))
         { }
 
         public override Guid ComponentGuid => new Guid("9E8D7C6B-5A4F-4321-9B8A-7C6D5E4F3A21");
-        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_P_Settings;
         protected override GH_GetterResult Prompt_Plural(ref List<GH_GrammarInterpreterSettings> values) => GH_GetterResult.success;
         protected override GH_GetterResult Prompt_Singular(ref GH_GrammarInterpreterSettings value) => GH_GetterResult.success;
     }

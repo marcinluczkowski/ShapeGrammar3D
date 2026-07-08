@@ -12,7 +12,8 @@ namespace ShapeGrammar3D.Components
     /// <summary>
     /// Visualizes Voronoi tributary areas used for area-load distribution.
     /// </summary>
-    public class GrammarInterpreter_VoronoiAreaLoadPreview : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_VoronoiAreaLoadPreview : GH_Component
     {
         public GrammarInterpreter_VoronoiAreaLoadPreview()
           : base("GI_Voronoi AreaLoad Preview", "GI_VoroLoad",
@@ -277,7 +278,9 @@ namespace ShapeGrammar3D.Components
             return curves;
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid => new Guid("F2EFD508-1B18-4EAF-9F89-4D6340AAB22F");
     }
 }

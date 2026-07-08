@@ -212,7 +212,7 @@ namespace ShapeGrammar3D.Components
             return Color.FromArgb(r, Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("E7F8A2B4-5D6E-4F8B-C2D4-BF0E9F8A7C6D");
     }
 }

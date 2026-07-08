@@ -68,11 +68,11 @@ namespace ShapeGrammar3D.Classes
             new GH_InstanceDescription(
                 "Large Run Context", "RunCtx",
                 "Bundle of SG_Shape seed + ordered rules (+ JSON path) emitted by GI_LargeBnd. Feed into GI_LargeJson Reader to rebuild models without re-wiring SG_Shape and Autorules.",
-                UT.CAT, UT.GR_DATA_PREVIEW))
+                UT.CAT, UT.GR_PARAM))
         { }
 
         public override Guid ComponentGuid => new Guid("9B2F7A3D-4C5E-4D6F-8A0B-1C2D3E4F5A6B");
-        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_P_RunContext;
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_LargeRunContext> values) => GH_GetterResult.success;
         protected override GH_GetterResult Prompt_Singular(ref GH_LargeRunContext value) => GH_GetterResult.success;

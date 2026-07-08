@@ -1,4 +1,4 @@
-using Grasshopper.Kernel;
+﻿using Grasshopper.Kernel;
 using Rhino.Geometry;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Rules;
@@ -58,7 +58,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
 
         protected override System.Drawing.Bitmap Icon
         {
-            get { return Properties.Resources.icons_Generic; }
+            get { return Properties.Resources.icons_Rule32; }
         }
 
         public override Guid ComponentGuid

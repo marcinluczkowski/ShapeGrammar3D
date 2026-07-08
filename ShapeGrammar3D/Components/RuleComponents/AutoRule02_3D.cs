@@ -73,7 +73,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Rule20;
             }
         }
 

@@ -16,6 +16,8 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 
+#pragma warning disable CS0618 // Archived component is intentionally referenced by its custom attributes.
+
 namespace ShapeGrammar3D.Components
 {
     #region Custom Attributes
@@ -324,7 +326,8 @@ namespace ShapeGrammar3D.Components
     #endregion
 
     #region Component
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class GrammarInterpreter_JsonPreview5 : GH_Component
     {
         public bool ShowSectionMesh { get; set; }
@@ -805,7 +808,9 @@ namespace ShapeGrammar3D.Components
 
         #endregion
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("E5F6A7B8-9C0D-1E2F-3A4B-5C6D7E8F9A01");

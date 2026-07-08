@@ -300,7 +300,7 @@ namespace ShapeGrammar3D.Components
             return new GH_TextEntity(te);
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("B2C3D4E5-F6A7-8901-BCDE-F01234567891");
     }
 }

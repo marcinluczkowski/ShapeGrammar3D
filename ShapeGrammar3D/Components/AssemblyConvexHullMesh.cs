@@ -16,7 +16,8 @@ namespace ShapeGrammar3D.Components
     /// for individuals in an SG Assembly. Uses <see cref="ShapeMetrics.ConvexHullMesh"/>,
     /// so the mesh is exactly the same shape whose volume feeds metric 13.
     /// </summary>
-    public class AssemblyConvexHullMesh : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class AssemblyConvexHullMesh : GH_Component
     {
         public AssemblyConvexHullMesh()
             : base("Assembly Convex Hull Mesh", "AsmCHull",
@@ -192,7 +193,9 @@ namespace ShapeGrammar3D.Components
             return null;
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid => new Guid("E4D9B2F3-5A17-46D1-8C9A-7E1F0B2C4D88");
     }

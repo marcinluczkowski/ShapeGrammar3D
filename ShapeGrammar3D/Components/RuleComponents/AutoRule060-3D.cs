@@ -9,7 +9,8 @@ using ShapeGrammar3D.Classes.Rules;
 
 namespace ShapeGrammar3D.Components.RuleComponents
 {
-    public class AutoRule060_3D : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class AutoRule060_3D : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the AutoRule04 class.
@@ -71,13 +72,15 @@ namespace ShapeGrammar3D.Components.RuleComponents
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Rule60;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("F57FF9BF-E6CB-478F-80FA-15D5290E66A5"); }

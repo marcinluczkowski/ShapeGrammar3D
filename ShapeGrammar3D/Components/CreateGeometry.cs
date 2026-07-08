@@ -5,7 +5,8 @@ using System.Collections.Generic;
 using ShapeGrammar3D.Classes;
 namespace ShapeGrammar3D.Components
 {
-    public class CreateGeometry : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class CreateGeometry : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the CreateGeometry class.
@@ -67,13 +68,15 @@ namespace ShapeGrammar3D.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Utilities;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("70361ee6-5a32-45c9-a4c7-8e7228a2c48d"); }

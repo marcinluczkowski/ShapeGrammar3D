@@ -19,7 +19,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
     /// Unit convention: TB_Model uses mm internally for section dims and MPa for material;
     /// Karamba3D expects m/kN/kN·m.  Conversion flags are provided.
     /// </summary>
-    public class ST_ModelToKaramba : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class ST_ModelToKaramba : GH_Component
     {
         public ST_ModelToKaramba()
           : base("Model→Karamba", "Mdl2K",
@@ -253,6 +254,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
 
         protected override System.Drawing.Bitmap Icon
             => Properties.Resources.icons_Generic;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("C3D4E5F6-7A8B-9C0D-1E2F-A3B4C5D6E7F8");

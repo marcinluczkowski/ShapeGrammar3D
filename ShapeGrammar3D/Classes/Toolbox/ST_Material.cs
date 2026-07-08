@@ -88,7 +88,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public override Guid ComponentGuid => new Guid("91bbf942-086c-4470-82c8-7c7bb78b841f");
 
         protected override System.Drawing.Bitmap Icon { get {
-                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+                return global::ShapeGrammar3D.Properties.Resources.icons_P_Mat;
             } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Material> values)

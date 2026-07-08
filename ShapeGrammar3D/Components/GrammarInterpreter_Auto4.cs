@@ -12,7 +12,8 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto4 : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_Auto4 : GH_Component
     {
         // Genetic Algorithm configuration (overridable from GH inputs)
         private int _populationSize = 5;
@@ -1233,8 +1234,10 @@ namespace ShapeGrammar3D.Components
 
         protected override System.Drawing.Bitmap Icon
         {
-            get { return Properties.Resources.icons_Generic; }
+            get { return Properties.Resources.icons_CAT_Interpreter; }
         }
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
         {

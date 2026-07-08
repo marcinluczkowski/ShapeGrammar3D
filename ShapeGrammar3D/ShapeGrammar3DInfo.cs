@@ -10,7 +10,7 @@ namespace ShapeGrammar3D
         public override string Name => "ShapeGrammar3D";
 
         //Return a 24x24 pixel bitmap to represent this GHA library.
-        public override Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+        public override Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_CAT_Misc;
 
         //Return a short string describing the purpose of this GHA library.
         public override string Description =>

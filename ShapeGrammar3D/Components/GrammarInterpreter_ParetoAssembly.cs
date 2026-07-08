@@ -513,7 +513,7 @@ namespace ShapeGrammar3D.Components
 
         private struct IndRec { public int Gen, Ind, Cluster, Rank; public double Fitness, Util, Feas; }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("D4E5F6A7-B8C9-0123-DEF0-123456789013");
     }
 }

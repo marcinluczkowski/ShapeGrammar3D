@@ -16,7 +16,8 @@ namespace ShapeGrammar3D.Components
     /// <see cref="SG_Genotype.IntGenes"/> / <see cref="SG_Genotype.DGenes"/> storage
     /// in <see cref="AssemblyIndividual.Chromosome"/> / <see cref="AssemblyIndividual.ChromosomeParam"/>.
     /// </summary>
-    public class AssemblyGenotypeToText : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class AssemblyGenotypeToText : GH_Component
     {
         public AssemblyGenotypeToText()
             : base("Assembly Genotype to List", "AsmGTxt",
@@ -175,7 +176,9 @@ namespace ShapeGrammar3D.Components
             return null;
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_Utilities;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid => new Guid("A4C8E2F1-6B3D-4E9A-8C7D-1F2E3D4B5A60");
     }

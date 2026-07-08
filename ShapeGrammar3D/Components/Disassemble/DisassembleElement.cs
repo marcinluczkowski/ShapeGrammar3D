@@ -9,7 +9,8 @@ using ShapeGrammar3D.Classes.Elements;
 
 namespace ShapeGrammar3D.Components
 {
-    public class DisassembleElement : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class DisassembleElement : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the DisassembleElement class.
@@ -77,13 +78,15 @@ namespace ShapeGrammar3D.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Utilities;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("4cef31dc-480e-4276-898f-1e0341e78ef1"); }

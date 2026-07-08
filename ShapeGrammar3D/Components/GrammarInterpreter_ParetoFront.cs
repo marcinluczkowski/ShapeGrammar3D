@@ -13,6 +13,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 
+#pragma warning disable CS0618 // Archived component is intentionally referenced by its custom attributes.
+
 namespace ShapeGrammar3D.Components
 {
     #region Custom Attributes
@@ -145,7 +147,8 @@ namespace ShapeGrammar3D.Components
     #endregion
 
     #region Component
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class GI_ParetoFront : GH_Component
     {
         internal List<GraphLabel> _labels = new List<GraphLabel>();
@@ -928,7 +931,9 @@ namespace ShapeGrammar3D.Components
 
         #endregion
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("D8F0A3B2-4C6E-5D7F-9B1A-2E3F4A5B6C7D");

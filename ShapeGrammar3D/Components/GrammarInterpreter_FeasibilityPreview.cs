@@ -785,7 +785,7 @@ namespace ShapeGrammar3D.Components
             return mesh;
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("B1C2D3E4-F5A6-4B7C-8D9E-0F1A2B3C4D5E");
     }
 }
