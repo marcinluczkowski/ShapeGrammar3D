@@ -8,6 +8,8 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
+#pragma warning disable CS0618 // Archived component is intentionally referenced by its custom attributes.
+
 namespace ShapeGrammar3D.Components
 {
     #region Preset definitions
@@ -193,7 +195,8 @@ namespace ShapeGrammar3D.Components
     #endregion
 
     #region Component
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class MaterialPresetComponent : GH_Component
     {
         public int SelectedIndex { get; set; }
@@ -261,7 +264,9 @@ namespace ShapeGrammar3D.Components
         }
 
         protected override System.Drawing.Bitmap Icon
-            => Properties.Resources.icons_Generic;
+            => Properties.Resources.icons_C_Mat;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("E5F6A7B8-9C0D-1E2F-3A4B-C5D6E7F8A9B0");

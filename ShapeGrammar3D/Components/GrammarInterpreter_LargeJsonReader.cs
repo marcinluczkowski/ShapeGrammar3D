@@ -755,7 +755,7 @@ namespace ShapeGrammar3D.Components
             public IndividualRow Row { get; set; }
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("AE5D2B7C-67FA-40D4-B95A-1686A5505851");
     }
 }

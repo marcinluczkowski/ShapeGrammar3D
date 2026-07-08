@@ -9,7 +9,8 @@ using ShapeGrammar3D.Classes.Toolbox;
 
 namespace ShapeGrammar3D.Components.ToolboxComponents
 {
-    public class ST_DeformedShape : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class ST_DeformedShape : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the _08_DeformedShape class.
@@ -147,6 +148,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("9946baff-827d-4533-b99a-57de66863835"); }

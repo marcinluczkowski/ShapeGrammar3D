@@ -27,7 +27,8 @@ namespace ShapeGrammar3D.Components
     ///   2 = Top-1 per Cluster (up to K clusters, by Fitness)
     ///   3 = Top-K from Pareto front (Rank == 0, by Fitness)
     /// </summary>
-    public class GrammarInterpreter_TopKPicker : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_TopKPicker : GH_Component
     {
         private readonly List<(Point3d anchor, string text, Color color)> _viewportLabels =
             new List<(Point3d, string, Color)>();
@@ -456,7 +457,9 @@ namespace ShapeGrammar3D.Components
             }
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid => new Guid("D8E7F6A5-4B3C-4A1D-8E2F-9C0B1A2D3E4F");
     }

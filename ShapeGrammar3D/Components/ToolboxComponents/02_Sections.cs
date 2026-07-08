@@ -8,7 +8,8 @@ using ShapeGrammar3D.Classes.Toolbox;
 
 namespace ShapeGrammar3D.Components.ToolboxComponents
 {
-    public class ST_Section_Rect : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class ST_Section_Rect : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the _02_Section class.
@@ -91,12 +92,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("98552a11-5cb8-4f87-8881-b0770e40ad2e"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class ST_Section_Circular : GH_Component
     {
         /// <summary>
@@ -173,12 +177,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("3fe54a67-a1b3-4a66-89ec-6ce360a3ef8c"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class ST_Section_I : GH_Component
     {
         /// <summary>
@@ -271,12 +278,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("626979da-55b7-47be-8744-e0b47a666c8d"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class ST_Section_RHS : GH_Component
     {
         /// <summary>
@@ -368,12 +378,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("e0890263-c82f-4986-8d1a-fef34571fc78"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class ST_Section_CHS : GH_Component
     {
         /// <summary>
@@ -453,6 +466,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("70c46471-a618-4db2-9831-9593695df32f"); }

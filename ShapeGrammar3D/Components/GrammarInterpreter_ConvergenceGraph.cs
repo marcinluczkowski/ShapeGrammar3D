@@ -11,7 +11,8 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GI_ConvergenceGraph : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GI_ConvergenceGraph : GH_Component
     {
         internal List<GraphLabel> _labels = new List<GraphLabel>();
         internal double _textHeight = 0.12;
@@ -692,7 +693,9 @@ namespace ShapeGrammar3D.Components
             return Color.FromArgb(r, g, b);
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("C7E9F2A1-3B5D-4E6F-8A0C-1D2E3F4A5B6C");

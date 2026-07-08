@@ -29,7 +29,8 @@ namespace ShapeGrammar3D.Components
     ///
     /// Geometry layout: rows = clusters, columns = combination index.
     /// </summary>
-    public class GrammarInterpreter_MetricSweep : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_MetricSweep : GH_Component
     {
         public GrammarInterpreter_MetricSweep()
           : base("Grammar Interpreter Metric Sweep", "GI_MetricSweep",
@@ -534,7 +535,9 @@ namespace ShapeGrammar3D.Components
             };
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_Interpreter;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid => new Guid("9C8D7E6F-1A2B-4C3D-8E9F-0A1B2C3D4E5F");
     }

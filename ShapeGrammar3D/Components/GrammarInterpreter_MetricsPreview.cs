@@ -26,7 +26,7 @@ namespace ShapeGrammar3D.Components
 
         public override Guid ComponentGuid => new Guid("A7F2E9B1-4C3D-5E6F-8A9B-0C1D2E3F4A5B");
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {

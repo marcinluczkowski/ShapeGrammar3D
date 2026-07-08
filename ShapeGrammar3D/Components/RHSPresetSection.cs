@@ -193,7 +193,7 @@ namespace ShapeGrammar3D.Components
 
         #endregion
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_C_Sec_I;
 
         public override Guid ComponentGuid => new Guid("A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D");
     }

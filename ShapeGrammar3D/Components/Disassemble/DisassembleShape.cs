@@ -15,7 +15,7 @@ namespace ShapeGrammar3D.Components
         public DisassembleShape()
           : base("DisassembleShape", "Exp. Shape",
               "",
-              UT.CAT, UT.GR_UTIL)
+              UT.CAT, UT.GR_ASSEM)
         {
         }
 
@@ -86,7 +86,7 @@ namespace ShapeGrammar3D.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Utilities;
             }
         }
 

@@ -45,7 +45,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
         {
             get
             {
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_Rule31;
             }
         }
 

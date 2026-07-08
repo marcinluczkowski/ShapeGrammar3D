@@ -107,7 +107,7 @@ namespace ShapeGrammar3D.Components
             DA.SetData(1, $"Gen={targetGen.Generation}, Ind={selectedIndex}, Fitness={targetInd.Fitness:F4}, Rank={targetInd.Rank}");
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
 
         public override Guid ComponentGuid => new Guid("6C20EA8C-6F7A-4F22-B95F-6E6483B7F49C");
     }

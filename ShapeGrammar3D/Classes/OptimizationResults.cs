@@ -120,11 +120,11 @@ namespace ShapeGrammar3D.Classes
             new GH_InstanceDescription(
                 "Optimization Results", "OptRes",
                 "Pre-parsed large GA run emitted by GI_LargeJson Reader. Feed into GI_Opti Preview to render Pareto/convergence without re-reading the JSON.",
-                UT.CAT, UT.GR_DATA_PREVIEW))
+                UT.CAT, UT.GR_PARAM))
         { }
 
         public override Guid ComponentGuid => new Guid("3F1C8A6E-2D4B-4F7A-9C1E-7B5A0D9E2C13");
-        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => global::ShapeGrammar3D.Properties.Resources.icons_P_OptResults;
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_OptimizationResults> values) => GH_GetterResult.success;
         protected override GH_GetterResult Prompt_Singular(ref GH_OptimizationResults value) => GH_GetterResult.success;

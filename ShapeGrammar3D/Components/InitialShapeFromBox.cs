@@ -9,7 +9,8 @@ using ShapeGrammar3D.Classes.Elements;
 namespace ShapeGrammar3D.Components
 {
     [Serializable]
-    public class InitialShapeFromBox : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class InitialShapeFromBox : GH_Component
     {
         public InitialShapeFromBox()
           : base("InitialShapeFromBox", "BoxShape",
@@ -232,7 +233,9 @@ namespace ShapeGrammar3D.Components
                    a.PointAtEnd.DistanceTo(b.PointAtEnd) < tol;
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_Utilities;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid => new Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     }

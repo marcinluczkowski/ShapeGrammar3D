@@ -12,7 +12,8 @@ using ShapeGrammar3D.Classes.Toolbox;
 
 namespace ShapeGrammar3D.Components.ToolboxComponents
 {
-    public class Disassemble_Material : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class Disassemble_Material : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the _99_Disassemble_Material class.
@@ -87,12 +88,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("f8befff1-4f2c-431f-98a6-77b16834e6ff"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Section : GH_Component
     {
         /// <summary>
@@ -179,12 +183,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("e913aae8-6a02-428c-8d43-c34166f6202b"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Support : GH_Component
     {
         /// <summary>
@@ -256,12 +263,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("578ba269-1553-429f-ab7d-2ed2672d7955"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Element_1D : GH_Component
     {
         /// <summary>
@@ -357,12 +367,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("67024cfd-9306-4e06-825b-1d93cc00a1a3"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Model : GH_Component
     {
         /// <summary>
@@ -447,12 +460,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("dc211013-6504-498f-be8d-273a69f38b93"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Node : GH_Component
     {
         /// <summary>
@@ -537,12 +553,15 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("56779711-a2e2-48c9-81b3-41b4e0d6c8b0"); }
         }
     }
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class Disassemble_Load_Pt : GH_Component
     {
         /// <summary>
@@ -633,6 +652,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("53b88490-a7df-45ad-aea3-dcb62a332446"); }

@@ -11,7 +11,8 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_ShapePreview : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_ShapePreview : GH_Component
     {
         public GrammarInterpreter_ShapePreview()
           : base("GI_ShapePreview", "GI_ShapePreview",
@@ -283,7 +284,9 @@ namespace ShapeGrammar3D.Components
         }
 
         protected override System.Drawing.Bitmap Icon
-            => Properties.Resources.icons_Generic;
+            => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("A1B2C3D4-5E6F-7A8B-9C0D-E1F2A3B4C5D6");

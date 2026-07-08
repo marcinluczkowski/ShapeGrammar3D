@@ -141,7 +141,7 @@ namespace ShapeGrammar3D.Components.RuleComponents
             DA.SetData(0, rule);
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_Rules;
 
         public override Guid ComponentGuid => new Guid("b2c3d4e5-f6a7-8901-bcde-f12345678901");
     }

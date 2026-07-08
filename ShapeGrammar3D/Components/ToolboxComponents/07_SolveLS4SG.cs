@@ -10,7 +10,8 @@ using System.Threading.Tasks;
 
 namespace ShapeGrammar3D
 {
-
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+    
     public class SolveLS4SG : GH_Component
     {
         /// <summary>
@@ -89,6 +90,8 @@ namespace ShapeGrammar3D
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("39D2D5C4-EF7D-47D4-9C2E-76A8E488998A"); }

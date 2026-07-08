@@ -417,7 +417,7 @@ namespace ShapeGrammar3D.Components
 
         #endregion
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
         public override Guid ComponentGuid => new Guid("D8A1E5C2-4F92-4B61-9E3D-3F1A6C77B011");
     }
 }

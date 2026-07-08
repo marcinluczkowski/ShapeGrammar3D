@@ -8,7 +8,8 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_ForManualInput : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_ForManualInput : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the GrammarInterpreter_ForManualInput class.
@@ -112,7 +113,9 @@ namespace ShapeGrammar3D.Components
             return sorted;
         }
 
-        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override System.Drawing.Bitmap Icon => Properties.Resources.icons_CAT_Interpreter;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
         {

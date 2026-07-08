@@ -495,7 +495,7 @@ namespace ShapeGrammar3D.Classes.Toolbox
         public override Guid ComponentGuid => new Guid("845c714e-2a89-482f-817a-14053a290d55");
 
         protected override System.Drawing.Bitmap Icon { get {
-                return global::ShapeGrammar3D.Properties.Resources.icons_Generic;
+                return global::ShapeGrammar3D.Properties.Resources.icons_P_Sec;
             } }  //Set icon image
 
         protected override GH_GetterResult Prompt_Plural(ref List<GH_Section> values)

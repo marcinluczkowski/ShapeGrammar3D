@@ -6,7 +6,8 @@ using ShapeGrammar3D.Classes;
 
 namespace ShapeGrammar.Components
 {
-    public class LineLoad : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class LineLoad : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the LineLoad class.
@@ -78,13 +79,15 @@ namespace ShapeGrammar.Components
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return ShapeGrammar3D.Properties.Resources.icons_Generic;
+                return ShapeGrammar3D.Properties.Resources.icons_C_Load_P;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("d2f35a0d-76e0-4ebd-af17-8888febceab1"); }

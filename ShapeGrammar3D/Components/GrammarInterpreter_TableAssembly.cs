@@ -15,7 +15,8 @@ namespace ShapeGrammar3D.Components
     /// Table preview from SG Assembly. Inputs: Assembly, dX, dY. Displays per-individual:
     /// displacement, objectives, metrics, cluster, Pareto rank/crowding.
     /// </summary>
-    public class GI_TableAssembly : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GI_TableAssembly : GH_Component
     {
         private struct TableTextLabelA { public Plane TextPlane; public string Text; }
         private List<TableTextLabelA> _labels = new List<TableTextLabelA>();
@@ -278,7 +279,9 @@ namespace ShapeGrammar3D.Components
             return lcIndex;
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid => new Guid("D4E5F6A7-B8C9-0123-DEF0-123456789012");
     }
 }

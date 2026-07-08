@@ -393,7 +393,7 @@ namespace ShapeGrammar3D.Components
             };
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_Interpreter;
         public override Guid ComponentGuid => new Guid("C22E4CCB-33A2-4827-B66C-58B0B1437F30");
     }
 }

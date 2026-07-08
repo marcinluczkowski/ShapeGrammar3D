@@ -14,7 +14,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
     /// Grasshopper component for the genetic algorithm solver
     /// Manages population initialization, evaluation, and evolution
     /// </summary>
-    public class GA_GeneticAlgorithm : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GA_GeneticAlgorithm : GH_Component
     {
         private SG_GA _gaEngine;
         private List<GAIndividual> _currentGeneration;
@@ -323,6 +324,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Unique component GUID
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("a1b2c3d4-e5f6-47a8-b9c0-d1e2f3a4b5c6"); }

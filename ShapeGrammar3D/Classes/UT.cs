@@ -59,6 +59,7 @@ namespace ShapeGrammar3D.Classes
         public static int RULE_INITSHAPE_MARKER = -5;
 
         public static string CAT = "StructuralGrammar";
+        public static string GR_PARAM = "00. Param";
         public static string GR_MAT = "01. Material";
         public static string GR_SEC = "02. Section";
         public static string GR_ELM = "03. Element";

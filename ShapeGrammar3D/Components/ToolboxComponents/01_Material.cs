@@ -12,7 +12,8 @@ using ShapeGrammar3D.Classes.Toolbox;
 namespace ShapeGrammar3D.Components.ToolboxComponents
 
 {
-    public class ST_Material : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class ST_Material : GH_Component
     {
         /// <summary>
         /// Initializes a new instance of the _01_Material class.
@@ -98,6 +99,8 @@ namespace ShapeGrammar3D.Components.ToolboxComponents
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("687827cd-acc7-4422-b537-032bd9274b2e"); }

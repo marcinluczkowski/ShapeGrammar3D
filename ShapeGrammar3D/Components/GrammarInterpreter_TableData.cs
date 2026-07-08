@@ -11,7 +11,8 @@ using System.Linq;
 
 namespace ShapeGrammar3D.Components
 {
-    public class GI_TableData : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GI_TableData : GH_Component
     {
         private struct TableTextLabel
         {
@@ -400,7 +401,9 @@ namespace ShapeGrammar3D.Components
             return lcIndex;
         }
 
-        protected override Bitmap Icon => Properties.Resources.icons_Generic;
+        protected override Bitmap Icon => Properties.Resources.icons_CAT_DataPreview;
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
 
         public override Guid ComponentGuid
             => new Guid("A1B2C3D4-E5F6-7890-AB12-CD34EF567890");

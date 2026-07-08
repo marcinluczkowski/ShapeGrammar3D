@@ -9,7 +9,8 @@ using System.Threading.Tasks;
 
 namespace ShapeGrammar3D.Components
 {
-    public class CreateCustomGenotype: GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class CreateCustomGenotype: GH_Component
     {
         public CreateCustomGenotype()
           : base("Create Custom Genotype", "CCG",
@@ -90,9 +91,11 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Utilities;
             }
         }
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("E313D14B-0A7F-4A3B-BD3B-28EC4760CEA9"); }

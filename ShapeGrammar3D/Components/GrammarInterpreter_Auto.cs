@@ -11,7 +11,8 @@ using System.Collections.Generic;
 using System.Linq;
 namespace ShapeGrammar3D.Components
 {
-    public class GrammarInterpreter_Auto : GH_Component
+[System.Obsolete("Archived component: not used by the referenced Grasshopper definitions. Hidden from the toolbar.", false)]
+        public class GrammarInterpreter_Auto : GH_Component
     {
         // Genetic Algorithm configuration constants
         private const int POPULATION_SIZE = 5;
@@ -504,13 +505,15 @@ namespace ShapeGrammar3D.Components
         {
             get
             {
-                return Properties.Resources.icons_Generic;
+                return Properties.Resources.icons_CAT_Interpreter;
             }
         }
 
         /// <summary>
         /// Gets the unique ID for this component. Do not change this ID after release.
         /// </summary>
+        public override Grasshopper.Kernel.GH_Exposure Exposure => Grasshopper.Kernel.GH_Exposure.hidden;
+
         public override Guid ComponentGuid
         {
             get { return new Guid("38d35ef6-a3b2-44b2-bfa7-23d1292d37f5"); }
