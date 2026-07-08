@@ -1,4 +1,6 @@
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Types;
 using ShapeGrammar3D.Classes;
 using ShapeGrammar3D.Classes.Rules;
 using ShapeGrammar3D.Classes.Toolbox;
@@ -162,13 +164,7 @@ namespace ShapeGrammar3D.Components
 
                         foreach (var r in filteredList.OrderBy(r => r.IndexInGen))
                         {
-                            filtClust.Append(new GH_Integer(r.Cluster), filtPath);
-                            // Use Sortable so failed individuals surface as MaxValue
-                            // (sorts last in TopK pickers) instead of being squashed to 0
-                            // - which Safe() would do and which can be misread as the best
-                            // individual when minimising fitness.
-                            filtFit.Append(new GH_Number(Sortable(r.Fitness)), filtPath);
-                            filtId.Append(new GH_String(r.Id ?? string.Empty), filtPath);
+                            results.Points.Add(ToOptPoint(r, results.NumObjectives));
                             if (buildModels) rebuildList.Add(new RebuildItem { Generation = g, Row = r });
                         }
                     }
@@ -308,47 +304,17 @@ namespace ShapeGrammar3D.Components
                 double worstVal = ReadDouble(a, "worst", "WorstFitness");
                 double avgVal = ReadDouble(a, "avg", "AvgFitness");
 
-                // Failed clusters were serialised as JSON null and come back as NaN.
-                // Surface them as MaxValue so downstream consumers (min/max math, the
-                // top-K picker, IsInvalidFitness) stay well-defined instead of poisoning
-                // entire branches with NaN.
-                var path = new GH_Path(g, c);
-                best.Append(new GH_Number(SanitizeFit(bestVal)), path);
-                worst.Append(new GH_Number(SanitizeFit(worstVal)), path);
-                avg.Append(new GH_Number(SanitizeFit(avgVal)), path);
-                count.Append(new GH_Integer(n), path);
-            }
-
-            return (best, worst, avg, count);
-        }
-
-        private static (GH_Structure<GH_Line> lines, GH_Structure<GH_Colour> cols)
-            BuildConvergenceGraph(JsonElement root, int numClusters, Point3d origin, double w, double h)
-        {
-            var lines = new GH_Structure<GH_Line>();
-            var cols = new GH_Structure<GH_Colour>();
-            if (!root.TryGetProperty("aggregates", out var aggEl) || aggEl.ValueKind != JsonValueKind.Array)
-                return (lines, cols);
-
-            var byCluster = new Dictionary<int, List<(int g, double best)>>();
-            foreach (var a in aggEl.EnumerateArray())
-            {
-                int g = a.TryGetProperty("g", out var gE) ? gE.GetInt32()
-                      : a.TryGetProperty("Generation", out var gE2) ? gE2.GetInt32() : 0;
-                int c = a.TryGetProperty("c", out var cE) ? cE.GetInt32()
-                      : a.TryGetProperty("Cluster", out var cE2) ? cE2.GetInt32() : 0;
-                double bestVal = ReadDouble(a, "best", "BestFitness");
-                if (!byCluster.TryGetValue(c, out var list))
                 list.Add(new OptAggregate
                 {
                     Generation = g,
                     Cluster = c,
                     Count = n,
-                    Best = ReadDouble(a, "best", "BestFitness"),
-                    Worst = ReadDouble(a, "worst", "WorstFitness"),
-                    Avg = ReadDouble(a, "avg", "AvgFitness")
+                    Best = SanitizeFit(bestVal),
+                    Worst = SanitizeFit(worstVal),
+                    Avg = SanitizeFit(avgVal)
                 });
             }
+
             return list;
         }
 
@@ -643,12 +609,15 @@ namespace ShapeGrammar3D.Components
             return Color.FromArgb(0, Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
         }
 
-        private static string BuildInfo(JsonElement root, string path, int version, int filteredCount)
+        private static string BuildInfo(JsonElement root, string path, int version, int filteredCount, string buildStatus)
         {
             var sb = new StringBuilder();
             sb.AppendLine("GI_LargeSg JSON summary");
             sb.AppendLine("Path: " + path);
             sb.AppendLine("Version: " + version);
+            sb.AppendLine("Filtered individuals: " + filteredCount);
+            if (!string.IsNullOrWhiteSpace(buildStatus))
+                sb.AppendLine("Build: " + buildStatus);
             if (root.TryGetProperty("runId", out var rid)) sb.AppendLine("RunId: " + rid.GetString());
             if (root.TryGetProperty("startedAt", out var sa)) sb.AppendLine("Started: " + sa.GetString());
             if (root.TryGetProperty("finishedAt", out var fa)) sb.AppendLine("Finished: " + fa.GetString());
